@@ -239,8 +239,8 @@ logger.info("Detected MTP model. Sharing target model embedding weights with the
 
 ## 七、相关文档
 
-- [Multi Token Prediction（用户指南）](../../user_guide/feature_guide/Multi_Token_Prediction.md)
-- [Speculative Decoding](../../user_guide/feature_guide/speculative_decoding.md)
-- [ModelRunner prepare_inputs](./ModelRunner_prepare_inputs.md)
-- [ACL Graph](./ACL_Graph.md)
-- [Context Parallel](./context_parallel.md)
+- [Multi Token Prediction（用户指南）](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/feature_guide/Multi_Token_Prediction.md)
+- [Speculative Decoding](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/feature_guide/speculative_decoding.md)
+- [ModelRunner prepare_inputs](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/developer_guide/Design_Documents/ModelRunner_prepare_inputs.md)
+- [ACL Graph](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/developer_guide/Design_Documents/ACL_Graph.md)
+- [Context Parallel](https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/developer_guide/Design_Documents/context_parallel.md)
