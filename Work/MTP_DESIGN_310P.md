@@ -9,7 +9,7 @@
 
 ### 1.1 单步 Decode 时序图
 
-下图为一轮 Decode 的 **Mermaid 时序图**（`sequenceDiagram`）：先 **Verify + Rejection**，再 **Draft**，与 `model_runner_v1.py` 中 `execute_model` → `sample_tokens` → `propose_draft_token_ids` 顺序一致。
+下图为一轮 Decode 的 **时序图**（`sequenceDiagram`）：先 **Verify + Rejection**，再 **Draft**，与 `model_runner_v1.py` 中 `execute_model` → `sample_tokens` → `propose_draft_token_ids` 顺序一致。
 
 ```mermaid
 sequenceDiagram
@@ -45,27 +45,7 @@ sequenceDiagram
     MR-->>SCH: accepted tokens and draft tokens
 ```
 
-**ASCII 时序备用**（预览不渲染 Mermaid 时对照）：
-
-```
-Scheduler    Runner310      TargetModel    RejectionSampler    Sampler310    EagleProposer
-    |            |               |                |               |              |
-    |-- output -->|               |                |               |              |
-    |            |-- prepare ----|                |               |              |
-    |            |-- verify ---->|                |               |              |
-    |            |<-- logits ----|                |               |              |
-    |            |-- sample ---------------------->|               |              |
-    |            |                |               |-- bonus ----->|              |
-    |            |                |               |<-- bonus id ---|              |
-    |            |                |               |-- reject -----|              |
-    |            |<-- sampled ids-|                |               |              |
-    |            |-- propose --------------------------------------------------->|
-    |            |                |<-- MTP forward -----------------------------|
-    |            |<-- draft ids ------------------------------------------------|
-    |<-- result -|                |                |               |              |
-```
-
-### 1.2 类图（含 310P 工作量标注）
+### 1.2 类图
 
 > 类图拆成两张 Mermaid，减少交叉连线导致的错位；**★** 表示 310P 有开发工作量。  
 > ASCII 备用图请用**等宽字体**（Consolas / Courier New）查看。
