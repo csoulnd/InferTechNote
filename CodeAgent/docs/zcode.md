@@ -246,7 +246,63 @@ ZCode 在 Layer ① 之上建了统一工作台，Layer ②–⑤ 仍由各 CLI 
 
 「我全都要」因此不是技术上的大一统，而是**产品层的务实折中**——承认内核融合成本过高（闭源 CLI 无法拆层、OpenCode 的 C/S 分离也未被 ZCode 采纳为第三方接入方式），于是在壳层做最大整合，在内核层尊重整包边界。
 
-一个开放问题：当 [ACP](https://agentclientprotocol.com/get-started/introduction) 等协议让「编辑器当客户端、Agent 当服务端」成为标准路径时，是否才是ADE真正大放光彩的时候。
+一个开放问题：当 [ACP](https://agentclientprotocol.com/get-started/introduction) 等协议让「编辑器当客户端、Agent 当服务端」成为标准路径时，是否才是 ADE 真正大放光彩的时候。
+
+---
+
+## 第三章 从 Zcode Setting 看第三方生态
+
+**打开设置页，看 ZCode 如何组织第三方生态**——哪些能力被统一调度，哪些仍绑定在特定 CLI 上，哪些只是 Claude 生态的透传入口。
+
+### 3.1 设置页全景：一座生态调度台
+
+ZCode 设置侧栏几乎是一份「第三方生态接入地图」：从模型供应商、智能体工具，到插件、技能、MCP、子智能体、命令、Hook、Memory，每一项都对应 Agent 扩展机制的一种形态。
+
+![ZCode 设置页：按来源管理技能与各框架生态](../Image/zcode_setting.png)
+
+上图以「技能」页为例，顶部的**来源筛选**（通用 / ZCode Agent / Claude CLI / Codex CLI / Gemini CLI / OpenCode CLI）是理解整站设置逻辑的关键——ZCode 并非把所有扩展能力揉进一套配置，而是**按当前 Agent Framework 分流读写**，各 CLI 保留自己的生态目录与约定，ZCode 在 UI 层做聚合展示。
+
+### 3.2 设置项与生态归属
+
+把设置页主要条目与官方文档对齐，可以得到一张「谁读谁的配置」对照表：
+
+| 设置项 | 支持的框架 | 生态归属与作用 |
+|--------|-----------|----------------|
+| **模型供应商** | 全部 | 统一管理各 Provider 的 API Key；第三方模型接入的入口，与 Agent 框架解耦 |
+| **智能体工具** | 全部 CLI | 管理随应用打包的 CLI 整包安装/卸载（见第一章 1.4）；生态的**物理入口** |
+| **MCP 服务器** | 通用 + 各框架分 tab | 按来源配置外部工具；**通用** tab 可放跨框架共享服务，各 CLI tab 兼容原生 MCP 配置（[官方文档](https://zcode.z.ai/newdocs/mcp-services)） |
+| **子智能体** | ZCode Agent + 全部 CLI | 五类来源均可配置；读取各框架原生 agents 目录（如 `.agents/agents`、OpenCode 专属路径等）（[官方文档](https://zcode.z.ai/newdocs/subagents)） |
+| **技能（Skill）** | ZCode Agent + Claude CLI | 双路径：`~/.agents/skills/` 与 `~/.claude/skills/`；聊天中用 `$skill-name` 引用（[官方文档](https://zcode.z.ai/newdocs/skill)） |
+| **命令（Command）** | ZCode Agent + Claude CLI | ZCode 内置 `/compact`、`/goal`、`/skill`；Claude CLI 沿用 `.claude/commands/`（[官方文档](https://zcode.z.ai/newdocs/commands)） |
+| **插件（Plugin）** | **仅 Claude CLI** | 管理 Claude 插件市场；可捆绑 Skill / MCP / Command / Hook（[官方文档](https://zcode.z.ai/newdocs/plugin)） |
+| **Hook** | **仅 Claude CLI** | 在 UserPromptSubmit / PreToolUse / PostToolUse / SessionEnd 等事件自动执行 shell（[官方文档](https://zcode.z.ai/newdocs/hook)） |
+| **Memory** | **仅 Claude CLI** | 编辑 `MEMORY.md`，写入 Claude CLI 长期记忆（[官方文档](https://zcode.z.ai/newdocs/memory)） |
+
+### 3.3 三类集成深度
+
+从设置页可以读出 ZCode 对第三方生态的三种接入策略：
+
+**① 跨框架统一层（MCP、子智能体）**
+
+MCP 的「通用」来源最接近真正的生态中间层——记忆、文件系统、浏览器自动化等能力可声明为所有框架共享；同时保留各 CLI 专属 tab，避免污染已有工具链。子智能体则按框架分源，但五类框架均可在设置里新建、编辑——说明 ZCode 承认「每个 CLI 都有自己的角色体系」，只在 UI 上拉齐。
+
+**② 双轨并行（Skill、Command）**
+
+ZCode Agent 与 Claude CLI 各走一套目录约定，设置页用来源切换隔离。这反映产品重心：**自研 Agent 要沉淀自己的方法论，Claude 生态要原样复用**——Codex / Gemini / OpenCode 在此两项上尚未获得同等深度的设置入口。
+
+**③ Claude 生态透传（Plugin、Hook、Memory）**
+
+三项均标注「仅支持 Claude CLI」。并非 ZCode 技术上无法扩展，而是直接对接 Claude Code 最成熟的扩展体系：Plugin 市场、事件 Hook、长期 Memory。对使用 Codex / Gemini / OpenCode 的用户，这些设置页基本处于「不可见或不生效」状态——第三方生态的丰富度，目前高度依赖你是否在任务里选了 Claude CLI。
+
+### 3.4 从 Setting 反推产品策略
+
+
+1. **CLI 整包是生态的物理边界**——智能体工具管安装，其余设置大多「读取各 CLI 已有配置」，而非把扩展能力重写进 ZCode 内核。
+2. **ZCode Agent 是自有生态的锚点**——MCP 推荐优先配给 ZCode Agent；内置 Command（`/goal` 等）面向长程任务；智谱系 MCP（`zai-mcp-server`、`web-search-prime`）被写入官方推荐。
+3. **Claude CLI 是第三方生态的现成货架**——Plugin / Hook / Memory 完整透传，等于把 Claude Code 社区积累直接搬进 ADE 设置页。
+4. **其余 CLI 处于「能切换、部分能配」阶段**——Codex / Gemini / OpenCode 在子智能体、MCP 上有入口，但 Skill / Command / Hook 等深度扩展尚未拉齐；生态体验随当前选中的 Framework 波动很大。
+
+因此，**ZCode 用设置页搭了一座调度台——底层仍由各 CLI 生态自行生长，ZCode 负责可见、可配、可切换。** 用户切换 Framework 时，不只是换模型，而是换了一整套可用的扩展配置空间。
 
 ---
 
@@ -262,3 +318,10 @@ ZCode 在 Layer ① 之上建了统一工作台，Layer ②–⑤ 仍由各 CLI 
 > - [Claude Code vs Cursor — Nevo (2026)](https://nevo.systems/blogs/nevo-journal/claude-code-vs-cursor)
 > - [Cursor vs Claude Code — Jakub Kontra](https://jakubkontra.com/en/blog/cursor-vs-claude-code-honest-comparison)
 > - [Claude Code vs Cursor — WaveSpeed 架构分析](https://wavespeed.ai/blog/posts/claude-code-vs-cursor-2026/)
+> - [ZCode — MCP 服务器](https://zcode.z.ai/newdocs/mcp-services)
+> - [ZCode — 子智能体](https://zcode.z.ai/newdocs/subagents)
+> - [ZCode — Skill](https://zcode.z.ai/newdocs/skill)
+> - [ZCode — Command](https://zcode.z.ai/newdocs/commands)
+> - [ZCode — Plugin](https://zcode.z.ai/newdocs/plugin)
+> - [ZCode — Hook](https://zcode.z.ai/newdocs/hook)
+> - [ZCode — Memory](https://zcode.z.ai/newdocs/memory)
