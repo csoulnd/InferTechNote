@@ -14,7 +14,7 @@
 
 ---
 
-## 第一章 我们要接入什么？Code Agent 通用架构
+## 第一章 我们要接入什么？Code Agent 通用架构到CLI集成的Zcode
 
 本章将介绍 codeagent 通用分层模型**最小通用分层模型**。希望通过这个角度理清楚 Zcode 多 CLI 切换的核心逻辑。
 
@@ -131,25 +131,7 @@ flowchart TB
 
 ### 1.3 两种分发模式
 
-逻辑架构同为五层，但物理打包方式分为 **CLI 整包集成** 与 **C/S 分离部署** 两类：
-
-```mermaid
-flowchart LR
-    subgraph A["Claude Code / Codex<br/>垂直集成 · 整包分发"]
-        A1["一个安装命令"] --> A2["claude / codex 可执行文件"]
-        A2 --> A3["内含 Layer ①–⑤"]
-    end
-
-    subgraph B["OpenCode<br/>C/S 架构 · 可分离部署"]
-        B1["opencode serve"] --> B2["Server：Layer ②–⑤"]
-        B3["opencode TUI"] --> B4["Client：Layer ①"]
-        B5["opencode acp"] --> B4
-        B6["IDE / Web"] --> B4
-        B4 -->|HTTP / ACP| B2
-    end
-```
-
-主流 Code Agent 在物理打包上可归为两种模式，核心差异在于：**内核五层是否必须随一条 CLI 安装命令整体交付**。
+逻辑架构同为五层，物理打包方式分为 **CLI 整包集成** 与 **C/S 分离部署** 两类，核心差异在于：**内核五层是否必须随一条 CLI 安装命令整体交付**。
 
 | 模式 | 代表产品 | 一句话 |
 |------|----------|--------|
