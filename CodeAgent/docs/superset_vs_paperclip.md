@@ -387,33 +387,39 @@ Superset 的扩展策略是**尊重 Agent 原生生态**，通过统一工作台
 
 Paperclip 构建了从 SDK 到 Worker 运行时的完整插件体系：
 
-```
-            ┌─────────────────────────────────────┐
-            │         Paperclip 插件系统            │
-            ├─────────────────────────────────────┤
-            │  SDK: @paperclipai/plugin-sdk v1.0.0 │
-            │  ┌───────────────────────────────┐   │
-            │  │ Worker Context · UI Bridge    │   │
-            │  │ Protocol · Types · Testing    │   │
-            │  │ Bundlers · Dev Server         │   │
-            │  └───────────────────────────────┘   │
-            ├─────────────────────────────────────┤
-            │  运行时                              │
-            │  ┌──────────┐ ┌──────────┐          │
-            │  │Worker进程 │ │UI 插槽   │          │
-            │  │(隔离运行) │ │(同域JS)  │          │
-            │  └──────────┘ └──────────┘          │
-            │  ┌──────────┐ ┌──────────┐          │
-            │  │Capability│ │Job调度器 │          │
-            │  │门控      │ │          │          │
-            │  └──────────┘ └──────────┘          │
-            ├─────────────────────────────────────┤
-            │  内置插件                            │
-            │  ├ plugin-workspace-diff (Diff 查看) │
-            │  ├ plugin-llm-wiki (LLM 知识库)     │
-            │  ├ plugin-fake-sandbox (测试沙箱)   │
-            │  └ create-paperclip-plugin (脚手架) │
-            └─────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph SDK["SDK @paperclipai/plugin-sdk v1.0.0"]
+        A["Worker Context"]
+        B["UI Bridge"]
+        C["Protocol"]
+        D["Types & Testing"]
+        E["Bundlers"]
+        F["Dev Server"]
+    end
+
+    subgraph RUNTIME["运行时"]
+        G["Worker 进程<br/>(隔离运行)"]
+        H["UI 插槽<br/>(同域 JS)"]
+        I["Capability<br/>门控"]
+        J["Job 调度器"]
+    end
+
+    subgraph BUILTIN["内置插件"]
+        K["plugin-workspace-diff<br/>Diff 查看"]
+        L["plugin-llm-wiki<br/>LLM 知识库"]
+        M["plugin-fake-sandbox<br/>测试沙箱"]
+        N["create-paperclip-plugin<br/>脚手架"]
+    end
+
+    SDK --> RUNTIME
+    RUNTIME --> BUILTIN
+    G -->|能力调用| I
+    I --> J
+
+    style SDK fill:#e3f2fd,stroke:#1565c0
+    style RUNTIME fill:#fff3e0,stroke:#e65100
+    style BUILTIN fill:#e8f5e9,stroke:#2e7d32
 ```
 
 **插件功能亮点**：
