@@ -169,7 +169,82 @@ ZCode 桌面端作为统一的 Layer ① 交互壳，在本地预装或引导安
 
 ![ZCode 智能体工具：内置 CLI 整包安装与管理](../Image/zcode_cli.png)
 
-这与 [ZCode 多智能体框架](https://zcode.z.ai/en/newdocs/agent-framework) 官方描述一致：创建任务时选择 Agent Framework，对话过程中可随时从顶部菜单切换，无需新建任务。对 ZCode 而言，多 CLI 切换的集成点就在 **CLI 层级**——把多个已整包安装的 CLI Agent 纳入同一工作台，而不是把各框架的内核层抽出来重组。
+这与 [ZCode 多智能体框架](https://zcode.z.ai/en/newdocs/agent-framework) 官方描述一致：创建任务时选择 Agent Framework，对话过程中可随时从顶部菜单切换，无需新建任务。对 ZCode 而言，多 CLI 切换的集成点就在 **CLI 层级**——把多个已整包安装的 CLI Agent 纳入同一工作台，而不是把各框架的内核层抽出来重组。这也提示我们思考，在接入第三方生态时，更普适的形式是否是 CLI 的整包集成以及切换，更优雅的形式是否是内核层次的融合；以及 C/S 分离部署的架构是否支持持久化的三方 CLI 部署（初步来看是不支持的，只能作为子进程，更像是本地部署加使用推理一体机的推理接口，这部分还是很模糊）。
+
+---
+
+## 第二章 IDE or CLI：Zcode「我全都要」
+
+第一章从架构层回答了 ZCode「接什么」；本章换一个更开放的问题：**开发者到底该在 IDE 里写代码，还是在 CLI 里指挥 Agent？** ZCode 的答案是——不选边，我全都要。
+
+### 2.1 三种形态，一条光谱
+
+从 Layer ①（交互层）的落点看，当前 AI 编程工具大致落在三个位置，彼此互补而非互斥：
+
+| 形态 | Layer ① 落点 | 代表 | 擅长 |
+|------|---------------|------|------|
+| **IDE + Agent 插件** | 嵌在编辑器 UI 内 | Cursor、Copilot、Continue | 日常编码、行级补全、即时 diff 审查 |
+| **Code Agent CLI** | 终端 / TUI | Claude Code、Codex、OpenCode | 长程自主执行、脚本化、CI/CD、无头运行 |
+| **ADE** | 独立 Agent 工作台 | ZCode | 任务级可观测性、多 Agent 编排、端到端长程任务 |
+
+**ADE（Agent Development Environment）** 的愿景，是把 Agent 的开发、调试、测试收敛到统一环境，获得思考链、工具调用、中间结果的端到端可观测性。挑战在于工具链仍新、生态未成熟，开发者有额外学习成本——ZCode 的应对是**不造 Agent 内核**，转而调度成熟 CLI，把 ADE 的难题压缩到「壳层统一 + 多进程管理」。
+
+**IDE 插件**是当前最贴近日常开发的形态：上下文天然是当前打开的文件和项目，Tab 补全、内联聊天、可视化 diff 都在熟悉的工作流里完成。代价是能力边界受 IDE 插件 API 约束，深度编排（子 Agent、Hooks 系统级拦截、长链路 checkpoint）往往不如 CLI 原生。
+
+**CLI Agent**最灵活，适合自动化与复杂多步编排；劣势是缺少 IDE 的行级语法感知和「边写边看」的即时反馈——你得习惯对着终端里的 diff 和日志做判断。
+
+三者是光谱上的三个锚点，不是非此即彼。ZCode 的「我全都要」，正是试图在这条光谱上占住 ADE 一端，同时把 IDE 的工程壳和 CLI 的 Agent 能力一并收进来。
+
+### 2.2 CLI 交互 vs IDE 交互：差在哪里
+
+2026 年 Cursor 与 Claude Code 的对比已经说明：**这不是「哪个更强」，而是两种交互哲学**。
+
+多篇实践对比的共识可以概括为（参见 [Nevo 对比](https://nevo.systems/blogs/nevo-journal/claude-code-vs-cursor)、[Jakub Kontra 生产实践](https://jakubkontra.com/en/blog/cursor-vs-claude-code-honest-comparison)、[WaveSpeed 架构分析](https://wavespeed.ai/blog/posts/claude-code-vs-cursor-2026/)）：
+
+- **Cursor**：*IDE that got AI grafted into it*——AI 嵌在编辑器里，设计假设是「人坐在键盘前，逐条接受或拒绝建议」。优势在 **editor-layer velocity**：Tab 补全、多模型切换、可视化 diff、Composer 内联编辑。
+- **Claude Code**：*AI agent that happens to run in a terminal*——设计假设是「你把任务派出去，Agent 自主跑完再回来汇报」。优势在 **execution-layer autonomy**：多文件重构、Hooks 系统级约束、CI 无头运行、子 Agent 并行。
+
+用一句话收束你的直觉——**CLI 更高效，IDE 更便捷**：
+
+| 维度 | CLI 交互 | IDE 交互 |
+|------|----------|----------|
+| **交互节奏** | 任务驱动：描述目标 → Agent 循环执行 → 批量交付 | 编辑驱动：边写边问、边改边看、逐行确认 |
+| **反馈形态** | 文本流、工具日志、终端 diff | 语法高亮、内联补全、侧边栏可视化 diff |
+| **上下文获取** | Agent 主动读文件、搜仓库、跑命令 | 光标位置、`@file` 显式引用、代码库索引 |
+| **长程任务** | 天然承载（几十轮工具调用不「挤」） | 侧边栏/chat 面板容易成为瓶颈 |
+| **自动化** | 可脚本化、可进 CI、可 SSH 远程 | 以人机同框为主，无人值守非主路径 |
+| **学习曲线** | 要会读日志、会判断 diff、会管权限 | 接近「会写代码就会用」 |
+
+这里不妨借用 **Linux vs Windows** 的老梗——不是谁碾压谁，而是价值取向不同：
+
+- **Linux / CLI**：组合式、可脚本化、管道串联、出了问题看日志自己排查——**效率高，但要懂行**。
+- **Windows / IDE**：一体化、图形化、向导式、所见即所得——**门槛低，上手快**。
+
+程序员嘴上说着「GUI 是给凡人用的」，身体却很诚实地同时开着 VS Code 和三个终端 tab——因为心里清楚：**写代码要便捷，派活要高效**。IDE 解决的是「我现在这行怎么写」；CLI Agent 解决的是「这个需求你帮我把活干完」。
+
+2026 年两者边界已在模糊：Cursor 年初发了 CLI，Claude Code 也有了 VS Code 插件和 Web IDE。但**重心仍不同**——Cursor 的 CLI 是 IDE 的延伸入口，Claude Code 的插件是终端 Agent 的辅助视图。比较时看「默认主界面在哪里」，比看「能不能在对方地盘跑」更有意义。
+
+### 2.3 Zcode「我全都要」：ADE 壳 + IDE 体验 + CLI 内核
+
+ZCode 没有走「把 Cursor 搬进桌面」或「再造一个 Claude Code」任一路线，而是第三条：
+
+```
+IDE 工程壳（文件树 / Git / 终端 / 预览 / diff 审查）
+        +
+CLI Agent 内核（Claude Code / Codex / Gemini CLI / OpenCode 整包子进程）
+        +
+ADE 任务层（多框架切换 / 检查点 / Remote / Bot）
+```
+
+这和第一章的结论咬合：ZCode 在 Layer ① 之上建了统一工作台，Layer ②–⑤ 仍由各 CLI 整包自带。它要的同时包括：
+
+- **IDE 侧的便捷**：不用离开项目上下文去开四个终端，文件树、Git、变更审查在一个界面完成；
+- **CLI 侧的高效**：长程任务交给 Agent 自主跑，保留各 CLI 的原生编排能力（Hooks、子 Agent、MCP 等），不在 ZCode 里阉割成聊天机器人；
+- **ADE 侧的可观测**：任务级视角看到 Agent 思考链与工具调用，支持 Remote / Bot 把「派活」延伸到桌面之外。
+
+「我全都要」因此不是技术上的大一统，而是**产品层的务实折中**——承认内核融合成本过高（闭源 CLI 无法拆层、OpenCode 的 C/S 分离也未被 ZCode 采纳为第三方接入方式），于是在壳层做最大整合，在内核层尊重整包边界。
+
+一个值得持续观察的开放问题：当 [ACP](https://agentclientprotocol.com/get-started/introduction) 等协议让「编辑器当客户端、Agent 当服务端」成为标准路径时，ZCode 是否仍坚持子进程整包调度，还是会演进为协议层统一接入——这决定了它长期是「CLI 调度台」还是「真正的 Agent 内核融合平台」。
 
 ---
 
@@ -182,3 +257,6 @@ ZCode 桌面端作为统一的 Layer ① 交互壳，在本地预装或引导安
 > - [OpenCode — Agents (Build / Plan)](https://opencode.ai/docs/agents/)
 > - [Agent Client Protocol — Introduction](https://agentclientprotocol.com/get-started/introduction)
 > - [ZCode — Multi-Agent Framework](https://zcode.z.ai/en/newdocs/agent-framework)
+> - [Claude Code vs Cursor — Nevo (2026)](https://nevo.systems/blogs/nevo-journal/claude-code-vs-cursor)
+> - [Cursor vs Claude Code — Jakub Kontra](https://jakubkontra.com/en/blog/cursor-vs-claude-code-honest-comparison)
+> - [Claude Code vs Cursor — WaveSpeed 架构分析](https://wavespeed.ai/blog/posts/claude-code-vs-cursor-2026/)
