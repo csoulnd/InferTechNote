@@ -4,6 +4,13 @@
 > 分析对象：[Superset v1.12.4](https://github.com/superset-sh/superset) · [Paperclip v0.3.1](https://github.com/paperclipai/paperclip)  
 > 许可证：Superset (Elastic License 2.0) · Paperclip (MIT)
 
+<div align="center">
+  <img src="../Image/superset_social_preview.png" alt="Superset 项目封面" width="48%" />
+  <img src="../Image/paperclip_banner.jpg" alt="Paperclip 项目封面" width="48%" />
+  <br/>
+  <em>▲ 左：Superset — "The Code Editor for AI Agents" · 右：Paperclip — "Manage AI agents for work"</em>
+</div>
+
 ---
 
 ## 一、项目概览与背景
@@ -194,6 +201,12 @@ flowchart TB
     style UI fill:#e8f5e9
 ```
 
+<div align="center">
+  <img src="../Image/paperclip_dashboard_dark.png" alt="Paperclip 桌面仪表盘" width="85%" />
+  <br/>
+  <em>▲ Paperclip Dashboard — Agent 团队状态、任务看板与预算监控一屏统览</em>
+</div>
+
 **关键架构特点**：
 
 - **单进程服务端**：Express 5 HTTP 服务端承载全部业务逻辑，嵌入式 Postgres 省去外部数据库部署
@@ -242,6 +255,12 @@ flowchart TB
     style WT3 fill:#e8f5e9,stroke:#2e7d32
 ```
 
+<div align="center">
+  <img src="../Image/paperclip_workspace_diff.png" alt="Paperclip Workspace Diff 视图" width="85%" />
+  <br/>
+  <em>▲ Workspace Diff — 对比 Agent 工作区文件变更，逐行审查差异</em>
+</div>
+
 关键实现细节：
 
 - **WorkspaceInitManager** (`apps/desktop/src/main/lib/workspace-init-manager.ts`)：工作树生命周期管理的单例 EventEmitter，支持 `"branch"`（主仓库）和 `"worktree"`（Git 工作树）两种模式
@@ -286,6 +305,12 @@ flowchart TB
     style ISSUE fill:#fff8e1,stroke:#f57f17
     style GOAL fill:#f3e5f5,stroke:#7b1fa2
 ```
+
+<div align="center">
+  <img src="../Image/paperclip_planning.png" alt="Paperclip Planning 详情界面" width="85%" />
+  <br/>
+  <em>▲ Planning 详情 — 任务分解、子任务追踪与审批状态一目了然</em>
+</div>
 
 关键实现细节：
 
@@ -367,6 +392,12 @@ flowchart TB
 **Superset 的优势**：对编码 Agent 覆盖全面，强调"任何可在终端运行的 CLI Agent"，通过 Shell 包装器通用兼容。
 
 **Paperclip 的优势**：Agent 类型更广——从编码 Agent 到 ACP 协议 Agent、Grok、OpenClaw Gateway，甚至纯 HTTP/Webhook Bot，通过适配器模式统一接入。
+
+<div align="center">
+  <img src="../Image/paperclip_live_run.png" alt="Paperclip Live Run 菜单" width="85%" />
+  <br/>
+  <em>▲ Live Run 菜单 — 实时监控 Agent 运行状态与日志输出</em>
+</div>
 
 ---
 
@@ -469,6 +500,12 @@ flowchart LR
 | **健康检查** | 无 | ✅ `doctor` 诊断命令 |
 | **资源管理** | 通过桌面 UI | CLI 支持 Issue / Agent / Skill / Secrets / Cost / Budget 全资源 CRUD |
 
+<div align="center">
+  <img src="../Image/paperclip_planning_row.png" alt="Paperclip 扁平任务列表" width="85%" />
+  <br/>
+  <em>▲ Paperclip 的扁平化任务列表视图 — 一目了然的任务状态、负责人与优先级</em>
+</div>
+
 ### 6.3 文档质量
 
 | 维度 | Superset | Paperclip |
@@ -478,7 +515,7 @@ flowchart LR
 | **架构文档** | 无独立文档（依赖 AGENTS.md 描述） | `PLUGIN_SPEC.md`、`PLUGIN_AUTHORING_GUIDE.md` 等 |
 | **API 文档** | tRPC 类型自文档 | 未单独提供 |
 | **Plans 目录** | 无 | 40+ 按日期组织的计划文档 |
-| **产品截图** | ❌ 无可用截图 | ✅ Banner、Dashboard、Diff Viewer 等多张截图 |
+| **产品截图** | ❌ 无可用截图 | ✅ Banner、Dashboard、Diff Viewer、Planning 等多张截图 |
 
 ---
 
@@ -562,6 +599,14 @@ flowchart TB
 ```
 
 一个可能的融合方向：Paperclip 作为**组织管理层**，Superset 作为**编码执行层**——Paperclip 通过 MCP 调用 Superset 的 Worktree 能力，Superset 的 Agent 执行结果回传到 Paperclip 的任务追踪系统。
+
+---
+
+<div align="center">
+  <img src="../Image/paperclip_footer.jpg" alt="Paperclip 宣传横幅" width="90%" />
+  <br/>
+  <em>▲ Paperclip 品牌视觉 — "The app people use to manage AI agents for work"</em>
+</div>
 
 ---
 
