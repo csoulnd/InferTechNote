@@ -16,13 +16,7 @@
 
 ## 第一章 我们要接入什么？Code Agent 通用架构
 
-本章将介绍 codeagent 通用分层模型**最小通用分层模型**。希望通过这个角度理清楚 Zcode 多 CL 切换的核心逻辑。
-
-> **参考资料**：以下内容依据各产品 2025–2026 年官方文档整理，并标注了与原始草稿的差异修正。
->
-> - Claude Code：[How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works)、[Glossary](https://code.claude.com/docs/en/glossary)
-> - Codex CLI：[Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/)、[Core concepts](https://openai-codex.mintlify.app/concepts/overview)、[Architecture Overview](https://www.mintlify.com/openai/codex/architecture/overview)
-> - OpenCode：[Server](https://opencode.ai/docs/server/)、[Agents](https://opencode.ai/docs/agents/)、[ACP Support](https://opencode.ai/docs/acp/)
+本章将介绍 codeagent 通用分层模型**最小通用分层模型**。希望通过这个角度理清楚 Zcode 多 CLI 切换的核心逻辑。
 
 ### 1.1 整体架构图
 
@@ -135,9 +129,9 @@ flowchart TB
 | **OpenCode** | **模型无关**：通过 `opencode auth login` 配置多 Provider，统一适配 Claude / OpenAI / Gemini / Ollama 等；各 Agent 可绑定不同模型 |
 | **可安装性** | 均内嵌于分发单元；OpenCode 适配层随服务端部署 |
 
-### 1.3 分发形态对比：「只能安装 CLI」的准确含义
+### 1.3 两种分发模式
 
-官方文档一致表明：三家产品的**逻辑架构同为五层**，但**物理打包方式**存在本质差异。
+逻辑架构同为五层，但物理打包方式分为 **CLI 整包集成** 与 **C/S 分离部署** 两类：
 
 ```mermaid
 flowchart LR
@@ -155,38 +149,45 @@ flowchart LR
     end
 ```
 
-#### Claude Code / Codex：闭源垂直集成
+主流 Code Agent 在物理打包上可归为两种模式，核心差异在于：**内核五层是否必须随一条 CLI 安装命令整体交付**。
 
-| 项目 | Claude Code | Codex CLI |
-|------|-------------|-----------|
-| **分发形态** | 原生安装器（推荐）或 npm 包，五层合一 | npm 包（`@openai/codex`）内含平台特定 Rust 二进制，亦可直接下载 Release 二进制 |
-| **安装命令** | `curl -fsSL https://claude.ai/install.sh \| bash`（推荐）；`npm install -g @anthropic-ai/claude-code`（**已标记 deprecated**） | `npm install -g @openai/codex`；或 `brew install --cask codex` |
-| **核心限制** | **无法拆分、无法单独安装某一层**（如只装会话层或工具层） | 同左；`codex-rs` 虽开源可自编译，但官方分发仍以整包为主 |
+| 模式 | 代表产品 | 一句话 |
+|------|----------|--------|
+| **CLI 整包集成** | Claude Code、Codex、Gemini CLI | 一条命令装完全部五层，入口即 `claude` / `codex` / `gemini`，无法单独拆出会话层或工具层 |
+| **C/S 分离部署** | OpenCode | 客户端（TUI / Web / ACP）与内核服务端可分开安装，多客户端可连接同一 `opencode serve` 实例 |
 
-> **修正**：原始草稿中 Claude Code 包名写为 `@anthropic/claude-code`，官方正确包名为 **`@anthropic-ai/claude-code`**，且 npm 安装已被官方弃用，推荐使用原生安装器。
+#### CLI 整包集成
 
-#### OpenCode：开源 C/S 架构
+用户安装一个可执行分发单元，交互、会话、编排、工具、模型适配全部内嵌其中。Claude Code 与 Codex 是这一模式的典型代表——安装后直接在项目目录运行 `claude` 或 `codex` 即可开始 Agent 会话，没有独立的「内核服务」可另行部署。
 
-| 维度 | 说明 |
-|------|------|
-| **客户端（Layer ①）** | `opencode` TUI、`opencode web` 浏览器端、`opencode acp` 编辑器子进程、`opencode attach` 远程 TUI |
-| **服务端（Layer ②–⑤）** | `opencode serve` 启动无头 HTTP 服务（默认端口 4096）；`opencode web` 同时提供 Web UI + 服务端 |
-| **安装方式** | 客户端：`npm install -g opencode`（或官方安装脚本）。服务端：随 `opencode serve` 启动，可部署到远程并通过 `OPENCODE_SERVER_PASSWORD` 启用 HTTP Basic Auth |
-| **独特之处** | **唯一在官方文档中明确支持「客户端 / 服务端分离部署」的主流 Code Agent**；多客户端（TUI、Web、IDE 插件）可同时连接同一服务端实例，共享会话状态 |
+- Claude Code 安装：[Setup 官方文档](https://code.claude.com/docs/en/setup)
+- Codex CLI 安装：[GitHub README](https://github.com/openai/codex)（`npm install -g @openai/codex`）
 
-### 1.4 关键结论
+#### C/S 分离部署
 
-| 结论 | 说明 |
-|------|------|
-| **通用架构 = 五层** | CLI 交互 → 会话协议 → 编排决策 → 工具执行 → 模型适配，是三家对齐后的最小通用模型 |
-| **Claude Code / Codex = 整包安装** | 所有内核层打包在单一可执行分发单元中，**没有独立的「内核安装包」** |
-| **OpenCode = 可分离安装** | CLI / TUI / ACP 客户端独立存在；内核四层（会话 + 编排 + 工具 + 模型）以 HTTP Server 形式可本地或远程部署 |
-| **「只能安装 CLI」** | 专指 Claude Code / Codex 的分发模式——用户通过一条安装命令获得完整五层能力，无法按需拆层采购或部署 |
-| **协议层趋同** | 三家均深度集成 **MCP**；OpenCode 额外标准化 **ACP**，使编辑器与 Agent 解耦，这与 ZCode「多框架插件化兼容」的产品方向高度相关 |
+OpenCode 是唯一在官方文档中明确支持客户端/服务端分离的主流 Agent。服务端承载会话、编排、工具、模型四层；TUI、浏览器、IDE 插件等作为客户端，通过 HTTP 或 ACP 协议连接。
 
-### 1.5 与 ZCode 的关联（导读）
+```bash
+# 远程机器：启动无头服务端
+OPENCODE_SERVER_PASSWORD=secret opencode serve --port 4096 --hostname 0.0.0.0
 
-理解上述五层模型，是后续分析 ZCode 如何将 Claude Code / Codex / Gemini / OpenCode **以插件形式嵌入同一 ADE 工作台**的基础。ZCode 本质上在 Layer ① 之上构建了统一的交互与 Remote 控制层，并通过插件适配各框架不同的分发与协议特征——这一点将在后续章节展开。
+# 本地机器：TUI 连接远程实例
+opencode attach http://<remote-ip>:4096
+```
+
+- 服务端部署：[OpenCode Server 文档](https://opencode.ai/docs/server/)
+- 客户端连接：[OpenCode CLI 文档](https://opencode.ai/docs/cli/)（`attach` / `run --attach`）
+- Web 远程访问：[OpenCode Web 文档](https://opencode.ai/docs/web/)
+
+### 1.4 Zcode 集成方式
+
+ZCode 的多 CLI 切换，走的是 **CLI 整包集成** 路线，而非 OpenCode 式的 C/S 分离。
+
+ZCode 桌面端作为统一的 Layer ① 交互壳，在本地预装或引导安装 Claude Code、Codex、Gemini CLI、OpenCode 等完整 CLI 包，然后在任务顶栏直接切换框架——每次切换实质上是调度不同的 CLI 整包进程，而非连接远程 Agent 服务端。各框架的五层能力仍保留在各自 CLI 内部，ZCode 负责统一的任务管理、模型配置、权限模式与会话入口。
+
+![ZCode 智能体工具：内置 CLI 整包安装与管理](../Image/zcode_cli.png)
+
+这与 [ZCode 多智能体框架](https://zcode.z.ai/en/newdocs/agent-framework) 官方描述一致：创建任务时选择 Agent Framework，对话过程中可随时从顶部菜单切换，无需新建任务。对 ZCode 而言，多 CLI 切换的集成点就在 **CLI 层级**——把多个已整包安装的 CLI Agent 纳入同一工作台，而不是把各框架的内核层抽出来重组。
 
 ---
 
@@ -198,3 +199,4 @@ flowchart LR
 > - [OpenCode — Server architecture](https://opencode.ai/docs/server/)
 > - [OpenCode — Agents (Build / Plan)](https://opencode.ai/docs/agents/)
 > - [Agent Client Protocol — Introduction](https://agentclientprotocol.com/get-started/introduction)
+> - [ZCode — Multi-Agent Framework](https://zcode.z.ai/en/newdocs/agent-framework)
