@@ -15,42 +15,44 @@ openJiuwen 的代码分散在 **13 个核心仓库**中，覆盖了从底层 SDK
 在深入每个仓库之前，先理解 openJiuwen 的三层架构：
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-flowchart TB
-    subgraph APPS[" 应用层 Applications  "]
-        direction LR
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '13px'}}}%%
+flowchart LR
+    subgraph CORE[" 核心引擎  "]
+        direction TB
+        C1["🧠 ReActAgent"]:::core
+        C2["⚙️ WorkflowAgent"]:::core
+        C3["👥 Multi-Agent"]:::core
+        C4["🔄 Agent Evolving"]:::core
+    end
+
+    subgraph MID[" 开发与运行  "]
+        direction TB
+        subgraph STUDIO[" 开发态 Studio  "]
+            direction TB
+            A1["🎨 可视化编排"]:::studio
+            A2["📝 提示词管理"]:::studio
+            A3["📦 模型 & 知识库"]:::studio
+        end
+        STUDIO -->|"一键发布"| OPS
+        subgraph OPS[" 运行态 Ops  "]
+            direction TB
+            B1["🐳 Docker / K8s"]:::ops
+            B2["📊 监控 & 健康检查"]:::ops
+            B3["🏢 多租户隔离"]:::ops
+        end
+    end
+
+    subgraph APPS[" 上层应用  "]
+        direction TB
         D1["🐝 JiuwenSwarm<br/>个人 AI 助手"]:::app
         D2["🔍 DeepSearch<br/>深度搜索研究"]:::app
-        D3["🤝 Relay / OfficeClaw<br/>多 Agent 协作"]:::app
-        D4["🤖 JiuwenSymbiosis<br/>具身智能机器人"]:::app
+        D3["🤝 Relay<br/>多 Agent 协作"]:::app
+        D4["🤖 Symbiosis<br/>具身智能"]:::app
     end
 
-    subgraph STUDIO[" 开发态 —— openJiuwen Studio  "]
-        direction LR
-        A1["🎨 可视化编排"]:::studio
-        A2["📝 提示词 & 模型管理"]:::studio
-        A3["⚡ 一键发布到 Runtime"]:::studio
-    end
-
-    subgraph OPS[" 运行态 —— openJiuwen Ops  "]
-        direction LR
-        B1["🐳 Docker / K8s"]:::ops
-        B2["📊 监控 & 健康检查"]:::ops
-        B3["🏢 多租户隔离"]:::ops
-    end
-
-    subgraph CORE[" 核心引擎 —— openJiuwen Core  "]
-        direction LR
-        C1["🧠 ReActAgent<br/>思考-行动-观察"]:::core
-        C2["⚙️ WorkflowAgent<br/>流程自动化"]:::core
-        C3["👥 Multi-Agent Team<br/>多智能体协同"]:::core
-        C4["🔄 Agent Evolving<br/>RL 自进化"]:::core
-    end
-
-    STUDIO -->|一键发布| OPS
-    CORE -->|驱动| STUDIO
-    CORE -->|驱动| OPS
-    CORE -->|支撑| APPS
+    CORE -->|"驱动"| STUDIO
+    CORE -->|"驱动"| OPS
+    CORE -->|"支撑"| APPS
 
     classDef app fill:#e8f5e9,stroke:#4caf50,stroke-width:2px,color:#2e7d32
     classDef studio fill:#e3f2fd,stroke:#2196f3,stroke-width:2px,color:#1565c0
