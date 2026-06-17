@@ -1,16 +1,38 @@
 # MTP（Multi-Token Prediction）在 Ascend 310P 上的设计说明
 
 > 模型场景：**Qwen3.5 + MTP**（`speculative_config.method = "mtp"` 或 E2E 中 `"qwen3_5_mtp"`）。  
-> **主线一致、实现按算子能力适配**：MTP 的 Drafter → Verify → Rejection 流程与 910B 等主分支相同；310P 在保持该流程的前提下，根据本设备算子支持情况调整实现，主要体现在 **Runner 输入准备**、**Attention/GDN**、**Sampler/Rejection**（无 Triton / triton-ascend）、**KV Block Zeroer**、**Graph Capture/Replay** 等环节。  
+> **主线一致、实现按算子能力适配**：MTP 每轮 Decode 分三步——**① Verify**（主模型验证）→ **② Rejection**（拒绝采样）→ **③ Draft**（草稿生成）——流程与 910B 等主分支相同；310P 在保持该流程的前提下，根据本设备算子支持情况调整实现，主要体现在 **Runner 输入准备**、**Attention/GDN**、**Sampler/Rejection**（无 Triton / triton-ascend）、**KV Block Zeroer**、**Graph Capture/Replay** 等环节。  
 > **实现 PR**：[vllm-ascend #10309](https://github.com/vllm-project/vllm-ascend/pull/10309)（已合入 main，merge commit `969baed`）。
 
 ---
 
-## 1. 整体架构：Drafter → Verify → RejectionSampler
+## 1. 整体架构：Verify → Rejection → Draft
 
-### 1.1 单步 Decode 时序图
+一轮 Decode 按 **Verify → Rejection → Draft** 三步执行（与 §1.2 时序图编号一致）。Draft 在本轮末尾产出，供 **下一轮** Scheduler 调度验证。
 
-下图为一轮 Decode 的 **时序图**（`sequenceDiagram`）：先 **Verify + Rejection**，再 **Draft**，与 `model_runner_v1.py` 中 `execute_model` → `sample_tokens` → `propose_draft_token_ids` 顺序一致。
+### 1.1 三步功能概览
+
+| 步骤 | 执行入口 | 核心功能 | 主要输入 | 主要输出 | 310P 适配要点 |
+|------|----------|----------|----------|----------|---------------|
+| **① Verify**（主模型验证） | `execute_model()` | 主模型一次前向，对每个请求同时处理 **1 个已确定 token + K 个 draft token**，在完整上下文中计算 target 侧表示与词表 logits，供后续比对 | Scheduler 调度的 `input_ids`、draft tokens、KV cache | `hidden_states`、`logits`（经 `logits_indices` 索引） | `SpecDecoding` 走 splitfuse（`forward_chunked_prefill_310`）；GDN 区分 spec/non-spec token；metadata 预填 `query_lens_cpu` |
+| **② Rejection**（拒绝采样） | `sample_tokens()` → `_sample()` | 将 draft 预测与 target logits 做 **rejection sampling**：逐位比对 draft 与 target 预测，决定接受几个 draft；若 K 个全部接受且为 greedy，再采样 **bonus token** 多产出 1 个 token | Verify 产出的 `logits`、`SpecDecodeMetadata.draft_token_ids` | `sampled_token_ids` `[B, K+1]`，写回各请求序列 | `AscendRejectionSampler310`；recovery 随机数经 `fill_exponential_310p`（CPU RNG → NPU） |
+| **③ Draft**（草稿生成） | `propose_draft_token_ids()` | MTP 层基于 Verify 最后一层 hidden state，**预测下一轮 K 个 draft token**，供 Scheduler 在下一轮 Verify 中验证，形成投机解码闭环 | 上一轮 RS 接受的 `next_token_ids`、`target_hidden_states` | `draft_token_ids` `[B, K]` | 逻辑与主分支共用；算子走 GDN 310 / splitfuse；uniform spec 可 ACL graph replay |
+
+**一步产出的数据闭环**：
+
+```
+Scheduler（含上轮 draft）
+    → ① Verify：主模型算 target logits
+    → ② Rejection：决定本轮实际接受哪些 token
+    → ③ Draft：为下轮生成新 draft
+    → 回 Scheduler
+```
+
+---
+
+### 1.2 单步 Decode 时序图
+
+下图为一轮 Decode 的 **时序图**（`sequenceDiagram`）：按 **① Verify → ② Rejection → ③ Draft** 顺序执行，与 `model_runner_v1.py` 中 `execute_model` → `sample_tokens` → `propose_draft_token_ids` 一致。
 
 ```mermaid
 sequenceDiagram
@@ -46,12 +68,12 @@ sequenceDiagram
     MR-->>SCH: accepted tokens and draft tokens
 ```
 
-### 1.2 类图
+### 1.3 类图
 
 > 类图拆成两张 Mermaid，减少交叉连线导致的错位；**★** 表示 310P 有开发工作量。  
 > ASCII 备用图请用**等宽字体**（Consolas / Courier New）查看。
 
-#### 1.2.1 调度与 Runner / Drafter / Sampler
+#### 1.3.1 调度与 Runner / Drafter / Sampler
 
 ```mermaid
 classDiagram
@@ -78,7 +100,7 @@ classDiagram
 | `AscendSampler310` | ★ `fill_exponential_310p` |
 | `AscendRejectionSampler310` | ★ 继承基类；`sample_recovered_tokens` 走 CPU RNG |
 
-#### 1.2.2 模型前向与 310P Attention 算子
+#### 1.3.2 模型前向与 310P Attention 算子
 
 ```mermaid
 classDiagram
@@ -100,9 +122,9 @@ classDiagram
 | `AscendRejectionSampler310` | ★ CPU RNG recovery 路径 |
 | `AscendSpecDecodeBaseProposer310` | ★ 空 discard 索引 guard |
 
-调用方（见 1.2.1）：`NPUModelRunner` 做 Verify forward，`AscendEagleProposer` 做 Draft forward，二者均进入 `Qwen35Model`。
+调用方（见 1.3.1）：`NPUModelRunner` 做 Verify forward，`AscendEagleProposer` 做 Draft forward，二者均进入 `Qwen35Model`。
 
-#### 1.2.3 ASCII 备用（整体，纵向对齐）
+#### 1.3.3 ASCII 备用（整体，纵向对齐）
 
 ```
 +-------------------+
@@ -152,7 +174,7 @@ classDiagram
         +-----------+         +-------------------+
 ```
 
-### 1.3 310P 开发工作量一览
+### 1.4 310P 开发工作量一览
 
 | 模块 | 路径 | 310P 工作说明 |
 |------|------|----------------|
@@ -167,7 +189,9 @@ classDiagram
 
 ---
 
-## 2. 草稿生成（Drafter / MTP Propose）
+## 2. 草稿生成（③ Draft / MTP Propose）
+
+> **功能**：在 Verify + Rejection 完成后，由 `AscendEagleProposer` 调用 Qwen3.5 的 **MTP 层**，以上一轮接受的 token 与 Verify 输出的 hidden states 为输入，**一次性预测 K 个 draft token**。这些 draft 不直接写入用户可见输出，而是交给 Scheduler，在 **下一轮 ① Verify** 中由主模型并行验证，从而在不增加主模型前向次数的前提下提高 decode 吞吐。
 
 ### 2.1 子类图
 
@@ -255,7 +279,9 @@ sample_tokens()
 
 ---
 
-## 3. 主模型验证（Verify）
+## 3. 主模型验证（① Verify）
+
+> **功能**：接收 Scheduler 本轮调度的 token 布局（每个请求 **1 个已接受 token + K 个待验证 draft**），驱动 Qwen3.5 **全层主模型**做一次前向。在更新 KV cache 的同时，为每个 draft 位置及 bonus 位置产出对应 logits 行，供 **② Rejection** 逐位比对。Verify 是投机解码的「裁判计算」阶段——只算 target 侧概率，不做接受/拒绝决策。
 
 ### 3.1 执行位置
 
@@ -332,7 +358,9 @@ Verify 时 **一次 forward 处理多条 scheduled token**（已接受 token + K
 
 ---
 
-## 4. RejectionSampler（310P：无 Triton / triton-ascend）
+## 4. RejectionSampler（② Rejection / 310P：无 Triton）
+
+> **功能**：读取 Verify 产出的 target logits 与 metadata 中的 draft token，执行 **rejection sampling**：从第 0 个 draft 起逐位检查是否与 target 预测一致，在首个不匹配处截断；被接受的位写入 target 预测 token。若 K 个 draft 全部接受（greedy 场景），再从 bonus logits 采样 **额外 1 个 token**。输出 `sampled_token_ids` 即本轮各请求 **实际落盘的 token 序列**，并作为 ③ Draft 的 `next_token_ids` 输入。
 
 ### 4.1 类与分支选择
 
