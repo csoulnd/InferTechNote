@@ -70,61 +70,117 @@ sequenceDiagram
 
 ### 1.3 类图
 
-> 类图拆成两张 Mermaid，减少交叉连线导致的错位；**★** 表示 310P 有开发工作量。  
+> 类图按 PR #10309 模块拆分；**★** 表示 310P 新增或 override。  
 > ASCII 备用图请用**等宽字体**（Consolas / Courier New）查看。
 
-#### 1.3.1 调度与 Runner / Drafter / Sampler
+#### 1.3.1 Runner / KV / 采样（① Verify + ② Rejection）
 
 ```mermaid
 classDiagram
     direction TB
-    class Scheduler
     class NPUModelRunner
     class NPUModelRunner310
-    class AscendEagleProposer
+    class KVBlockZeroer
+    class AscendKVBlockZeroer310
+    class AscendSampler310
+    class RejectionSampler
     class AscendRejectionSampler
     class AscendRejectionSampler310
-    class AscendSampler310
-    Scheduler --> NPUModelRunner310
+
     NPUModelRunner310 --|> NPUModelRunner
-    NPUModelRunner --> AscendEagleProposer
-    NPUModelRunner310 --> AscendRejectionSampler310
-    NPUModelRunner310 --> AscendSampler310
+    NPUModelRunner310 --> AscendSampler310 : sampler
+    NPUModelRunner310 --> AscendRejectionSampler310 : rejection_sampler
+    NPUModelRunner310 --> AscendKVBlockZeroer310 : _kv_block_zeroer
+    AscendKVBlockZeroer310 --|> KVBlockZeroer
     AscendRejectionSampler310 --|> AscendRejectionSampler
-    AscendRejectionSampler310 --> AscendSampler310
+    AscendRejectionSampler --|> RejectionSampler
+    AscendRejectionSampler310 ..> AscendSampler310 : fill_exponential_310p
 ```
 
-| 类 | 310P |
-|----|------|
-| `NPUModelRunner310` | ★ `_prepare_inputs`、挂载 `AscendSampler310` |
-| `AscendSampler310` | ★ `fill_exponential_310p` |
-| `AscendRejectionSampler310` | ★ 继承基类；`sample_recovered_tokens` 走 CPU RNG |
+| 类 | 310P 职责（#10309） |
+|----|---------------------|
+| `NPUModelRunner310` ★ | `_build_attn_state` 强制 MTP `SpecDecoding`；MTP graph 策略；`_mtp_spec_dummy_capture`；`_init_kv_zero_meta` |
+| `AscendKVBlockZeroer310` ★ | 无 Triton，新分配 KV block 经 `zero_block_ids` tensor 写零 |
+| `AscendSampler310` ★ | `_random_sample_310p`、`fill_exponential_310p`（CPU RNG） |
+| `AscendRejectionSampler310` ★ | override `sample_recovered_tokens`，recovery 走 `fill_exponential_310p` |
 
-#### 1.3.2 模型前向与 310P Attention 算子
+#### 1.3.2 Proposer（③ Draft）
+
+```mermaid
+classDiagram
+    direction BT
+    class SpecDecodeBaseProposer
+    class EagleProposer
+    class AscendSpecDecodeBaseProposer
+    class AscendSpecDecodeBaseProposer310
+    class AscendEagleProposer
+    class ACLGraphWrapper
+
+    SpecDecodeBaseProposer <|-- AscendSpecDecodeBaseProposer
+    EagleProposer <|-- AscendEagleProposer
+    AscendSpecDecodeBaseProposer <|-- AscendEagleProposer
+    AscendSpecDecodeBaseProposer <|-- AscendSpecDecodeBaseProposer310
+    AscendSpecDecodeBaseProposer ..> ACLGraphWrapper : optional FULL graph
+```
+
+| 类 | 310P 职责（#10309） |
+|----|---------------------|
+| `AscendEagleProposer` | MTP 入口（`method=mtp`）；调用 MTP layer forward |
+| `AscendSpecDecodeBaseProposer310` ★ | override `prepare_next_token_ids_padded`：空 discard 索引时跳过 NPU `index_fill_` |
+| `patch_idex_310` | 运行时 method-assign，将 310 实现挂到 `AscendSpecDecodeBaseProposer` |
+
+#### 1.3.3 Attention / Metadata（① Verify · full_attention）
 
 ```mermaid
 classDiagram
     direction TB
-    class Qwen35Model
-    class AscendQwen35DecoderLayer
-    class GDN310
+    class AscendAttentionMetadataBuilder
+    class AscendAttentionMetadataBuilder310
+    class AscendAttentionBackendImpl
     class AscendAttentionBackendImpl310
-    Qwen35Model --> AscendQwen35DecoderLayer
-    AscendQwen35DecoderLayer --> GDN310
-    AscendQwen35DecoderLayer --> AscendAttentionBackendImpl310
+    class AttentionMaskBuilder310
+    class AscendMetadata
+
+    AscendAttentionMetadataBuilder310 --|> AscendAttentionMetadataBuilder
+    AscendAttentionBackendImpl310 --|> AscendAttentionBackendImpl
+    AscendAttentionMetadataBuilder310 --> AttentionMaskBuilder310
+    AscendAttentionMetadataBuilder310 ..> AscendMetadata : set_query_lens_cpu
+    AscendAttentionBackendImpl310 ..> AscendMetadata : get_query_lens_cpu
 ```
 
-| 类 | 310P |
-|----|------|
-| `GDN310` | ★ linear_attn / spec 分支 |
-| `AscendAttentionBackendImpl310` | ★ `SpecDecoding` → `forward_chunked_prefill_310`（splitfuse） |
-| `AscendKVBlockZeroer310` | ★ 无 Triton 时 tensor 写零 KV block |
-| `AscendRejectionSampler310` | ★ CPU RNG recovery 路径 |
-| `AscendSpecDecodeBaseProposer310` | ★ 空 discard 索引 guard |
+| 类 / 函数 | 310P 职责（#10309） |
+|-----------|---------------------|
+| `AscendAttentionMetadataBuilder310.build` ★ | `SpecDecoding`/`ChunkedPrefill` 时填充 `query_lens_cpu`、绑定 device view |
+| `set_query_lens_cpu` / `get_query_lens_cpu` ★ | host qLens 动态挂载/读取（graph capture 必需） |
+| `AscendAttentionBackendImpl310.forward_impl` ★ | `SpecDecoding` 与 `ChunkedPrefill` 同路径 → splitfuse |
 
-调用方（见 1.3.1）：`NPUModelRunner` 做 Verify forward，`AscendEagleProposer` 做 Draft forward，二者均进入 `Qwen35Model`。
+#### 1.3.4 GDN / 模型前向（① Verify + ③ Draft · linear_attention）
 
-#### 1.3.3 ASCII 备用（整体，纵向对齐）
+```mermaid
+classDiagram
+    direction TB
+    class GatedDeltaNetAttention
+    class AscendGatedDeltaNetAttention310
+    class Qwen35Model
+    class AscendQwen35DecoderLayer
+    class AscendAttentionBackendImpl310
+
+    GatedDeltaNetAttention <|-- AscendGatedDeltaNetAttention310
+    Qwen35Model --> AscendQwen35DecoderLayer
+    AscendQwen35DecoderLayer --> AscendGatedDeltaNetAttention310 : linear_attn
+    AscendQwen35DecoderLayer --> AscendAttentionBackendImpl310 : full_attn
+```
+
+| 类 / 函数 | 310P 职责（#10309） |
+|-----------|---------------------|
+| `AscendGatedDeltaNetAttention310` ★ | spec/non-spec 分支；uniform spec graph 下 conv1d `buffer_replay` |
+| `update_conv1d_graph_params_310p` ★ | graph replay 前刷新 conv1d device buffer（经 `patch_idex_310` 注册到 `gdn_ops`） |
+| `_merge_spec_and_non_spec_outputs_310` ★ | 避免 NPU `index_copy_`，direct indexing 合并输出 |
+| `_flatten_state_indices` ★ | uniform spec 用 reshape 替代 `masked_select`（兼容 stream capture） |
+
+调用方：`NPUModelRunner310` 做 ① Verify forward，`AscendEagleProposer` 做 ③ Draft forward，二者均进入 `Qwen35Model`。
+
+#### 1.3.5 ASCII 备用（整体，纵向对齐）
 
 ```
 +-------------------+
@@ -133,9 +189,10 @@ classDiagram
           |
           v
 +-----------------------------+
-|     NPUModelRunner310       |  [310P]
-|  _prepare_inputs            |
+|     NPUModelRunner310       |  [310P ★]
 |  AscendSampler310           |
+|  AscendRejectionSampler310  |
+|  AscendKVBlockZeroer310     |
 +-------------+---------------+
               | extends
               v
@@ -146,18 +203,19 @@ classDiagram
         +-----------------------------+
         |                             |
         v                             v
-+----------------+          +-------------------+
-| AscendEagle    |          | AscendRejection   |
-| Proposer       |          | Sampler           |
-+-------+--------+          +---------+---------+
-        |                             |
-        | draft                       | uses AscendSampler310 [310P]
-        |                             |
++----------------+          +------------------------+
+| AscendEagle    |          | AscendRejection        |
+| Proposer       |          | Sampler310             |
+| (+ Proposer310 |          |  → fill_exponential    |
+|   patch)       |          +------------------------+
++-------+--------+
+        | ③ Draft
+        |
         +-------------+---------------+
                       |
                       v
               +---------------+
-              |  Qwen35Model  |  <-- verify (Runner)
+              |  Qwen35Model  |  <-- ① Verify (Runner)
               +-------+-------+
                       |
                       v
@@ -169,9 +227,15 @@ classDiagram
               +-----------+-----------+
               |                       |
               v                       v
-        +-----------+         +-------------------+
-        |  GDN310   |         | AttnBackend310    |  [310P]
-        +-----------+         +-------------------+
++---------------------------+  +---------------------------+
+| AscendGatedDeltaNet       |  | AscendAttentionBackend    |
+| Attention310  [GDN ★]     |  | Impl310  [Attn ★]         |
+| conv1d buffer_replay      |  | splitfuse + query_lens_cpu|
++---------------------------+  +---------------------------+
+              ^                       ^
+              |                       |
+    MetadataBuilder310 ───────────────┘
+    (query_lens_cpu)
 ```
 
 ### 1.4 310P 开发工作量一览
@@ -193,7 +257,11 @@ classDiagram
 
 > **功能**：在 Verify + Rejection 完成后，由 `AscendEagleProposer` 调用 Qwen3.5 的 **MTP 层**，以上一轮接受的 token 与 Verify 输出的 hidden states 为输入，**一次性预测 K 个 draft token**。这些 draft 不直接写入用户可见输出，而是交给 Scheduler，在 **下一轮 ① Verify** 中由主模型并行验证，从而在不增加主模型前向次数的前提下提高 decode 吞吐。
 
+**相关类图**：§1.3.2（Proposer 继承链 + `AscendSpecDecodeBaseProposer310` patch）、§1.3.4（Draft forward 同样经过 GDN / full_attn）。
+
 ### 2.1 子类图
+
+与 §1.3.2 一致；310P 通过 `patch_idex_310` 将 `AscendSpecDecodeBaseProposer310.prepare_next_token_ids_padded` 挂到基类，**不改变** `AscendEagleProposer` 继承关系。
 
 ```mermaid
 classDiagram
@@ -201,11 +269,13 @@ classDiagram
     class SpecDecodeBaseProposer
     class EagleProposer
     class AscendSpecDecodeBaseProposer
+    class AscendSpecDecodeBaseProposer310
     class AscendEagleProposer
     class ACLGraphWrapper
     SpecDecodeBaseProposer <|-- AscendSpecDecodeBaseProposer
     EagleProposer <|-- AscendEagleProposer
     AscendSpecDecodeBaseProposer <|-- AscendEagleProposer
+    AscendSpecDecodeBaseProposer <|-- AscendSpecDecodeBaseProposer310
     AscendSpecDecodeBaseProposer ..> ACLGraphWrapper
 ```
 
@@ -215,7 +285,7 @@ classDiagram
 
 ```
                  +----------------------+
-                 |  AscendEagleProposer |
+                 |  AscendEagleProposer |  method=mtp
                  +----------+-----------+
                             |
            +----------------+----------------+
@@ -224,7 +294,9 @@ classDiagram
 +---------------------------+      +------------------+
 | AscendSpecDecodeBase      |      |  EagleProposer   |
 | Proposer                  |      |  (vLLM)          |
-+-------------+-------------+      +------------------+
+|  ↑ patch: Proposer310     |      +------------------+
+|    prepare_next_token_*   |
++-------------+-------------+
               | extends
               v
 +---------------------------+
@@ -232,6 +304,7 @@ classDiagram
 | (vLLM)                    |
 +---------------------------+
 
+AscendSpecDecodeBaseProposer310 ──patch_idex_310──> prepare_next_token_ids_padded
 AscendSpecDecodeBaseProposer --> ACLGraphWrapper (optional FULL graph)
 ```
 
@@ -282,6 +355,8 @@ sample_tokens()
 ## 3. 主模型验证（① Verify）
 
 > **功能**：接收 Scheduler 本轮调度的 token 布局（每个请求 **1 个已接受 token + K 个待验证 draft**），驱动 Qwen3.5 **全层主模型**做一次前向。在更新 KV cache 的同时，为每个 draft 位置及 bonus 位置产出对应 logits 行，供 **② Rejection** 逐位比对。Verify 是投机解码的「裁判计算」阶段——只算 target 侧概率，不做接受/拒绝决策。
+
+**相关类图**：§1.3.3（full_attention / splitfuse）、§1.3.4（linear_attention / GDN）。
 
 ### 3.1 执行位置
 
@@ -361,6 +436,8 @@ Verify 时 **一次 forward 处理多条 scheduled token**（已接受 token + K
 ## 4. RejectionSampler（② Rejection / 310P：无 Triton）
 
 > **功能**：读取 Verify 产出的 target logits 与 metadata 中的 draft token，执行 **rejection sampling**：从第 0 个 draft 起逐位检查是否与 target 预测一致，在首个不匹配处截断；被接受的位写入 target 预测 token。若 K 个 draft 全部接受（greedy 场景），再从 bonus logits 采样 **额外 1 个 token**。输出 `sampled_token_ids` 即本轮各请求 **实际落盘的 token 序列**，并作为 ③ Draft 的 `next_token_ids` 输入。
+
+**相关类图**：§1.3.1（`AscendRejectionSampler310` / `AscendSampler310` / `fill_exponential_310p`）。
 
 ### 4.1 类与分支选择
 
