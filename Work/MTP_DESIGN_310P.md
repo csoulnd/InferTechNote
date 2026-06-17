@@ -1,7 +1,8 @@
 # MTP（Multi-Token Prediction）在 Ascend 310P 上的设计说明
 
-> 模型场景：**Qwen3.5 + MTP**（`speculative_config.method = "mtp"`）。  
-> **主线一致、实现按算子能力适配**：MTP 的 Drafter → Verify → Rejection 流程与 910B 等主分支相同；310P 在保持该流程的前提下，根据本设备算子支持情况调整实现，主要体现在 **Runner 输入准备**、**Attention/GDN**、**Sampler/Rejection**（无 Triton / triton-ascend）等环节。
+> 模型场景：**Qwen3.5 + MTP**（`speculative_config.method = "mtp"` 或 E2E 中 `"qwen3_5_mtp"`）。  
+> **主线一致、实现按算子能力适配**：MTP 的 Drafter → Verify → Rejection 流程与 910B 等主分支相同；310P 在保持该流程的前提下，根据本设备算子支持情况调整实现，主要体现在 **Runner 输入准备**、**Attention/GDN**、**Sampler/Rejection**（无 Triton / triton-ascend）、**KV Block Zeroer**、**Graph Capture/Replay** 等环节。  
+> **实现 PR**：[vllm-ascend #10309](https://github.com/vllm-project/vllm-ascend/pull/10309)（已合入 main，merge commit `969baed`）。
 
 ---
 
@@ -17,7 +18,7 @@ sequenceDiagram
     participant SCH as Scheduler
     participant MR as NPUModelRunner310
     participant TM as Qwen35 Target Model
-    participant RS as AscendRejectionSampler
+    participant RS as AscendRejectionSampler310
     participant SAM as AscendSampler310
     participant DR as AscendEagleProposer
 
@@ -60,20 +61,22 @@ classDiagram
     class NPUModelRunner310
     class AscendEagleProposer
     class AscendRejectionSampler
+    class AscendRejectionSampler310
     class AscendSampler310
     Scheduler --> NPUModelRunner310
     NPUModelRunner310 --|> NPUModelRunner
     NPUModelRunner --> AscendEagleProposer
-    NPUModelRunner --> AscendRejectionSampler
+    NPUModelRunner310 --> AscendRejectionSampler310
     NPUModelRunner310 --> AscendSampler310
-    AscendRejectionSampler --> AscendSampler310
+    AscendRejectionSampler310 --|> AscendRejectionSampler
+    AscendRejectionSampler310 --> AscendSampler310
 ```
 
 | 类 | 310P |
 |----|------|
 | `NPUModelRunner310` | ★ `_prepare_inputs`、挂载 `AscendSampler310` |
 | `AscendSampler310` | ★ `fill_exponential_310p` |
-| `AscendRejectionSampler` | ★ 无 Triton 时走 PyTorch 路径 |
+| `AscendRejectionSampler310` | ★ 继承基类；`sample_recovered_tokens` 走 CPU RNG |
 
 #### 1.2.2 模型前向与 310P Attention 算子
 
@@ -92,7 +95,10 @@ classDiagram
 | 类 | 310P |
 |----|------|
 | `GDN310` | ★ linear_attn / spec 分支 |
-| `AscendAttentionBackendImpl310` | ★ `forward_spec_decoding_310` |
+| `AscendAttentionBackendImpl310` | ★ `SpecDecoding` → `forward_chunked_prefill_310`（splitfuse） |
+| `AscendKVBlockZeroer310` | ★ 无 Triton 时 tensor 写零 KV block |
+| `AscendRejectionSampler310` | ★ CPU RNG recovery 路径 |
+| `AscendSpecDecodeBaseProposer310` | ★ 空 discard 索引 guard |
 
 调用方（见 1.2.1）：`NPUModelRunner` 做 Verify forward，`AscendEagleProposer` 做 Draft forward，二者均进入 `Qwen35Model`。
 
@@ -150,13 +156,14 @@ classDiagram
 
 | 模块 | 路径 | 310P 工作说明 |
 |------|------|----------------|
-| **Worker / Runner** | `_310p/model_runner_310p.py`, `_310p/worker_310p.py` | 使用 `NPUModelRunner310`；CPU 侧 slot/block 准备；挂载 `AscendSampler310` / `AscendRejectionSampler` |
-| **Attention (Full)** | `_310p/attention/attention_v1.py` | 新增 `forward_spec_decoding_310`（MTP Verify/Draft 的 `SpecDecoding` 状态） |
-| **Linear Attn (GDN)** | `_310p/ops/fla/gdn_310.py` | Spec 序列 mask 下 `spec_token_indx` / `spec_state_indices_tensor` 分支 |
-| **Sampler** | `_310p/sample/sampler.py` | CPU 指数分布 `fill_exponential_310p`（无 Triton 时 recovery 采样） |
-| **Rejection** | `sample/rejection_sampler.py` | `is_310p()` 调用 `fill_exponential_310p`；`HAS_TRITON=False` 走 PyTorch 实现 |
-| **Proposer** | `spec_decode/llm_base_proposer.py` | 与主分支共用；MTP 仍设 `AscendAttentionState.SpecDecoding`（图捕获/dummy_run） |
-| **模型 Patch** | `patch/worker/patch_qwen3_5.py` | Qwen3.5 `linear_attn` / `full_attn` 分支（主分支已有，310P 走 310 算子） |
+| **Worker / Runner** | `_310p/model_runner_310p.py`, `_310p/worker_310p.py` | 使用 `NPUModelRunner310`；CPU 侧 slot/block 准备；挂载 `AscendSampler310` / `AscendRejectionSampler310`；MTP uniform batch 图捕获策略 |
+| **Attention (Full)** | `_310p/attention/attention_v1.py`, `_310p/attention/metadata_builder.py` | `SpecDecoding` / `ChunkedPrefill` 均走 `forward_chunked_prefill_310`；`query_lens_cpu` 供 ATB splitfuse |
+| **KV Block Zeroer** | `_310p/kv_block_zeroer.py` | `AscendKVBlockZeroer310`：MTP≥2 时新分配 KV block 直接 tensor 写零（替代 Triton） |
+| **Linear Attn (GDN)** | `_310p/ops/fla/gdn_310.py` | Spec 序列 mask 分支；uniform spec graph 下 conv1d `buffer_replay` |
+| **Sampler** | `_310p/sample/sampler.py` | CPU 指数分布 `fill_exponential_310p`（Top-K/Top-P 与 Rejection 共用） |
+| **Rejection** | `_310p/sample/rejection_sampler.py` | `AscendRejectionSampler310`：绑定 PyTorch recovery + `fill_exponential_310p` |
+| **Proposer** | `_310p/spec_decode/llm_base_proposer_310.py` | 310P patch 空 `discard_request_indices` 时不调用 NPU `index_fill_` |
+| **模型 Patch** | `patch/worker/patch_qwen3_5.py`, `patch/worker/patch_idex_310.py` | Qwen3.5 层走 310 算子；GDN conv1d graph replay / proposer patch 注册 |
 
 ---
 
@@ -244,7 +251,7 @@ sample_tokens()
 ### 2.4 310P 在 Draft 阶段的实际分支
 
 - **逻辑分支**：与主分支相同（`llm_base_proposer.py` 中 `method == "mtp"`）。
-- **算子分支**：Draft 模型若含 **linear_attention** 层，走 `gdn_310.py`；**full_attention** 层在 `SpecDecoding` 下走 `forward_spec_decoding_310` → 内部复用 `forward_chunked_prefill_310` + splitfuse mask。
+- **算子分支**：Draft 模型若含 **linear_attention** 层，走 `gdn_310.py`；**full_attention** 层在 `SpecDecoding` 下与 `ChunkedPrefill` 相同，走 `forward_chunked_prefill_310` + splitfuse mask（#10309 将二者合并为同一路径）。
 
 ---
 
@@ -259,7 +266,7 @@ execute_model()
   ├─ _model_forward() → Qwen3.5 全层
   └─ compute_logits(hidden_states[logits_indices])
 sample_tokens()
-  └─ _sample(logits, spec_decode_metadata) → AscendRejectionSampler
+  └─ _sample(logits, spec_decode_metadata) → AscendRejectionSampler310
 ```
 
 ### 3.2 Attention 状态机（MTP）
@@ -281,7 +288,7 @@ flowchart TD
 ```
 
 **Qwen3.5 + MTP Decode（每轮调度 1+K 个 token）**：通常 **不是** `num_scheduled_tokens == 1`，会进入 **ChunkedPrefill** 或 **SpecDecoding**（`num_valid_tokens == 1` 的 spec 路径）。  
-**310P Verify**：`ChunkedPrefill` → `forward_chunked_prefill_310`；若状态为 `SpecDecoding` → `forward_spec_decoding_310`。
+**310P Verify**：`ChunkedPrefill` 与 `SpecDecoding` 均 → `forward_chunked_prefill_310`（splitfuse）；metadata 构建阶段预填 `query_lens_cpu` 供 ATB host qLens。
 
 ### 3.3 Qwen3.5：Linear Attn vs Full Attn
 
@@ -330,14 +337,16 @@ Verify 时 **一次 forward 处理多条 scheduled token**（已接受 token + K
 ### 4.1 类与分支选择
 
 ```
-AscendRejectionSampler.forward()
-  ├─ bonus_logits = logits[bonus_logits_indices]     # [B, V/tp]
-  ├─ AscendSampler310 / AscendSampler → bonus_token_ids  # [B, 1]
-  ├─ target_logits = apply_logits_processors + apply_sampling_constraints
-  └─ rejection_sample(..., draft_probs=None)         # MTP 无 draft_probs
-        ├─ HAS_TRITON?  → 310P 通常为 False
-        ├─ greedy: rejection_greedy_sample_pytorch (或 spec_len=1 快速路径)
-        └─ random: sample_recovered_tokens → rejection_random_sample_pytorch
+AscendRejectionSampler310.forward()                  # 310P 专用子类
+  ├─ _bind_sample_recovered_tokens(sample_recovered_tokens)  # 注入 310P recovery
+  └─ AscendRejectionSampler.forward()
+       ├─ bonus_logits = logits[bonus_logits_indices]     # [B, V/tp]
+       ├─ AscendSampler310 → bonus_token_ids               # [B, 1]
+       ├─ target_logits = apply_logits_processors + apply_sampling_constraints
+       └─ rejection_sample(..., draft_probs=None)         # MTP 无 draft_probs
+             ├─ HAS_TRITON?  → 310P 通常为 False
+             ├─ greedy: rejection_greedy_sample_pytorch (或 spec_len=1 快速路径)
+             └─ random: sample_recovered_tokens → fill_exponential_310p + pytorch
 ```
 
 ### 4.2 310P 特化函数与算子
@@ -348,7 +357,7 @@ AscendRejectionSampler.forward()
 | Temperature / TopK / TopP | `apply_top_k_top_p` | NPU PyTorch | `apply_sampling_constraints` |
 | Greedy argmax（TP） | `greedy_sample` | `all_gather` + `argmax` | `enable_reduce_sample` 时 |
 | Expand batch→token | `expand_pytorch` | PyTorch | 替代 `expand_triton` |
-| Recovery 分布 q | **`fill_exponential_310p`** | **CPU RNG → NPU** | `_310p/sample/sampler.py` |
+| Recovery 分布 q | **`fill_exponential_310p`** | **CPU RNG → NPU** | `_310p/sample/sampler.py`（Sampler + Rejection 共用） |
 | Recovery token | `sample_recovered_tokens_pytorch` | PyTorch | `argmax(max(P_target - P_draft, 0) / q)` |
 | Greedy RS | `rejection_greedy_sample_pytorch` | PyTorch | draft == target_argmax 则接受 bonus |
 | Random RS | `rejection_random_sample_pytorch` | PyTorch | `P_target/P_draft >= U` |
@@ -382,41 +391,192 @@ recovered_id = argmax(prob / q)
 | 输入 | `bonus_token_ids` | `[B, 1]` |
 | 输出 | `SamplerOutput.sampled_token_ids` | `[B, K+1]`，`int32`，未用位置为 `PLACEHOLDER_TOKEN_ID` |
 
-### 4.5 与最近提交的关系
+### 4.5 Graph Capture 策略（310P MTP）
 
-- **`2f660054`**：`_310p/attention/attention_v1.py` 增加 `forward_spec_decoding_310`，使 Draft/Verify 的 `SpecDecoding` 在 310P 可执行。
-- **`627189ce`**：`fill_exponential_310p`、`_random_sample_310p` 完善；`rejection_sampler.py` 中 `is_310p()` 走 CPU 指数采样，修复 recovery 随机性。
+310P ACL graph 与 910B 的 FIA fullgraph 契约不同：`NPUModelRunner310` 仅在 **uniform spec-decode batch**（每 req 恰好 `1+K` token、`attn_state == SpecDecoding`）时走 graph replay；mixed prefill 或非 uniform batch 强制 eager。
+
+| 场景 | 行为 |
+|------|------|
+| uniform decode + MTP + 非 MLA | dummy capture 时 `_mtp_spec_dummy_capture=True`，强制 `SpecDecoding` 以 splitfuse 构图 |
+| mixed prefill / 非 uniform token 数 | `_determine_batch_execution_and_padding` → `force_eager=True` |
+| GDN conv1d（uniform spec） | capture 注册 `buffer_replay`；replay 前 `update_conv1d_graph_params_310p` 刷新 device buffer |
+| 310P 编译 | `fuse_muls_add` fusion pass 在 `is_310p()` 时禁用 |
 
 ---
 
 ## 5. 配置示例（Qwen3.5 MTP）
+
+**生产 / serve**（method 为 `"mtp"`）：
 
 ```bash
 vllm serve Qwen/Qwen3.5-0.8B \
   --speculative_config '{"method": "mtp", "num_speculative_tokens": 1}'
 ```
 
-E2E 参考：`tests/e2e/light/single-card/test_qwen3_5_0_8b.py`（`FULL_DECODE_ONLY` + MTP）。
+**310P E2E（#10309，method 为 `"qwen3_5_mtp"`）**：
 
-**约束**（见 `Multi_Token_Prediction.md`）：`num_speculative_tokens + 1` 受 FIA TND layout 限制，`decode_threshold <= 16`（即 K ≤ 15）。
+```python
+VllmRunner(
+    "Qwen/Qwen3.5-4B",
+    tensor_parallel_size=1,
+    enforce_eager=True,          # PR 路径；图模式需 uniform batch + MTP=1 验证
+    dtype="float16",
+    max_model_len=2048,
+    mamba_ssm_cache_dtype="float16",
+    speculative_config={
+        "method": "qwen3_5_mtp",
+        "num_speculative_tokens": 1,
+    },
+)
+```
+
+E2E 参考：
+
+- `tests/e2e/pull_request/one_card/_310p/test_spec_decode_mtp_310p.py`（#10309 新增）
+- `tests/e2e/light/single-card/test_qwen3_5_0_8b.py`（`FULL_DECODE_ONLY` + MTP）
+
+**约束**（见 `Multi_Token_Prediction.md`）：`num_speculative_tokens + 1` 受 FIA TND layout 限制，`decode_threshold <= 16`（即 K ≤ 15）。Qwen3.5 仅 1 层 MTP，理论支持 K>1，**#10309 仅验证 K=1**。
 
 ---
 
-## 6. 相关源文件索引
+## 6. 接口说明（PR #10309）
+
+以下接口为 310P MTP 相对主线的增量或 override；调用关系仍嵌入 §1–§4 所述 Drafter → Verify → Rejection 流程。
+
+### 6.1 Runner / Graph
+
+| 接口 | 签名 / 位置 | 说明 |
+|------|-------------|------|
+| `NPUModelRunner310.__init__` | `_310p/model_runner_310p.py` | 挂载 `AscendSampler310`、`AscendRejectionSampler310` |
+| `_determine_batch_execution_and_padding` | 同上 | MTP 非 uniform spec batch → `force_eager=True` |
+| `_build_attn_state` | 同上 | decode 阶段 uniform `1+K` batch 强制 `AscendAttentionState.SpecDecoding` |
+| `_build_attention_metadata` | 同上 | `_mtp_spec_dummy_capture` 时 override 为 `SpecDecoding`（图捕获） |
+| `_dummy_run` | 同上 | 设置/清理 `_mtp_spec_dummy_capture` 上下文 |
+| `_init_kv_zero_meta` | 同上 | 初始化 `AscendKVBlockZeroer310` 替代 Triton zeroer |
+| `_prepare_input_ids` | 同上 | spec token 索引计算改用 `int(cu_num_tokens[...])`（避免 graph 下 `.item()` 同步） |
+
+### 6.2 Attention / Metadata
+
+| 接口 | 签名 / 位置 | 说明 |
+|------|-------------|------|
+| `AscendAttentionBackendImpl310.forward_impl` | `_310p/attention/attention_v1.py` | `SpecDecoding` 与 `ChunkedPrefill` 同分支 → `forward_chunked_prefill_310` |
+| `forward_chunked_prefill_310` | 同上 | splitfuse v1/v2；`output_slice` 写有效 token 后返回完整 `output` buffer（padding 兼容 graph） |
+| `set_query_lens_cpu` / `get_query_lens_cpu` | `_310p/attention/metadata_builder.py` | 动态挂载 host `qLens`；graph capture 时缺失则 `RuntimeError` |
+| `AscendAttentionMetadataBuilder310.build` | 同上 | `SpecDecoding`/`ChunkedPrefill` 时填充 `query_lens_cpu`、绑定 `seq_lens`/`query_start_loc` device view |
+
+### 6.3 KV Cache
+
+| 接口 | 签名 / 位置 | 说明 |
+|------|-------------|------|
+| `AscendKVBlockZeroer310.__init__(device, pin_memory)` | `_310p/kv_block_zeroer.py` | 310P KV block 清零器 |
+| `init_meta(attn_groups_iter, kernel_block_sizes, ...)` | 同上 | 收集 KV tensor 指针、计算 `logical_page_ratio` |
+| `zero_block_ids(block_ids: list[int])` | 同上 | 按 logical page 切片 `kv[start:end].zero_()`；空列表 no-op |
+
+### 6.4 Sampler / Rejection
+
+| 接口 | 签名 / 位置 | 说明 |
+|------|-------------|------|
+| `_get_cpu_generator_310p(i, generator)` | `_310p/sample/sampler.py` | 按 slot + `id(generator)` 缓存 CPU Generator，同步 RNG 状态 |
+| `_fill_cpu_exponential_310p(q_cpu, generators, has_draft_mask?)` | 同上 | 在 CPU 张量上填充 Exponential(1)；可选 draft mask |
+| `fill_exponential_310p(q, generators, has_draft_mask?)` | 同上 | CPU fill → `copy_` 回 NPU；Rejection recovery 与 Top-K 采样共用 |
+| `_random_sample_310p(probs, generators)` | 同上 | Gumbel-max：`probs.div_(q).argmax` |
+| `AscendRejectionSampler310.forward(metadata, draft_probs, logits, sampling_metadata)` | `_310p/sample/rejection_sampler.py` | 临时绑定 `sample_recovered_tokens` 后调用父类 |
+| `AscendRejectionSampler310.sample_recovered_tokens(...)` | 同上 | `fill_exponential_310p` + `sample_recovered_tokens_pytorch` |
+
+### 6.5 GDN / Proposer
+
+| 接口 | 签名 / 位置 | 说明 |
+|------|-------------|------|
+| `update_conv1d_graph_params_310p(update_stream, forward_context, num_tokens, ...)` | `_310p/ops/fla/gdn_310.py` | uniform spec graph replay 前刷新 conv1d qsl/cache_indices/num_accepted buffer |
+| `_merge_spec_and_non_spec_outputs_310(...)` | 同上 | 避免 NPU `index_copy_`；用 direct indexing 合并 GDN 输出 |
+| `_flatten_state_indices(...)` | 同上 | uniform spec 用 reshape 替代 `masked_select`（避免 capture 失败） |
+| `AscendSpecDecodeBaseProposer310.prepare_next_token_ids_padded(...)` | `_310p/spec_decode/llm_base_proposer_310.py` | `discard_request_indices.numel()==0` 时跳过 `index_fill_` |
+
+**Patch 注册**（`patch/worker/patch_idex_310.py`）：`gdn_ops.update_conv1d_graph_params = update_conv1d_graph_params_310p`；proposer 方法替换为 310 实现。
+
+### 6.6 关键数据结构
+
+| 结构 | 字段 | MTP 用途 |
+|------|------|----------|
+| `SpecDecodeMetadata` | `draft_token_ids`, `target_logits_indices`, `bonus_logits_indices`, `logits_indices`, `cu_num_draft_tokens` | Verify + RS 索引（见 §3.4） |
+| `AscendMetadata` (+动态) | `query_lens_cpu` | ATB splitfuse host qLens；graph replay 必需 |
+| `GDNAttentionMetadata` | `spec_token_indx`, `spec_state_indices_tensor`, `spec_query_start_loc`, `num_accepted_tokens` | linear_attn Verify/Draft |
+
+---
+
+## 7. 测试用例说明（PR #10309）
+
+测试环境（PR 描述）：vLLM **v0.21.0**，vLLM main `9090368`。
+
+### 7.1 E2E
+
+**文件**：`tests/e2e/pull_request/one_card/_310p/test_spec_decode_mtp_310p.py`
+
+| 用例 | 覆盖模块 | 验证要点 |
+|------|----------|----------|
+| `test_qwen3_5_mtp_tp1_eager` | Runner + Attention + GDN + Proposer + Rejection 全链路 | Qwen3.5-4B、TP=1、`enforce_eager=True`、`method=qwen3_5_mtp`、`K=1`；prompt `"Hello, my name is"` greedy 生成 8 token 不崩溃 |
+
+### 7.2 单元测试 — KV Block Zeroer
+
+**文件**：`tests/ut/_310p/test_kv_block_zeroer_310p.py`
+
+| 用例 | 覆盖接口 | 验证要点 |
+|------|----------|----------|
+| `test_zero_block_ids_noop_when_empty` | `zero_block_ids([])` | 空 block 列表时 KV tensor 不变 |
+| `test_zero_block_ids_zeros_target_slices` | `zero_block_ids([1])` | `logical_page_ratio=2` 时 block 1 对应 slice `[2:4]` 被清零 |
+| `test_init_meta_deduplicates_kv_pointers` | `init_meta(...)` | K/V 共享存储时 `_kv_tensors` 去重为 1 条 |
+
+### 7.3 单元测试 — Attention
+
+**文件**：`tests/ut/_310p/attention/test_attention_v1_310.py`
+
+| 用例 | 覆盖接口 | 验证要点 |
+|------|----------|----------|
+| `test_forward_mtp_310` | `forward_impl` + `forward_chunked_prefill_310` | `attn_state=SpecDecoding` 时不再 `NotImplementedError`，而是委托 splitfuse 路径 |
+
+### 7.4 单元测试 — Sampler
+
+**文件**：`tests/ut/_310p/sample/test_sampler_310.py`（#10309 增强 mock，与 Rejection 共用 `_fill_cpu_exponential_310p`）
+
+| 用例 | 覆盖接口 | 验证要点 |
+|------|----------|----------|
+| `test_random_sample_310p_reuse_cpu_generator_cache` | `_random_sample_310p` / `_get_cpu_generator_310p` | 同 slot、同 generator 连续采样仅创建 1 次 CPU Generator |
+| `test_random_sample_310p_fallback_to_initial_seed_when_set_state_failed` | `_get_cpu_generator_310p` | `get_state`/`set_state` 失败时回退 `manual_seed(initial_seed)` |
+| `test_random_sample_310p_rebuild_cache_when_generator_identity_changes` | `_get_cpu_generator_310p` | 同 slot 换 generator 对象时重建缓存 |
+
+### 7.5 测试覆盖矩阵
+
+| 能力域 | UT | E2E | 备注 |
+|--------|----|-----|------|
+| SpecDecoding splitfuse forward | ✓ | ✓ | |
+| CPU RNG rejection recovery | ✓（sampler） | ✓（隐式） | Rejection 无独立 UT，经 E2E 覆盖 |
+| KV block zero（MTP≥2） | ✓ | — | 当前 E2E 仅 K=1 |
+| GDN graph buffer replay | — | 部分 | eager E2E；graph 需单独场景 |
+| K>1 多步 draft | — | — | 理论支持，待补充 |
+
+---
+
+## 8. 相关源文件索引
 
 | 主题 | 文件 |
 |------|------|
 | Runner 主流程 | `vllm_ascend/worker/model_runner_v1.py` |
 | 310P Runner | `vllm_ascend/_310p/model_runner_310p.py` |
+| 310P KV Zeroer | `vllm_ascend/_310p/kv_block_zeroer.py` |
 | MTP Propose | `vllm_ascend/spec_decode/llm_base_proposer.py` |
+| 310P Proposer patch | `vllm_ascend/_310p/spec_decode/llm_base_proposer_310.py` |
 | Proposer 工厂 | `vllm_ascend/spec_decode/__init__.py` |
-| Rejection | `vllm_ascend/sample/rejection_sampler.py` |
+| Rejection（基类） | `vllm_ascend/sample/rejection_sampler.py` |
+| 310P Rejection | `vllm_ascend/_310p/sample/rejection_sampler.py` |
 | 310P Sampler | `vllm_ascend/_310p/sample/sampler.py` |
 | 310P Attention | `vllm_ascend/_310p/attention/attention_v1.py` |
+| 310P Metadata Builder | `vllm_ascend/_310p/attention/metadata_builder.py` |
 | 310P GDN | `vllm_ascend/_310p/ops/fla/gdn_310.py` |
+| 310P patch 入口 | `vllm_ascend/patch/worker/patch_idex_310.py` |
 | Qwen3.5 层 | `vllm_ascend/patch/worker/patch_qwen3_5.py` |
+| E2E 310P MTP | `tests/e2e/pull_request/one_card/_310p/test_spec_decode_mtp_310p.py` |
 | 功能文档 | `docs/source/user_guide/feature_guide/Multi_Token_Prediction.md` |
 
 ---
 
-*文档版本：与当前工作区 `627189ce` / `2f660054` 提交对齐。*
+*文档版本：与 [PR #10309](https://github.com/vllm-project/vllm-ascend/pull/10309)（merge `969baed`）对齐；早期 attention/sampler 探索提交 `2f660054` / `627189ce` 已合入该 PR。*
