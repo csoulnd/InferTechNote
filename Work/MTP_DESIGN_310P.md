@@ -546,66 +546,38 @@ E2E 参考：
 
 ## 6. 接口说明（PR #10309）
 
-以下接口为 310P MTP 相对主线的增量或 override；调用关系仍嵌入 §1–§4 所述 Drafter → Verify → Rejection 流程。
+310P MTP 相对主线的增量接口与关键数据结构，统一如下（调用关系见 §1–§4）。
 
-### 6.1 Runner / Graph
-
-| 接口 | 签名 / 位置 | 说明 |
+| 模块 | 接口 / 结构 | 说明 |
 |------|-------------|------|
-| `NPUModelRunner310.__init__` | `_310p/model_runner_310p.py` | 挂载 `AscendSampler310`、`AscendRejectionSampler310` |
-| `_determine_batch_execution_and_padding` | 同上 | MTP 非 uniform spec batch → `force_eager=True` |
-| `_build_attn_state` | 同上 | decode 阶段 uniform `1+K` batch 强制 `AscendAttentionState.SpecDecoding` |
-| `_build_attention_metadata` | 同上 | `_mtp_spec_dummy_capture` 时 override 为 `SpecDecoding`（图捕获） |
-| `_dummy_run` | 同上 | 设置/清理 `_mtp_spec_dummy_capture` 上下文 |
-| `_init_kv_zero_meta` | 同上 | 初始化 `AscendKVBlockZeroer310` 替代 Triton zeroer |
-| `_prepare_input_ids` | 同上 | spec token 索引计算改用 `int(cu_num_tokens[...])`（避免 graph 下 `.item()` 同步） |
-
-### 6.2 Attention / Metadata
-
-| 接口 | 签名 / 位置 | 说明 |
-|------|-------------|------|
-| `AscendAttentionBackendImpl310.forward_impl` | `_310p/attention/attention_v1.py` | `SpecDecoding` 与 `ChunkedPrefill` 同分支 → `forward_chunked_prefill_310` |
-| `forward_chunked_prefill_310` | 同上 | splitfuse v1/v2；`output_slice` 写有效 token 后返回完整 `output` buffer（padding 兼容 graph） |
-| `set_query_lens_cpu` / `get_query_lens_cpu` | `_310p/attention/metadata_builder.py` | 动态挂载 host `qLens`；graph capture 时缺失则 `RuntimeError` |
-| `AscendAttentionMetadataBuilder310.build` | 同上 | `SpecDecoding`/`ChunkedPrefill` 时填充 `query_lens_cpu`、绑定 `seq_lens`/`query_start_loc` device view |
-
-### 6.3 KV Cache
-
-| 接口 | 签名 / 位置 | 说明 |
-|------|-------------|------|
-| `AscendKVBlockZeroer310.__init__(device, pin_memory)` | `_310p/kv_block_zeroer.py` | 310P KV block 清零器 |
-| `init_meta(attn_groups_iter, kernel_block_sizes, ...)` | 同上 | 收集 KV tensor 指针、计算 `logical_page_ratio` |
-| `zero_block_ids(block_ids: list[int])` | 同上 | 按 logical page 切片 `kv[start:end].zero_()`；空列表 no-op |
-
-### 6.4 Sampler / Rejection
-
-| 接口 | 签名 / 位置 | 说明 |
-|------|-------------|------|
-| `_get_cpu_generator_310p(i, generator)` | `_310p/sample/sampler.py` | 按 slot + `id(generator)` 缓存 CPU Generator，同步 RNG 状态 |
-| `_fill_cpu_exponential_310p(q_cpu, generators, has_draft_mask?)` | 同上 | 在 CPU 张量上填充 Exponential(1)；可选 draft mask |
-| `fill_exponential_310p(q, generators, has_draft_mask?)` | 同上 | CPU fill → `copy_` 回 NPU；Rejection recovery 与 Top-K 采样共用 |
-| `_random_sample_310p(probs, generators)` | 同上 | Gumbel-max：`probs.div_(q).argmax` |
-| `AscendRejectionSampler310.forward(metadata, draft_probs, logits, sampling_metadata)` | `_310p/sample/rejection_sampler.py` | 临时绑定 `sample_recovered_tokens` 后调用父类 |
-| `AscendRejectionSampler310.sample_recovered_tokens(...)` | 同上 | `fill_exponential_310p` + `sample_recovered_tokens_pytorch` |
-
-### 6.5 GDN / Proposer
-
-| 接口 | 签名 / 位置 | 说明 |
-|------|-------------|------|
-| `update_conv1d_graph_params_310p(update_stream, forward_context, num_tokens, ...)` | `_310p/ops/fla/gdn_310.py` | uniform spec graph replay 前刷新 conv1d qsl/cache_indices/num_accepted buffer |
-| `_merge_spec_and_non_spec_outputs_310(...)` | 同上 | 避免 NPU `index_copy_`；用 direct indexing 合并 GDN 输出 |
-| `_flatten_state_indices(...)` | 同上 | uniform spec 用 reshape 替代 `masked_select`（避免 capture 失败） |
-| `AscendSpecDecodeBaseProposer310.prepare_next_token_ids_padded(...)` | `_310p/spec_decode/llm_base_proposer_310.py` | `discard_request_indices.numel()==0` 时跳过 `index_fill_` |
-
-**Patch 注册**（`patch/worker/patch_idex_310.py`）：`gdn_ops.update_conv1d_graph_params = update_conv1d_graph_params_310p`；proposer 方法替换为 310 实现。
-
-### 6.6 关键数据结构
-
-| 结构 | 字段 | MTP 用途 |
-|------|------|----------|
-| `SpecDecodeMetadata` | `draft_token_ids`, `target_logits_indices`, `bonus_logits_indices`, `logits_indices`, `cu_num_draft_tokens` | Verify + RS 索引（见 §3.4） |
-| `AscendMetadata` (+动态) | `query_lens_cpu` | ATB splitfuse host qLens；graph replay 必需 |
-| `GDNAttentionMetadata` | `spec_token_indx`, `spec_state_indices_tensor`, `spec_query_start_loc`, `num_accepted_tokens` | linear_attn Verify/Draft |
+| Runner | `NPUModelRunner310` | 挂载 310P 采样器与拒绝采样器 |
+| Runner | `_determine_batch_execution_and_padding` | 非 uniform spec batch 强制 eager |
+| Runner | `_build_attn_state` | uniform `1+K` decode 强制 `SpecDecoding` |
+| Runner | `_build_attention_metadata` | 图捕获 dummy 时 override 为 `SpecDecoding` |
+| Runner | `_dummy_run` | 管理 `_mtp_spec_dummy_capture` 上下文 |
+| Runner | `_init_kv_zero_meta` | 初始化 KV block 清零器（替代 Triton） |
+| Runner | `_prepare_input_ids` | spec 索引避免 graph 下 CPU 同步 |
+| Attention | `forward_impl` | `SpecDecoding` 与 `ChunkedPrefill` 均走 splitfuse |
+| Attention | `forward_chunked_prefill_310` | splitfuse 前向；写有效 token 后返回完整 output buffer |
+| Attention | `set_query_lens_cpu` / `get_query_lens_cpu` | 读写 host qLens；图捕获缺失时报错 |
+| Attention | `AscendAttentionMetadataBuilder310.build` | splitfuse 状态下填充 `query_lens_cpu` 与 device view |
+| KV Cache | `AscendKVBlockZeroer310` | 无 Triton 的 KV block 清零实现 |
+| KV Cache | `init_meta` | 收集 KV 张量、计算 logical page 比例 |
+| KV Cache | `zero_block_ids` | 按 block id 将对应 KV 切片置零 |
+| Sampler | `_get_cpu_generator_310p` | 缓存 CPU Generator 并同步 RNG 状态 |
+| Sampler | `_fill_cpu_exponential_310p` | CPU 上填充指数随机数 |
+| Sampler | `fill_exponential_310p` | CPU 填充后拷回 NPU；采样与 rejection 共用 |
+| Sampler | `_random_sample_310p` | Gumbel-max 随机采样 |
+| Rejection | `AscendRejectionSampler310.forward` | 注入 310P recovery 后调用基类 |
+| Rejection | `AscendRejectionSampler310.sample_recovered_tokens` | recovery 采样 + CPU 指数随机数 |
+| GDN | `update_conv1d_graph_params_310p` | uniform spec 图 replay 前刷新 conv1d 参数 |
+| GDN | `_merge_spec_and_non_spec_outputs_310` | 合并 spec / non-spec GDN 输出 |
+| GDN | `_flatten_state_indices` | uniform spec 用 reshape 替代 masked_select |
+| Proposer | `AscendSpecDecodeBaseProposer310.prepare_next_token_ids_padded` | 无 discard 请求时跳过 `index_fill_` |
+| Patch | `patch_idex_310` | 注册 GDN graph replay 与 Proposer 310 实现 |
+| 数据 | `SpecDecodeMetadata` | draft / target / bonus logits 索引，供 Verify 与 Rejection |
+| 数据 | `AscendMetadata.query_lens_cpu` | splitfuse host qLens，图 replay 必需 |
+| 数据 | `GDNAttentionMetadata` | linear_attn 的 spec token、state、接受数等元数据 |
 
 ---
 
