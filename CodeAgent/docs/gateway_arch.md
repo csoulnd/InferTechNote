@@ -43,6 +43,67 @@ flowchart LR
 - 用户享受原生 SSH 体验：流式输出、tmux 保活、交互式输入
 - 底层用 OpenSSH ForceCommand 做路由，不重复造轮子
 
+### 技术实现：三层透传
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart LR
+    subgraph USER_SIDE["用户侧"]
+        STDIN["stdin"]
+        STDOUT["stdout"]
+        STDERR["stderr"]
+        TTY["tty 信号"]
+    end
+
+    subgraph GATEWAY_MACHINE["Gateway 机器"]
+        direction TB
+        SSHD["sshd :22<br/>加密传输"]
+        FC["ForceCommand<br/>route_user.sh"]
+        EXEC["exec ssh -i gateway_key<br/>root@容器IP"]
+    end
+
+    subgraph CONTAINER["容器"]
+        CT_SSHD["sshd"]
+        CT_SHELL["shell / opencode"]
+    end
+
+    STDIN -- "加密" --> SSHD
+    STDOUT -- "加密" --> SSHD
+    STDERR -- "加密" --> SSHD
+    TTY -- "信号" --> SSHD
+
+    SSHD --> FC --> EXEC
+
+    EXEC -- "stdin/stdout/stderr/tty" --> CT_SSHD
+    CT_SSHD --> CT_SHELL
+```
+
+**核心机制：**
+
+| 技术 | 作用 |
+|---|---|
+| **OpenSSH ForceCommand** | 用户认证完成后，不启动用户 shell，而是执行 route_user.sh |
+| **exec ssh** | 用 SSH 进程替换当前 shell 脚本进程，stdin/stdout/stderr 全部继承，用户感觉不到中间层 |
+| **docker inspect** | 获取容器的 IP 地址用于 SSH 目标路由 |
+
+```bash
+# route_user.sh 核心逻辑（伪代码）
+容器IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "opencode-$USER")
+
+exec ssh -o StrictHostKeyChecking=no \
+         -i /opt/gateway/keys/gateway_key \
+         root@"$容器IP" \
+         "$SSH_ORIGINAL_COMMAND"
+```
+
+**三次透传，无状态干预：**
+
+| 层 | 说明 |
+|---|---|
+| SSH 加密 | 用户 → Gateway 传输加密，由 OpenSSH 处理 |
+| TCP 字节流 | Gateway → 容器 SSH 会话，字节流透传 |
+| 终端信号 | SIGINT、窗口大小变化自动透传 |
+
 ### 消息路径（非 SSH 渠道）
 
 ```mermaid
