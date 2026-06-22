@@ -115,6 +115,119 @@ flowchart LR
 
 沙箱执行（非 Gateway 职责）由 AgentServer 侧 `jiuwenbox_runner.py` 通过 `asyncio.create_subprocess_exec` 拉起。
 
+## 第二章 Agent 实例创建
+
+相较第一章 Jiuwenswarm 在 AgentServer 进程内懒加载 Agent 对象，三方 Agent（opencode、Claude Code 等）需以**独立沙箱实例**运行，并内置 SSH 服务供 Gateway 透传或远程执行。新架构下的实例拉起链路如下：
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart LR
+    GW["Gateway<br/>九问"] --> REG["注册中心<br/>九问 · Agent Manager"]
+    REG --> FF["Function Frontend<br/>元戎"]
+    FF --> SB["沙箱<br/>Docker SDK"]
+    SB --> AG["Agent 实例<br/>内置 SSH 服务"]
+    AG --> REG2["注册至注册中心"]
+```
+
+### 2.1 拉起流程
+
+| 步骤 | 组件 | 职责 |
+|------|------|------|
+| 1 | **Gateway（九问）** | 接收用户接入请求（Web / SSH / IM），校验身份与配额，向注册中心发起「创建 Agent 实例」 |
+| 2 | **注册中心（九问）** | `Agent Manager` 编排实例生命周期：分配 owner、选择 Agent 类型（opencode / Claude Code 等）、下发创建任务 |
+| 3 | **Function Frontend（元戎）** | 对外暴露沙箱创建/销毁等函数接口，将注册中心的创建请求转换为沙箱操作 |
+| 4 | **沙箱** | 基于 **Docker SDK** 拉起容器，镜像内预装目标 Agent 与 **sshd**，完成网络、卷挂载与资源配额配置 |
+| 5 | **Agent 实例** | 容器内 Agent 就绪，SSH 服务监听；Gateway 注入内部密钥，建立 Gateway → 容器的 SSH 通道 |
+| 6 | **注册回写** | 实例向注册中心上报 `agent_id`、host、capabilities、status、owner 等元数据，供后续路由与发现 |
+
+### 2.2 首次接入流程
+
+用户首次使用平台时，Gateway 在完成身份认证后触发上述拉起链路。按接入入口不同，分为三种场景：
+
+#### 场景一：用户先走 Web
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    REG["Web 注册"] --> KEY["上传 SSH 公钥 / 设密码"]
+    KEY --> GW["Gateway 创建用户"]
+    GW --> RC["注册中心编排创建"]
+    RC --> CT["沙箱拉起 Agent 实例<br/>注入内部 key"]
+    CT --> MSG["已就绪，SSH 体验更佳：ssh user@gateway"]
+```
+
+#### 场景二：用户先走 SSH
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    SSH["ssh user@gateway<br/>首次连接，密码登录"] --> CHECK["ForceCommand<br/>检测无实例"]
+    CHECK --> RC["注册中心 → Function Frontend → 沙箱"]
+    RC --> LAUNCH["自动拉起 Agent 实例"]
+    LAUNCH --> INJECT["容器就绪<br/>注入内部 SSH key"]
+    INJECT --> TUNNEL["透传进入容器"]
+```
+
+#### 场景三：管理员预创建
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    subgraph ADMIN["管理员操作"]
+        A1["Web Admin 创建用户"]
+        A2["用户名白名单 AllowUsers"]
+        A3["生成随机初始密码"]
+        A4["注册中心预拉 Agent 实例"]
+    end
+
+    subgraph USER["用户操作"]
+        U1["首次 SSH 登录"]
+        U2["输入初始密码"]
+        U3["强制修改密码"]
+        U4["公钥或新密码免密登录"]
+    end
+
+    A1 --> A2 --> A3 --> A4
+    A4 --> U1 --> U2 --> U3 --> U4
+```
+
+### 2.3 密钥分层
+
+Gateway 管理两层密钥，用户仅感知第一层：
+
+| 层 | 凭证 | 用户需操作 |
+|---|---|---|
+| 用户 → Gateway | 公钥 / 密码 | 注册时上传公钥，或首次密码登录 |
+| Gateway → 容器 | 内部密钥对（自动生成） | 无感知 |
+
+### 2.4 Agent 注册中心
+
+Agent 实例在沙箱内就绪后，自动向注册中心（九问 `Agent Manager`）注册：
+
+```json
+{
+  "agent_id": "userA-opencode",
+  "host": "container-a",
+  "capabilities": {
+    "protocols": ["acp", "a2a", "ssh"],
+    "models": ["gpt-5.5", "claude-4"],
+    "tools": ["write", "bash", "read"],
+    "skills": ["python", "react", "docker"]
+  },
+  "status": "online",
+  "owner": "userA"
+}
+```
+
+注册完成后，Gateway 与各 Channel 通过注册中心查询实例元数据完成路由：
+
+| 来源 | 路由目标 |
+|---|---|
+| 用户 A 的 SSH 连接 | 容器 A（用户专属 Agent） |
+| 用户 A 通过 IM 发消息 | 容器 A |
+| Agent A 调用「数据库 Agent」 | 注册中心查询 → 容器 B |
+| Agent Team 协作 | Orchestrator → 分发给多个 Agent |
+
 ## 两条路径，体验分级
 
 
@@ -419,177 +532,7 @@ Gateway 不只是一个消息路由器，更是整个平台的控制平面：
 
 | 容器生命周期 | 按需创建、停止、销毁 |
 
-| 路由配置 | 用户 → 容器的映射自动更新 |
-
-
-
-### 首次接入流程
-
-
-
-#### 场景一：用户先走 Web
-
-
-
-```mermaid
-
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-
-flowchart TD
-
-    REG["Web 注册"] --> KEY["上传 SSH 公钥/设密码"]
-
-    KEY --> GW["Gateway 创建用户"]
-
-    GW --> CT["Gateway 拉起容器<br/>注入内部 key"]
-
-    CT --> MSG["已就绪，SSH 体验更佳：ssh user@gateway"]
-
-```
-
-
-
-#### 场景二：用户先走 SSH
-
-
-
-```mermaid
-
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-
-flowchart TD
-
-    SSH["ssh user@gateway<br/>首次连接，密码登录"] --> CHECK["ForceCommand<br/>检测无容器"]
-
-    CHECK --> LAUNCH["自动拉起容器"]
-
-    LAUNCH --> INJECT["容器创建完成<br/>注入内部 SSH key"]
-
-    INJECT --> TUNNEL["透传进入容器"]
-
-```
-
-
-
-#### 场景三：管理员预创建
-
-
-
-```mermaid
-
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-
-flowchart TD
-
-    subgraph ADMIN["管理员操作"]
-
-        A1["Web Admin 创建用户"]
-
-        A2["用户名白名单 AllowUsers"]
-
-        A3["生成随机初始密码"]
-
-        A4["自动拉容器"]
-
-    end
-
-
-
-    subgraph USER["用户操作"]
-
-        U1["首次 SSH 登录"]
-
-        U2["输入初始密码"]
-
-        U3["强制修改密码"]
-
-        U4["公钥或新密码免密登录"]
-
-    end
-
-
-
-    A1 --> A2 --> A3 --> A4
-
-    A4 --> U1 --> U2 --> U3 --> U4
-
-```
-
-
-
-### 密钥分层
-
-
-
-Gateway 管理两层密钥：
-
-
-
-| 层 | 凭证 | 用户需操作 |
-
-|---|---|---|
-
-| 用户 → Gateway | 公钥 / 密码 | 注册时上传公钥，或首次密码登录 |
-
-| Gateway → 容器 | 内部密钥对（自动生成） | 无感知 |
-
-
-
-## Agent 注册中心
-
-
-
-每个容器启动时自动注册到 Gateway：
-
-
-
-```json
-
-{
-
-  "agent_id": "userA-opencode",
-
-  "host": "container-a",
-
-  "capabilities": {
-
-    "protocols": ["acp", "a2a", "ssh"],
-
-    "models": ["gpt-5.5", "claude-4"],
-
-    "tools": ["write", "bash", "read"],
-
-    "skills": ["python", "react", "docker"]
-
-  },
-
-  "status": "online",
-
-  "owner": "userA"
-
-}
-
-```
-
-
-
-### 路由规则
-
-
-
-| 来源 | 路由目标 |
-
-|---|---|
-
-| 用户 A 的 SSH 连接 | 容器 A（用户专属 Agent） |
-
-| 用户 A 通过 IM 发消息 | 容器 A |
-
-| Agent A 调用"数据库 Agent" | 注册中心查询 → 容器 B |
-
-| Agent Team 协作 | Orchestrator → 分发给多个 Agent |
-
-
+| 路由配置 | 用户 → 容器的映射自动更新（经注册中心） |
 
 ## 权限模型
 
@@ -678,19 +621,3 @@ flowchart TD
     GW --> INFRA
 
 ```
-
-
-
-## 扩展方向
-
-
-
-- **Agent Team**：Orchestrator 编排多个 Agent 协作完成任务
-
-- **A2A Federation**：与外部 Agent 系统互通（Google A2A 协议）
-
-- **专业 Agent**：数据库 Agent、代码审查 Agent、部署 Agent 等，供其他 Agent 调用
-
-- **资源配额**：按用户角色分配 CPU/内存/GPU 限制
-
-
