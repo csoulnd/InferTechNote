@@ -15,30 +15,51 @@
 flowchart TB
     subgraph L1["第一层：接入层 — 多客户端接入，Gateway 统一管理"]
         direction LR
-        SSH["SSH :22<br/>TUI / 字节流透传"] --- WEB["Web"] --- IM["飞书 / DingTalk / IM"] --- ACP["API / ACP / A2A"]
+        SSH["SSH :22<br/>TUI / 字节流透传"]
+        WEB["Web"]
+        IM["飞书 / DingTalk / IM"]
+        ACP["API / ACP / A2A"]
     end
 
     subgraph L2["第二层：Agent Gateway"]
         direction LR
-        CM["Channel Manager<br/>渠道管理与路由"] --- AS["Agent Service<br/>会话 / 消息 / 生命周期"]
+        CM["Channel Manager<br/>渠道管理与路由"]
+        AS["Agent Service<br/>会话 / 消息 / 生命周期"]
     end
 
     subgraph L3["第三层：注册中心"]
         direction LR
-        AM["Agent Manager<br/>注册 / 发现 / 调度"] --- FF["Function Frontend<br/>能力暴露 / 函数路由"]
+        AM["Agent Manager<br/>注册 / 发现 / 调度"]
+        FF["Function Frontend<br/>能力暴露 / 函数路由"]
     end
 
     subgraph L4["第四层：Agent 平台"]
         direction LR
-        CC["Claude Code"] --- OC["Opencode"] --- JWS["Jiuwenswarm"] --- OTHER["… 其他 Agent"]
+        CC["Claude Code"]
+        OC["Opencode"]
+        JWS["Jiuwenswarm"]
+        OTHER["… 其他 Agent"]
     end
 
     subgraph L5["第五层：基础设施"]
         direction LR
-        SB["沙箱 Sandbox"] --- FS["文件系统"] --- DC["容器运行时"] --- RES["网络 / 资源配额"]
+        SB["沙箱 Sandbox"]
+        FS["文件系统"]
+        DC["容器运行时"]
+        RES["网络 / 资源配额"]
     end
 
     L1 --> L2 --> L3 --> L4 --> L5
+
+    classDef sshNode fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
+    classDef ccNode fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+    classDef ocNode fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef otherAgentNode fill:#f3e8ff,stroke:#9333ea,color:#581c87
+
+    class SSH sshNode
+    class CC ccNode
+    class OC ocNode
+    class OTHER otherAgentNode
 ```
 
 ## 第一章 Jiuwenswarm Gateway 原生架构
@@ -218,13 +239,14 @@ Agent 实例在沙箱内就绪后，自动向注册中心（九问 `Agent Manage
 
 ### 3.2 SSH 路径
 
-SSH 字节流端到端透传，Gateway 不做消息解析；用户获得原生 SSH 体验（流式输出、tmux 保活、交互式输入），底层用 OpenSSH ForceCommand 做路由。
+用户从本地 **SSH 连接 Gateway 服务器**，Gateway 将终端字节流透传到容器内，直接使用 opencode / Claude Code 等三方 Agent 的**原生 TUI**——不是 Gateway 自研的 WebSocket TUI Channel，也不是消息路径的一次性 CLI 调用。Gateway 全程不解析终端内容，因此流式输出、交互式输入、tmux 会话保持与本地直连服务器体验一致。
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
 flowchart LR
-    USER["用户"] -- SSH --> GW["Gateway :22"]
-    GW -- TCP 透传 --> CT["容器 :22"]
+    USER["用户本地终端"] -- "ssh user@gateway" --> GW["Gateway 服务器 :22"]
+    GW -- "SSH 字节流透传" --> CT["容器 :22"]
+    CT --> TUI["原生 TUI<br/>opencode / Claude Code"]
 ```
 
 **三层透传机制：**
@@ -245,7 +267,8 @@ flowchart LR
     end
 
     subgraph CONTAINER["容器"]
-        CT_SSHD["sshd"] --> CT_SHELL["shell / opencode"]
+        CT_SSHD["sshd"] --> TMUX["tmux 会话"]
+        TMUX --> TUI["原生 TUI / shell"]
     end
 
     USER_SIDE --> SSHD
@@ -273,6 +296,8 @@ exec ssh -o StrictHostKeyChecking=no \
 | SSH 加密 | 用户 → Gateway，由 OpenSSH 处理 |
 | TCP 字节流 | Gateway → 容器，字节流透传 |
 | 终端信号 | SIGINT、窗口大小变化自动透传 |
+
+**tmux 保持：** 用户在容器内通过 tmux 运行 Agent TUI，会话状态保存在服务器侧。本地 SSH 断开后，再次 `ssh user@gateway` 并 `tmux attach` 即可恢复，Gateway 透传链路不破坏 tmux 会话。容器镜像需预装 tmux。
 
 ### 3.3 消息路径
 
