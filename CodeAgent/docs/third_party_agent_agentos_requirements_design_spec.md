@@ -6,9 +6,14 @@
 
 
 
-设计目标是基于 opencode/claude 等第三方 Agent 平台接入 Agent OS 的需求设计，核心理念：**一个 Gateway 入口，多端接入，统一身份，体验分级**。
+设计目标是基于 opencode/claude 等第三方 Agent 平台接入 Agent OS 的需求设计，核心理念：**与 jiuwen 统一前端接入，由 Gateway 作为消息转发的统一入口，多端接入，统一身份认证**。
 
+**设计组件及职责：**
 
+| 组件 | 职责 |
+|------|------|
+| **openYuanRong** | 硬件资源管理；运行沙箱隔离；容器化拉起 Agent 实例；Function Frontend 能力暴露与函数路由 |
+| **openJiuwen Gateway** | 统一消息入口；支持 SSH / Web / IM / ACP / A2A 等多端接入；Agent 实例生命周期管理与路由 |
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
