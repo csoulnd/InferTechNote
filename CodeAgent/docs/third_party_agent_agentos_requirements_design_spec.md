@@ -142,7 +142,7 @@ flowchart LR
 
 ### 2.2 首次接入流程
 
-用户首次使用平台时，Gateway 在完成身份认证后触发上述拉起链路。按接入入口不同，分为三种场景：
+用户首次使用平台时，Gateway 在完成身份认证后触发上述拉起链路。按接入入口不同，分为两种场景：
 
 #### 场景一：用户先走 Web
 
@@ -166,29 +166,6 @@ flowchart TD
     RC --> LAUNCH["自动拉起 Agent 实例"]
     LAUNCH --> INJECT["容器就绪<br/>注入内部 SSH key"]
     INJECT --> TUNNEL["透传进入容器"]
-```
-
-#### 场景三：管理员预创建
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-flowchart TD
-    subgraph ADMIN["管理员操作"]
-        A1["Web Admin 创建用户"]
-        A2["用户名白名单 AllowUsers"]
-        A3["生成随机初始密码"]
-        A4["注册中心预拉 Agent 实例"]
-    end
-
-    subgraph USER["用户操作"]
-        U1["首次 SSH 登录"]
-        U2["输入初始密码"]
-        U3["强制修改密码"]
-        U4["公钥或新密码免密登录"]
-    end
-
-    A1 --> A2 --> A3 --> A4
-    A4 --> U1 --> U2 --> U3 --> U4
 ```
 
 ### 2.3 密钥分层
@@ -228,396 +205,132 @@ Agent 实例在沙箱内就绪后，自动向注册中心（九问 `Agent Manage
 | Agent A 调用「数据库 Agent」 | 注册中心查询 → 容器 B |
 | Agent Team 协作 | Orchestrator → 分发给多个 Agent |
 
-## 两条路径，体验分级
+## 第三章 三方 Agent 服务接入
 
+第二章完成 Agent 实例创建与注册后，Gateway 通过两条接入路径与沙箱内的三方 Agent 通信：**SSH 路径**提供完整 TUI 体验，**消息路径**覆盖 Web / IM 等轻量渠道。核心理念不变——体验分级，统一由 Gateway 管控。
 
+### 3.1 两条路径，体验分级
 
-### SSH 路径（完整 TUI 体验）
+| 路径 | 接入方式 | 体验 | 适用场景 |
+|------|----------|------|----------|
+| SSH 路径 | `ssh user@gateway` | 完整 TUI，流式输出，交互式输入 | 深度编码、长时间会话 |
+| 消息路径 | Web / 飞书 / DingTalk / API 等 | 一问一答，基本可用 | 轻量查询、移动端、IM 协作 |
 
+### 3.2 SSH 路径
 
+SSH 字节流端到端透传，Gateway 不做消息解析；用户获得原生 SSH 体验（流式输出、tmux 保活、交互式输入），底层用 OpenSSH ForceCommand 做路由。
 
 ```mermaid
-
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-
 flowchart LR
-
-    USER["用户"] -- SSH --> GW["Gateway:22"]
-
-    GW -- TCP透传 --> CT["容器:22"]
-
+    USER["用户"] -- SSH --> GW["Gateway :22"]
+    GW -- TCP 透传 --> CT["容器 :22"]
 ```
 
-
-
-- SSH 字节流端到端透传，Gateway 不做消息解析
-
-- 用户享受原生 SSH 体验：流式输出、tmux 保活、交互式输入
-
-- 底层用 OpenSSH ForceCommand 做路由，不重复造轮子
-
-
-
-### 技术实现：三层透传
-
-
+**三层透传机制：**
 
 ```mermaid
-
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-
 flowchart LR
-
     subgraph USER_SIDE["用户侧"]
-
-        STDIN["stdin"]
-
-        STDOUT["stdout"]
-
-        STDERR["stderr"]
-
-        TTY["tty 信号"]
-
+        STDIN["stdin"] --- STDOUT["stdout"] --- STDERR["stderr"] --- TTY["tty 信号"]
     end
-
-
 
     subgraph GATEWAY_MACHINE["Gateway 机器"]
-
         direction TB
-
         SSHD["sshd :22<br/>加密传输"]
-
         FC["ForceCommand<br/>route_user.sh"]
-
         EXEC["exec ssh -i gateway_key<br/>root@容器IP"]
-
+        SSHD --> FC --> EXEC
     end
-
-
 
     subgraph CONTAINER["容器"]
-
-        CT_SSHD["sshd"]
-
-        CT_SHELL["shell / opencode"]
-
+        CT_SSHD["sshd"] --> CT_SHELL["shell / opencode"]
     end
 
-
-
-    STDIN -- "加密" --> SSHD
-
-    STDOUT -- "加密" --> SSHD
-
-    STDERR -- "加密" --> SSHD
-
-    TTY -- "信号" --> SSHD
-
-
-
-    SSHD --> FC --> EXEC
-
-
-
-    EXEC -- "stdin/stdout/stderr/tty" --> CT_SSHD
-
-    CT_SSHD --> CT_SHELL
-
+    USER_SIDE --> SSHD
+    EXEC --> CT_SSHD
 ```
-
-
-
-**核心机制：**
-
-
 
 | 技术 | 作用 |
-
-|---|---|
-
-| **OpenSSH ForceCommand** | 用户认证完成后，不启动用户 shell，而是执行 route_user.sh |
-
-| **exec ssh** | 用 SSH 进程替换当前 shell 脚本进程，stdin/stdout/stderr 全部继承，用户感觉不到中间层 |
-
-| **docker inspect** | 获取容器的 IP 地址用于 SSH 目标路由 |
-
-
+|------|------|
+| **OpenSSH ForceCommand** | 用户认证完成后执行 `route_user.sh`，不启动用户 shell |
+| **exec ssh** | 用 SSH 进程替换脚本进程，stdin/stdout/stderr 全部继承，用户无感知中间层 |
+| **docker inspect** | 从注册中心获取容器 IP，用于 SSH 目标路由 |
 
 ```bash
-
 # route_user.sh 核心逻辑（伪代码）
-
 容器IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "opencode-$USER")
 
-
-
 exec ssh -o StrictHostKeyChecking=no \
-
          -i /opt/gateway/keys/gateway_key \
-
          root@"$容器IP" \
-
          "$SSH_ORIGINAL_COMMAND"
-
 ```
 
-
-
-**三次透传，无状态干预：**
-
-
-
-| 层 | 说明 |
-
-|---|---|
-
-| SSH 加密 | 用户 → Gateway 传输加密，由 OpenSSH 处理 |
-
-| TCP 字节流 | Gateway → 容器 SSH 会话，字节流透传 |
-
+| 透传层 | 说明 |
+|--------|------|
+| SSH 加密 | 用户 → Gateway，由 OpenSSH 处理 |
+| TCP 字节流 | Gateway → 容器，字节流透传 |
 | 终端信号 | SIGINT、窗口大小变化自动透传 |
 
+### 3.3 消息路径
 
-
-### 消息路径（非 SSH 渠道）
-
-
+Web / IM 等渠道经 Gateway 转发，通过 SSH 在容器内执行 Agent CLI 命令，一问一答模式，适合轻量交互；非 SSH 渠道可提示用户切换 SSH 获取完整体验。
 
 ```mermaid
-
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-
 flowchart LR
-
     USER["用户"] -- Web/IM/API --> GW["Gateway"]
-
     GW -- Message --> SSH["SSH exec<br/>opencode run / claude run"]
-
     SSH --> CT["容器"]
-
 ```
-
-
-
-- 支持 Web 界面、飞书/DingTalk/Telegram 等 IM 平台
-
-- 一问一答模式，非流式，适合轻量交互
-
-- 底层通过 SSH 在容器内执行 `opencode run` 或 `claude run` 命令
-
-- 在非 SSH 渠道提示用户切换到 SSH 以获取更完整体验
-
-
-
-**技术实现：**
-
-
 
 ```bash
-
 # Gateway 收到用户消息后，SSH 到容器执行一次命令
-
 ssh root@容器IP \
-
     -i /opt/gateway/keys/gateway_key \
-
     "opencode run --no-tui \"$用户消息\""
 
-
-
 # 若容器部署的是 Claude Code
-
 ssh root@容器IP \
-
     -i /opt/gateway/keys/gateway_key \
-
     "claude run \"$用户消息\""
-
 ```
 
+**选型理由：** 部分 Agent CLI（如 Claude Code）不支持 HTTP Server 模式，SSH + CLI 是通用调用方式，兼容 opencode、Claude Code 等任意 Agent 软件。
 
+**技术方案对比：**
 
-**选型理由：** 部分 Agent CLI（如 Claude Code）不支持 HTTP Server 模式，SSH + CLI 是通用的调用方式，兼容 opencode、Claude Code 等任意 Agent 软件。
-
-
-
-### 消息路径技术方案对比
-
-
-
-Gateway 内部实现非 SSH 渠道的消息转发，有以下几种技术选择：
-
-
-
-| 方案 | 实现 | 代码量 | 优点 | 缺点 |
-
-|---|---|---|---|---|
-
-| **asyncssh 嵌入** | Gateway 进程内用 asyncssh 连接容器 SSH 执行命令 | ~20 行 | 消息全在 Gateway 管控内；可预处理/转义/校验；支持并发 | 需要 Python asyncssh 依赖 |
-
-| **subprocess + ssh CLI** | Gateway 内 subprocess 调用系统 ssh 命令 | ~10 行 | 零依赖，系统自带 | 进程开销大；并发差；信号处理麻烦 |
-
-| **ttyd Web 终端** | ttyd 桥接 WebSocket → SSH PTY | 独立部署 | 浏览器获得完整 TUI | 绕过 Gateway 消息管道；非一问一答 |
-
-| **SSHForwardChannel** | 基于 Gateway 已有的 BaseChannel 封装 asyncssh | ~50 行 | 复用 Gateway 的 WebSocket 层和连接管理 | 依赖 Gateway 架构 |
-
-
-
-**推荐方案：asyncssh 嵌入**
-
-
+| 方案 | 实现 | 优点 | 缺点 |
+|------|------|------|------|
+| **asyncssh 嵌入**（推荐） | Gateway 进程内 asyncssh 连接容器 SSH | 消息全在 Gateway 管控；支持并发与预处理 | 需要 Python asyncssh 依赖 |
+| subprocess + ssh CLI | subprocess 调用系统 ssh | 零依赖 | 进程开销大，并发差 |
+| ttyd Web 终端 | WebSocket → SSH PTY | 浏览器完整 TUI | 绕过 Gateway 消息管道 |
+| SSHForwardChannel | 基于 BaseChannel 封装 asyncssh | 复用 Gateway WebSocket 层 | 依赖 Gateway 架构 |
 
 ```python
-
 # asyncssh 核心用法：异步 SSH 命令执行
-
 import asyncssh
 
-
-
 async def run_in_container(container_ip: str, command: str) -> str:
-
     async with asyncssh.connect(
-
         host=container_ip,
-
         username="root",
-
         client_keys=["/opt/gateway/keys/gateway_key"],
-
-        known_hosts=None,  # 容器 IP 动态，首次连接跳过 known_hosts
-
+        known_hosts=None,
     ) as conn:
-
         result = await conn.run(command)
-
         return result.stdout
-
 ```
 
+### 3.4 Gateway 管理职责
 
-
-asyncssh 是一个纯 Python 的异步 SSH2 协议实现，支持：
-
-
-
-- 客户端/服务端模式
-
-- 命令执行、Shell/PTY、SFTP、SCP
-
-- 端口转发（本地/远程）
-
-- 多种密钥格式（RSA/ECDSA/Ed25519）
-
-- 原生 asyncio 集成，支持成百上千并发 SSH 连接
-
-
-
-## Gateway 作为管理平面
-
-
-
-Gateway 不只是一个消息路由器，更是整个平台的控制平面：
-
-
+Gateway 作为控制平面，统一管理用户、密钥、实例生命周期与路由：
 
 | 功能 | 说明 |
-
-|---|---|
-
+|------|------|
 | 用户管理 | 注册、认证、角色 |
-
 | SSH 密钥管理 | 用户公钥上传、自动注入到容器 |
-
-| 容器生命周期 | 按需创建、停止、销毁 |
-
+| 容器生命周期 | 按需创建、停止、销毁（经注册中心编排） |
 | 路由配置 | 用户 → 容器的映射自动更新（经注册中心） |
-
-## 权限模型
-
-
-
-```python
-
-class UserRole(enum):
-
-    GUEST = "guest"      # 自注册，默认受限
-
-    MEMBER = "member"    # 审核通过
-
-    ADMIN = "admin"      # 管理权限
-
-
-
-class UserPermissions:
-
-    max_containers: int
-
-    allow_ssh: bool
-
-    resource_limits: ResourceSpec
-
-    can_access_admin: bool
-
-```
-
-
-
-## 基础设施
-
-
-
-```mermaid
-
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-
-flowchart TD
-
-    GW["Gateway 机器"]
-
-
-
-    subgraph SSH_LAYER["OpenSSHD :22"]
-
-        ALLOW["AllowUsers 白名单"]
-
-        PWD["PasswordAuthentication 首次登录"]
-
-        FC["ForceCommand → route_user.sh"]
-
-    end
-
-
-
-    subgraph GW_LAYER["jiuwenswarm gateway.py"]
-
-        CH["WebSocket / IM / ACP 渠道"]
-
-        API["/api/admin/* 管理接口"]
-
-        REG["Agent 注册中心"]
-
-        DOCK["Docker SDK 容器管理"]
-
-    end
-
-
-
-    subgraph INFRA["基础设施"]
-
-        RS["route_user.sh<br/>（由 gateway 生成）"]
-
-        DC["Docker<br/>容器运行时"]
-
-    end
-
-
-
-    GW --> SSH_LAYER
-
-    GW --> GW_LAYER
-
-    GW --> INFRA
-
-```
