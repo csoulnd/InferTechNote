@@ -115,52 +115,6 @@ flowchart LR
 
 沙箱执行（非 Gateway 职责）由 AgentServer 侧 `jiuwenbox_runner.py` 通过 `asyncio.create_subprocess_exec` 拉起。
 
-### 1.4 消息路由与执行流
-
-Gateway 核心消息中枢为 `MessageHandler`（单例），采用 **双队列** 模型：
-
-| 队列 | 方向 | 消费者 |
-|------|------|--------|
-| `_user_messages` | Channel → AgentServer | `_forward_loop()` |
-| `_robot_messages` | AgentServer → Channel | `ChannelManager._dispatch_robot_messages()` |
-
-**端到端消息流**：
-
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-sequenceDiagram
-    participant C as Channel
-    participant CM as ChannelManager
-    participant MH as MessageHandler
-    participant AC as WebSocketAgentServerClient
-    participant AS as AgentWebSocketServer
-    participant AM as AgentManager
-
-    C->>CM: on_message(Message)
-    CM->>MH: handle_message() → _user_messages
-    MH->>MH: _forward_loop 消费
-    Note over MH: 控制指令 / Hook / ACP alias / IM pipeline
-    MH->>MH: message_to_e2a()
-    MH->>AC: send_request / send_request_stream
-    AC->>AS: WebSocket E2A JSON
-    AS->>AM: get_agent() → 分发 ReqMethod
-    AM-->>AS: AgentResponse / Chunk
-    AS-->>AC: E2AResponse wire JSON
-    AC-->>MH: 转 Message → _robot_messages
-    CM->>C: channel.send(Message)
-```
-
-`_forward_loop` 处理逻辑摘要：
-
-1. 消费 `_user_messages`
-2. **Channel 控制指令**（`\new_session`、`\mode`、`\skills list` 等）— 本地处理，不转发
-3. **Gateway Hook**（`UserPromptSubmit`）
-4. **中断/恢复**（`CHAT_CANCEL` / `CHAT_ANSWER`）
-5. **IM Inbound Pipeline**（数字分身改写）
-6. **ACP session alias 解析**
-7. `message_to_e2a()` → `agent_client.send_request` 或 `send_request_stream`
-8. 流式响应逐 chunk 转 `Message` 入 `_robot_messages`；非流式完整响应一次性入队
-
 ## 两条路径，体验分级
 
 
