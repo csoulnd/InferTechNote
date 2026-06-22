@@ -55,7 +55,7 @@ flowchart TB
         WEB["Web 浏览器"] --- TUI["TUI / CLI"] --- ACP_C["ACP 客户端"] --- A2A_C["A2A 调用方"] --- IM["飞书 / 钉钉 / 企微 / Telegram …"]
     end
 
-    subgraph GATEWAY_PROC["Gateway 进程 — app_gateway.py :19000/19001"]
+    subgraph GATEWAY_PROC["Gateway 进程 — app_gateway.py"]
         direction TB
         CM["ChannelManager<br/>渠道注册 / 生命周期"]
         MH["MessageHandler<br/>双队列消息中枢"]
@@ -63,7 +63,7 @@ flowchart TB
         CM --> MH
     end
 
-    subgraph AGENT_PROC["AgentServer 进程 — app_agentserver.py :18092"]
+    subgraph AGENT_PROC["AgentServer 进程 — app_agentserver.py"]
         direction TB
         AWS["AgentWebSocketServer<br/>E2A 请求分发"]
         AM["AgentManager<br/>Agent 实例池"]
@@ -77,60 +77,19 @@ flowchart TB
 
 **进程启动方式**（`jiuwenswarm/app.py`）：
 
-| 进程 | 入口 | 默认端口 | 职责 |
-|------|------|----------|------|
-| AgentServer | `jiuwenswarm/server/app_agentserver.py` | `18092` (WS) | Agent 运行时、`AgentManager`、`AgentWebSocketServer` |
-| Gateway | `jiuwenswarm/gateway/app_gateway.py` | `19001` (ACP/TUI)、`19000` (Web) | Channel 接入、消息路由、Cron/Heartbeat |
-| 组合启动 | `jiuwenswarm/app.py` | — | `subprocess.Popen` 先后拉起上述两进程 |
+| 进程 | 入口 | 职责 |
+|------|------|------|
+| AgentServer | `jiuwenswarm/server/app_agentserver.py` | Agent 运行时、`AgentManager`、`AgentWebSocketServer` |
+| Gateway | `jiuwenswarm/gateway/app_gateway.py` | Channel 接入、消息路由、Cron/Heartbeat |
+| 组合启动 | `jiuwenswarm/app.py` | `subprocess.Popen` 先后拉起上述两进程 |
 
 **关键结论**：Gateway **不直接拉起 Agent 进程**。Agent 在 AgentServer 进程内以 Python 对象形式由 `AgentManager` **懒加载创建**；Gateway 只做接入层与消息中转。
 
 ### 1.2 Channel 接入与通信协议
 
-Gateway 通过 `ChannelManager` 统一管理多种接入渠道，各 Channel 实现 `BaseChannel` 抽象接口（`start` / `stop` / `send` / `on_message`），收到消息后统一交给 `MessageHandler` 入队转发。
+`ChannelManager` 统一管理 Web、TUI、ACP（JSON-RPC 2.0）、A2A（HTTP JSON-RPC）及飞书/钉钉等 IM 渠道，各 Channel 将平台消息归一为 `Message` 后交给 `MessageHandler`，对外以 req/res/event JSON 帧通信，ACP 经 `AcpGatewayBridge` 与内部 E2A 双向转换。
 
-**对外通信协议矩阵**：
-
-| Channel | channel_id | 传输 | 协议 |
-|---------|------------|------|------|
-| Web | `web` | WS `:19000/ws` | 原生 req/res/event JSON 帧 |
-| TUI/CLI | `tui` | WS `:19001/tui` | 同上 + 本地 handler |
-| ACP | `acp` | WS `:19001/acp` | **JSON-RPC 2.0** ↔ E2A（`AcpGatewayBridge` 双向转换） |
-| A2A | `a2a` | HTTP `:19100/a2a` | **A2A SDK** JSON-RPC（FastAPI） |
-| 飞书 | `feishu` | 飞书 WS 长连接 | 平台 SDK → 统一 `Message` |
-| 钉钉 | `dingtalk` | dingtalk-stream WS | Stream SDK 收 + HTTP API 发 |
-| 企微 / 微信 / Telegram / Discord 等 | 各平台 channel_id | 各平台协议 | 平台适配 → 统一 `Message` |
-
-**Channel 统一帧格式**（Web / TUI / ACP 路由共用）：
-
-```json
-{"type":"req",  "id":"...", "method":"chat.send", "params":{...}, "is_stream":true}
-{"type":"res",  "id":"...", "ok":true, "payload":{...}}
-{"type":"event","event":"chat.final", "payload":{...}}
-```
-
-方法枚举由 `ReqMethod` 定义（`common/schema/message.py`），涵盖 `chat.send`、`session.list`、`agent.reload_config` 等。
-
-### 1.3 内部骨干协议：E2A
-
-Gateway 与 AgentServer 之间采用 **E2A（Envelope-to-Agent）** 协议，传输层为 **WebSocket**（`WebSocketAgentServerClient` ↔ `AgentWebSocketServer`）。
-
-| 项目 | 说明 |
-|------|------|
-| 协议版本 | `1.0`（`common/e2a/models.py`） |
-| 握手 | 双方首帧 `{"type":"event","event":"connection.ack","payload":{"protocol_version":"1.0"}}` |
-| 请求信封 | `E2AEnvelope` — 含 `request_id`、`channel`、`method`、`params`、`is_stream` |
-| 响应 | `E2AResponse` 线 JSON（`wire_codec.py` 编解码） |
-| 主动推送 | AgentServer `send_push()`，用于进化审批、Team 消息、Cron 结果等 |
-| 默认连接 | `ws://127.0.0.1:18092` |
-
-协议转换层：
-
-- `common/e2a/gateway_normalize.py` — `Message` ↔ `E2AEnvelope` / `E2AResponse`
-- `common/e2a/adapters/` — ACP JSON-RPC → E2A
-- `message_handler.message_to_e2a()` — Gateway 出站统一转 E2A
-
-### 1.4 Agent 拉起与生命周期
+### 1.3 Agent 拉起与生命周期
 
 Agent 实例管理在 **AgentServer 侧** 的 `AgentManager`（`server/runtime/agent_manager.py`）完成：
 
@@ -156,7 +115,7 @@ flowchart LR
 
 沙箱执行（非 Gateway 职责）由 AgentServer 侧 `jiuwenbox_runner.py` 通过 `asyncio.create_subprocess_exec` 拉起。
 
-### 1.5 消息路由与执行流
+### 1.4 消息路由与执行流
 
 Gateway 核心消息中枢为 `MessageHandler`（单例），采用 **双队列** 模型：
 
@@ -201,37 +160,6 @@ sequenceDiagram
 6. **ACP session alias 解析**
 7. `message_to_e2a()` → `agent_client.send_request` 或 `send_request_stream`
 8. 流式响应逐 chunk 转 `Message` 入 `_robot_messages`；非流式完整响应一次性入队
-
-### 1.6 管理与运维组件
-
-| 组件 | 位置 | 职责 |
-|------|------|------|
-| `ChannelManager` | `gateway/channel_manager/` | Channel 注册/注销、配置热更新、出站派发 |
-| `GatewayServer` | `gateway/app_gateway.py` | 多路 WS 路由（`/acp`、`/tui`），按 `(channel_id, request_id)` 精确路由 |
-| `MessageHandler` | `gateway/message_handler/` | 双队列消息中枢、转发循环 |
-| `SessionMap` | `gateway/routing/session_map.py` | IM 身份 → agent session_id 持久映射 |
-| `GatewayHeartbeatService` | `gateway/heartbeat/` | 周期 E2A `chat.send` 探活 |
-| `CronSchedulerService` | `gateway/cron/` | 定时任务调度，到点经 `agent_client` 唤醒 Agent |
-| `ExtensionRegistry` | `extensions/registry.py` | 可插拔扩展（如替换 `AgentServerClient` 为远程 HTTP 客户端） |
-| `InstanceManager` | `instance_manager/` | 多实例端口/工作区/PID 管理（`instances.yaml`） |
-
-**会话管理**：AgentServer 提供 `session.list/create/switch/delete/rewind` 等 API；ACP 场景下 `MessageHandler` 维护外部 session_id ↔ 内部 session_id 映射。
-
-**配置热更新**：Gateway 保存配置后发送 `agent.reload_config` E2A 请求 → AgentServer `reload_agents_config()` 遍历所有实例生效。
-
-### 1.7 架构特点小结
-
-| 维度 | Jiuwenswarm Gateway 现状 |
-|------|--------------------------|
-| 部署模型 | Gateway + AgentServer 双进程分离，Gateway 不持有 Agent 运行时 |
-| Agent 拉起 | AgentServer 内 `AgentManager` 懒加载 Python 对象，非容器/per-user 隔离 |
-| 内部协议 | WebSocket + E2A 信封 |
-| 对外协议 | 原生 WS req/res/event、ACP JSON-RPC 2.0、A2A JSON-RPC、各 IM 平台 SDK |
-| 消息模型 | `MessageHandler` 双队列异步转发 |
-| 渠道管理 | `ChannelManager` 统一注册，配置驱动 IM Channel 启停 |
-| 扩展性 | `ExtensionRegistry` 可替换 AgentServer 连接方式 |
-
-后续章节将在此基础上，描述如何将 opencode / Claude Code 等第三方 Agent 平台接入 Agent OS，补齐 SSH 透传、容器隔离、统一注册中心等能力。
 
 ## 两条路径，体验分级
 
