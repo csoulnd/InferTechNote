@@ -15,38 +15,27 @@
 flowchart TB
     subgraph L1["第一层：接入层 — 多客户端接入，Gateway 统一管理"]
         direction LR
-        SSH["SSH :22<br/>TUI / 字节流透传"]
-        WEB["Web"]
-        IM["飞书 / DingTalk / IM"]
-        ACP["API / ACP / A2A"]
+        SSH["SSH :22<br/>TUI / 字节流透传"] ~~~ WEB["Web"] ~~~ IM["飞书 / DingTalk / IM"] ~~~ ACP["API / ACP / A2A"]
     end
 
     subgraph L2["第二层：Agent Gateway"]
         direction LR
-        CM["Channel Manager<br/>渠道管理与路由"]
-        AS["Agent Service<br/>会话 / 消息 / 生命周期"]
+        CM["Channel Manager<br/>渠道管理与路由"] ~~~ AS["Agent Service<br/>会话 / 消息 / 生命周期"]
     end
 
     subgraph L3["第三层：注册中心"]
         direction LR
-        AM["Agent Manager<br/>注册 / 发现 / 调度"]
-        FF["Function Frontend<br/>能力暴露 / 函数路由"]
+        AM["Agent Manager<br/>注册 / 发现 / 调度"] ~~~ FF["Function Frontend<br/>能力暴露 / 函数路由"]
     end
 
     subgraph L4["第四层：Agent 平台"]
         direction LR
-        CC["Claude Code"]
-        OC["Opencode"]
-        JWS["Jiuwenswarm"]
-        OTHER["… 其他 Agent"]
+        CC["Claude Code"] ~~~ OC["Opencode"] ~~~ JWS["Jiuwenswarm"] ~~~ OTHER["… 其他 Agent"]
     end
 
     subgraph L5["第五层：基础设施"]
         direction LR
-        SB["沙箱 Sandbox"]
-        FS["文件系统"]
-        DC["容器运行时"]
-        RES["网络 / 资源配额"]
+        SB["沙箱 Sandbox"] ~~~ FS["文件系统"] ~~~ DC["容器运行时"] ~~~ RES["网络 / 资源配额"]
     end
 
     L1 --> L2 --> L3 --> L4 --> L5
