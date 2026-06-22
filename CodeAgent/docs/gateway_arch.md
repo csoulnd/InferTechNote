@@ -4,42 +4,39 @@
 
 本文档描述基于 opencode + jiuwenswarm gateway 构建的 AI Agent 平台架构。核心设计理念是：**一个 Gateway 入口，多端接入，统一身份，体验分级**。
 
-```
-                           Gateway
-         ┌───────────────┬──┼──┬───────────────┐
-         │               │  │  │               │
-       SSH              Web  IM              ACP/A2A
-         │               │  │  │               │
-    ┌────┴────┐    ┌────┴────┴────┐    ┌──────┴──────┐
-    │ 丝滑体验 │    │ 基本可用     │    │ Agent互调   │
-    │ TUI完整 │    │ 消息转发     │    │ A2A/ACP协议 │
-    └────┬────┘    └────┬─────────┘    └──────┬──────┘
-         │              │                     │
-         └──────┬───────┴─────────┬───────────┘
-                │                 │
-         ┌──────┴──────┐   ┌──────┴──────┐
-         │  Agent注册中心 │◄──│  容器 B     │
-         │               │   │  (Agent)    │
-         │  /registry    │   └─────────────┘
-         │  - Agent 列表 │
-         │  - 能力描述   │   ┌─────────────┐
-         │  - 状态跟踪   │──►│  容器 C     │
-         │  - 路由转发   │   │  (Agent)    │
-         └──────┬───────┘   └─────────────┘
-                │
-         ┌──────┴──────┐
-         │  Agent Team │
-         │  编排层      │
-         │  Orchestrator│
-         └─────────────┘
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart LR
+    subgraph GATEWAY["Gateway"]
+        direction LR
+        SSH["SSH :22"]
+        WEB["Web"]
+        IM["IM"]
+        ACP["ACP/A2A"]
+    end
+
+    SSH --> SSH_EXP["丝滑体验<br/>TUI完整"]
+    WEB --> WEB_EXP["基本可用<br/>消息转发"]
+    IM --> IM_EXP["轻量交互<br/>消息卡片"]
+    ACP --> ACP_EXP["Agent互调<br/>A2A/ACP协议"]
+
+    SSH_EXP & WEB_EXP & IM_EXP & ACP_EXP --> REGISTRY["Agent注册中心<br/>/registry"]
+
+    REGISTRY --> B["容器 B<br/>(Agent)"]
+    REGISTRY --> C["容器 C<br/>(Agent)"]
+
+    REGISTRY --> TEAM["Agent Team<br/>Orchestrator<br/>编排层"]
 ```
 
 ## 两条路径，体验分级
 
 ### SSH 路径（完整 TUI 体验）
 
-```
-用户 ──SSH──► Gateway:22 ──TCP透传──► 容器:22
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart LR
+    USER["用户"] -- SSH --> GW["Gateway:22"]
+    GW -- TCP透传 --> CT["容器:22"]
 ```
 
 - SSH 字节流端到端透传，Gateway 不做消息解析
@@ -48,8 +45,12 @@
 
 ### 消息路径（非 SSH 渠道）
 
-```
-用户 ──Web/IM/API──► Gateway ──Message──► HTTP/SSH ──► 容器
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart LR
+    USER["用户"] -- Web/IM/API --> GW["Gateway"]
+    GW -- Message --> HTTP["HTTP/SSH"]
+    HTTP --> CT["容器"]
 ```
 
 - 支持 Web 界面、飞书/DingTalk/Telegram 等 IM 平台
@@ -71,44 +72,47 @@ Gateway 不只是一个消息路由器，更是整个平台的控制平面：
 
 #### 场景一：用户先走 Web
 
-```
-Web 注册 ──► 上传 SSH 公钥（或设密码）
-                  │
-                  ▼
-          Gateway 创建用户
-          Gateway 拉起容器 → 注入内部 key
-                  │
-                  ▼
-          "已就绪，SSH 体验更佳：ssh user@gateway"
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    REG["Web 注册"] --> KEY["上传 SSH 公钥/设密码"]
+    KEY --> GW["Gateway 创建用户"]
+    GW --> CT["Gateway 拉起容器<br/>注入内部 key"]
+    CT --> MSG["已就绪，SSH 体验更佳：ssh user@gateway"]
 ```
 
 #### 场景二：用户先走 SSH
 
-```
-ssh user@gateway（首次连接，密码登录）
-       │
-       ▼
-  ForceCommand 检测无容器 → 自动拉起
-       │
-       ▼
-  容器创建完成 + 注入内部 SSH key
-       │
-       ▼
-  透传进入容器
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    SSH["ssh user@gateway<br/>首次连接，密码登录"] --> CHECK["ForceCommand<br/>检测无容器"]
+    CHECK --> LAUNCH["自动拉起容器"]
+    LAUNCH --> INJECT["容器创建完成<br/>注入内部 SSH key"]
+    INJECT --> TUNNEL["透传进入容器"]
 ```
 
 #### 场景三：管理员预创建
 
-```
-管理员 → Web Admin → 创建用户
-  ├─ 用户名白名单（AllowUsers）
-  ├─ 自动生成随机初始密码
-  └─ 自动拉容器
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    subgraph ADMIN["管理员操作"]
+        A1["Web Admin 创建用户"]
+        A2["用户名白名单 AllowUsers"]
+        A3["生成随机初始密码"]
+        A4["自动拉容器"]
+    end
 
-用户首次 SSH 登录
-  ├─ 输入初始密码
-  └─ 强制修改密码
-       └─ 之后可用公钥或新密码免密登录
+    subgraph USER["用户操作"]
+        U1["首次 SSH 登录"]
+        U2["输入初始密码"]
+        U3["强制修改密码"]
+        U4["公钥或新密码免密登录"]
+    end
+
+    A1 --> A2 --> A3 --> A4
+    A4 --> U1 --> U2 --> U3 --> U4
 ```
 
 ### 密钥分层
@@ -165,19 +169,32 @@ class UserPermissions:
 
 ## 基础设施
 
-```
-Gateway 机器
-├── OpenSSHD（端口 22）
-│   ├── AllowUsers 白名单
-│   ├── PasswordAuthentication 首次登录
-│   └── ForceCommand → route_user.sh
-├── jiuwenswarm gateway.py
-│   ├── WebSocket / IM / ACP 渠道
-│   ├── /api/admin/* 管理接口
-│   ├── Agent 注册中心
-│   └── Docker SDK 容器管理
-├── route_user.sh（由 gateway 生成）
-└── Docker（容器运行时）
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    GW["Gateway 机器"]
+
+    subgraph SSH_LAYER["OpenSSHD :22"]
+        ALLOW["AllowUsers 白名单"]
+        PWD["PasswordAuthentication 首次登录"]
+        FC["ForceCommand → route_user.sh"]
+    end
+
+    subgraph GW_LAYER["jiuwenswarm gateway.py"]
+        CH["WebSocket / IM / ACP 渠道"]
+        API["/api/admin/* 管理接口"]
+        REG["Agent 注册中心"]
+        DOCK["Docker SDK 容器管理"]
+    end
+
+    subgraph INFRA["基础设施"]
+        RS["route_user.sh<br/>（由 gateway 生成）"]
+        DC["Docker<br/>容器运行时"]
+    end
+
+    GW --> SSH_LAYER
+    GW --> GW_LAYER
+    GW --> INFRA
 ```
 
 ## 扩展方向
