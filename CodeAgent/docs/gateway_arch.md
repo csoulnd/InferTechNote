@@ -135,6 +135,42 @@ ssh root@容器IP \
 
 **选型理由：** 部分 Agent CLI（如 Claude Code）不支持 HTTP Server 模式，SSH + CLI 是通用的调用方式，兼容 opencode、Claude Code 等任意 Agent 软件。
 
+### 消息路径技术方案对比
+
+Gateway 内部实现非 SSH 渠道的消息转发，有以下几种技术选择：
+
+| 方案 | 实现 | 代码量 | 优点 | 缺点 |
+|---|---|---|---|---|
+| **asyncssh 嵌入** | Gateway 进程内用 asyncssh 连接容器 SSH 执行命令 | ~20 行 | 消息全在 Gateway 管控内；可预处理/转义/校验；支持并发 | 需要 Python asyncssh 依赖 |
+| **subprocess + ssh CLI** | Gateway 内 subprocess 调用系统 ssh 命令 | ~10 行 | 零依赖，系统自带 | 进程开销大；并发差；信号处理麻烦 |
+| **ttyd Web 终端** | ttyd 桥接 WebSocket → SSH PTY | 独立部署 | 浏览器获得完整 TUI | 绕过 Gateway 消息管道；非一问一答 |
+| **SSHForwardChannel** | 基于 Gateway 已有的 BaseChannel 封装 asyncssh | ~50 行 | 复用 Gateway 的 WebSocket 层和连接管理 | 依赖 Gateway 架构 |
+
+**推荐方案：asyncssh 嵌入**
+
+```python
+# asyncssh 核心用法：异步 SSH 命令执行
+import asyncssh
+
+async def run_in_container(container_ip: str, command: str) -> str:
+    async with asyncssh.connect(
+        host=container_ip,
+        username="root",
+        client_keys=["/opt/gateway/keys/gateway_key"],
+        known_hosts=None,  # 容器 IP 动态，首次连接跳过 known_hosts
+    ) as conn:
+        result = await conn.run(command)
+        return result.stdout
+```
+
+asyncssh 是一个纯 Python 的异步 SSH2 协议实现，支持：
+
+- 客户端/服务端模式
+- 命令执行、Shell/PTY、SFTP、SCP
+- 端口转发（本地/远程）
+- 多种密钥格式（RSA/ECDSA/Ed25519）
+- 原生 asyncio 集成，支持成百上千并发 SSH 连接
+
 ## Gateway 作为管理平面
 
 Gateway 不只是一个消息路由器，更是整个平台的控制平面：
