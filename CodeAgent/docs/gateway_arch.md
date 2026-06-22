@@ -110,13 +110,30 @@ exec ssh -o StrictHostKeyChecking=no \
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
 flowchart LR
     USER["用户"] -- Web/IM/API --> GW["Gateway"]
-    GW -- Message --> HTTP["HTTP/SSH"]
-    HTTP --> CT["容器"]
+    GW -- Message --> SSH["SSH exec<br/>opencode run / claude run"]
+    SSH --> CT["容器"]
 ```
 
 - 支持 Web 界面、飞书/DingTalk/Telegram 等 IM 平台
 - 一问一答模式，非流式，适合轻量交互
+- 底层通过 SSH 在容器内执行 `opencode run` 或 `claude run` 命令
 - 在非 SSH 渠道提示用户切换到 SSH 以获取更完整体验
+
+**技术实现：**
+
+```bash
+# Gateway 收到用户消息后，SSH 到容器执行一次命令
+ssh root@容器IP \
+    -i /opt/gateway/keys/gateway_key \
+    "opencode run --no-tui \"$用户消息\""
+
+# 若容器部署的是 Claude Code
+ssh root@容器IP \
+    -i /opt/gateway/keys/gateway_key \
+    "claude run \"$用户消息\""
+```
+
+**选型理由：** 部分 Agent CLI（如 Claude Code）不支持 HTTP Server 模式，SSH + CLI 是通用的调用方式，兼容 opencode、Claude Code 等任意 Agent 软件。
 
 ## Gateway 作为管理平面
 
