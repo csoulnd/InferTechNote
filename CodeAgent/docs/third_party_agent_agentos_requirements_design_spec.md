@@ -148,19 +148,19 @@ flowchart LR
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-flowchart TD
+flowchart LR
     REG["Web 注册"] --> KEY["上传 SSH 公钥 / 设密码"]
     KEY --> GW["Gateway 创建用户"]
     GW --> RC["注册中心编排创建"]
     RC --> CT["沙箱拉起 Agent 实例<br/>注入内部 key"]
-    CT --> MSG["已就绪，SSH 体验更佳：ssh user@gateway"]
+    CT --> MSG["已就绪<br/>ssh user@gateway"]
 ```
 
 #### 场景二：用户先走 SSH
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
-flowchart TD
+flowchart LR
     SSH["ssh user@gateway<br/>首次连接，密码登录"] --> CHECK["ForceCommand<br/>检测无实例"]
     CHECK --> RC["注册中心 → Function Frontend → 沙箱"]
     RC --> LAUNCH["自动拉起 Agent 实例"]
