@@ -6,35 +6,32 @@
 
 ## 一、总体架构
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Client (Browser / Electron / Tauri)                            │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐   │
-│  │  xterm.js    │───▶│  Input Mgr   │───▶│  WebSocket       │   │
-│  │  (ANSI渲染)  │◀───│  (stdin收集)  │◀───│  Client          │   │
-│  └──────────────┘    └──────────────┘    └────────┬─────────┘   │
-└───────────────────────────────────────────────────┼─────────────┘
-                                                    │
-                              WebSocket (wss://)     │
-                                                    │
-┌───────────────────────────────────────────────────┼─────────────┐
-│  Server                                           │             │
-│  ┌────────────────────────────────────────────────┼──────────┐  │
-│  │  WebSocket Server                               ▼          │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │  │
-│  │  │  Auth        │  │  Session     │  │  PTY Pool         │  │  │
-│  │  │  (token/pub) │  │  Manager     │  │  (master ←→ slave)│  │  │
-│  │  └──────────────┘  └──────────────┘  └────────┬─────────┘  │  │
-│  └───────────────────────────────────────────────┼────────────┘  │
-│                                                  │               │
-│  ┌───────────────────────────────────────────────┼────────────┐  │
-│  │  Container / Process                           ▼            │  │
-│  │  ┌──────────────────┐     ┌──────────────────────────────┐ │  │
-│  │  │  PTY Slave       │────▶│  opencode / Claude Code      │ │  │
-│  │  │  (xterm-256color)│◀────│  (stdin/stdout/stderr → TUI) │ │  │
-│  │  └──────────────────┘     └──────────────────────────────┘ │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Client["Browser / Electron / Tauri"]
+        direction LR
+        XTERM["xterm.js<br/>(ANSI 渲染)"] -->|"onData"| IN
+        XTERM <-.->|"write"| IN
+        IN["Input Manager<br/>(stdin 收集)"]
+        IN <--> WS_C["WebSocket Client"]
+    end
+
+    subgraph Server["Server"]
+        subgraph WSS["WebSocket Server :8443"]
+            AUTH["Auth<br/>(token / API Key)"]
+            SM["Session Manager<br/>(生命周期)"]
+            POOL["PTY Pool<br/>(master → slave 桥接)"]
+        end
+        subgraph Container["Container / 子进程"]
+            PTY_S["PTY Slave<br/>(xterm-256color)"]
+            AGENT["opencode / Claude Code<br/>(stdin/stdout → TUI)"]
+        end
+    end
+
+    Client <==>|"wss:// 全双工"| WSS
+    POOL -->|"stdin 写入"| PTY_S
+    PTY_S -->|"stdout/stderr (ANSI)"| POOL
+    PTY_S <-.-> AGENT
 ```
 
 ---
@@ -128,15 +125,13 @@ server/
 
 ### 3.2 PTY Bridge 核心逻辑
 
-```
-                 ┌──────────────────┐
-                 │   PTY Bridge      │
-                 │                   │
-  WS msg ──▶ │   WS Handler     │──▶ PTY master (write)
-                 │                   │
-  WS ◀───── │   PTY Callback   │◀── PTY master (onData)
-                 │                   │
-                 └──────────────────┘
+```mermaid
+flowchart LR
+    WS["WebSocket"] <-->|"消息帧"| HANDLER["WS Handler"]
+    HANDLER -->|"write(stdin)"| MASTER["PTY master fd"]
+    MASTER -->|"onData (ANSI stdout)"| CB["PTY Read Loop"]
+    CB -->|"send(data)"| WS
+    MASTER <-.->|"fork/exec"| SLAVE["PTY slave"] --> AGENT["Agent 进程"]
 ```
 
 ```python
@@ -571,53 +566,58 @@ class AgentTerminal {
 
 ### 6.1 新建会话
 
-```
-Client                          Server                         Agent
-  │                               │                              │
-  │── WS connect ───────────────▶│                              │
-  │                               │                              │
-  │── auth {token} ─────────────▶│                              │
-  │◀─ auth_ok ───────────────────│                              │
-  │                               │                              │
-  │── new_session {agent:"opencode"} ─▶│                         │
-  │                               │── fork() + exec("opencode") ─▶│
-  │                               │◀─ ANSI stdout ──────────────│
-  │◀─ session_created ───────────│                              │
-  │◀─ data "\x1b[?1049hWelcome" ──│                              │
-  │                               │                              │
-  │── data "修复 login bug\n" ──▶│                              │
-  │                               │── write(PTY) ───────────────▶│
-  │                               │◀─ stdout(ANSI) ─────────────│
-  │◀─ data "\x1b[32m分析中...\x1b[0m" │                           │
-  │                               │                              │
-  │  Ctrl+C（浏览器按键）              │                              │
-  │── signal {SIGINT} ───────────▶│                              │
-  │                               │── kill(SIGINT) ─────────────▶│
-  │                               │                              │
-  │  关闭浏览器                     │                              │
-  │── WS close ──────────────────▶│                              │
-  │                               │  桥接保持 PTY，Agent 继续运行   │
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant A as Agent
+
+    C->>S: WS connect
+    C->>S: auth { token }
+    S-->>C: auth_ok
+
+    C->>S: new_session { agent: "opencode" }
+    S->>A: fork() + exec("opencode")
+    A-->>S: ANSI stdout
+    S-->>C: session_created
+    S-->>C: data "welcome screen"
+
+    C->>S: data "修复 login bug"
+    S->>A: write(PTY stdin)
+    A-->>S: stdout (ANSI)
+    S-->>C: data "分析中..."
+
+    Note over C: Ctrl+C
+    C->>S: signal { SIGINT }
+    S->>A: kill(SIGINT)
+
+    Note over C: 关闭浏览器
+    C->>S: WS close
+    Note over S,A: 桥接保持 PTY，Agent 继续运行
 ```
 
 ### 6.2 重连已有会话
 
-```
-Client                          Server                         Agent
-  │                               │                              │
-  │── WS connect ───────────────▶│                              │
-  │── auth {token} ─────────────▶│                              │
-  │◀─ auth_ok ───────────────────│                              │
-  │                               │                              │
-  │── list_sessions ────────────▶│                              │
-  │◀─ session_list [{...}] ─────│                              │
-  │                               │                              │
-  │── attach_session {sessionId:"opencode-abc123"} ──▶│         │
-  │                               │── PTY.read() ───────────────▶│
-  │                               │◀─ 最近缓冲输出 ──────────────│
-  │◀─ session_attached ──────────│                              │
-  │◀─ data "最近输出内容..." ─────│                              │
-  │                               │                              │
-  │  （继续交互，同新建会话）          │                              │
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant A as Agent
+
+    C->>S: WS connect
+    C->>S: auth { token }
+    S-->>C: auth_ok
+
+    C->>S: list_sessions
+    S-->>C: session_list [{sessionId, agent, ...}]
+
+    C->>S: attach_session { sessionId }
+    S->>A: PTY.read() 获取缓冲
+    A-->>S: 最近输出
+    S-->>C: session_attached
+    S-->>C: data "最近输出内容..."
+
+    Note over C,A: 继续交互，同新建会话
 ```
 
 ---
@@ -716,7 +716,8 @@ CMD ["node", "main.js"]
 
 **两者互补**：PTY 方案承载 TUI 完整体验，ACP 方案承载 Web/IM 轻量交互。Gateway 根据客户端类型自动选择路径：
 
-```
-客户端是 xterm.js   → PTY 路径（完整 ANSI）
-客户端是 Web 聊天框  → ACP 路径（结构化消息）
+```mermaid
+flowchart LR
+    GW["Gateway"] -->|"xterm.js 客户端"| PTY["PTY 路径<br/>(完整 ANSI)"]
+    GW -->|"Web 聊天框 / IM"| ACP["ACP 路径<br/>(结构化消息)"]
 ```
