@@ -689,22 +689,30 @@ agent-onboarding/                # Agent 上架服务（本次新建）
 
 **模块边界**：
 
-```
-┌─ 外部已有 ─────────────────────────────┐
-│  管理界面 (Vue)                         │ ← 通过 IAM JWT 调用 Agent 上架服务
-│  注册中心                                │ ← 接受 Agent 上架服务的刷新请求
-│  IAM 鉴权服务                            │ ← 签发 JWT
-└────────────────────────────────────────┘
-         │
-    ─────┼────── 本次设计范围边界
-         │
-┌─ Agent 上架服务 (本次新建) ───────────────┐
-│  ├── api/        ←── 接收管理界面请求      │
-│  ├── services/   ←── 业务编排            │
-│  │   └── registry_client.py ──→ 调注册中心 │
-│  ├── engine/     ←── 二次构建            │
-│  └── storage/    ←── 包/镜像落盘          │
-└─────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph external[" 外部已有 "]
+        UI["管理界面<br/>(Vue)"]
+        IAM["IAM 鉴权服务"]
+        REG["注册中心"]
+    end
+
+    subgraph onboarding[" Agent 上架服务 — 本次新建 "]
+        API["api/<br/>REST 接口层"]
+        SVC["services/<br/>业务编排"]
+        ENG["engine/<br/>镜像构建"]
+        STORE["storage/<br/>持久化存储"]
+
+        API --> SVC --> ENG --> STORE
+        SVC --> REG
+    end
+
+    UI -->|"IAM JWT"| IAM
+    IAM -->|"验签通过"| API
+    STORE -->|"刷新注册表"| REG
+
+    style external fill:#f0f0f0,stroke:#999,stroke-dasharray: 5 5
+    style onboarding fill:#dbeafe,stroke:#2563eb
 ```
 
 ### 7.2 核心数据结构
