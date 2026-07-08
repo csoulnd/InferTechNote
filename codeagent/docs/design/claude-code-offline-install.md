@@ -689,31 +689,16 @@ agent-onboarding/                # Agent 上架服务（本次新建）
 
 **模块边界**：
 
-```mermaid
-flowchart TB
-    subgraph external[" 外部已有 "]
-        UI["管理界面<br/>(Vue)"]
-        IAM["IAM 鉴权服务"]
-        REG["注册中心"]
-    end
-
-    subgraph onboarding[" Agent 上架服务 — 本次新建 "]
-        API["api/<br/>REST 接口层"]
-        SVC["services/<br/>业务编排"]
-        ENG["engine/<br/>镜像构建"]
-        STORE["storage/<br/>持久化存储"]
-
-        API --> SVC --> ENG --> STORE
-        SVC --> REG
-    end
-
-    UI -->|"IAM JWT"| IAM
-    IAM -->|"验签通过"| API
-    STORE -->|"刷新注册表"| REG
-
-    style external fill:#f0f0f0,stroke:#999,stroke-dasharray: 5 5
-    style onboarding fill:#dbeafe,stroke:#2563eb
 ```
+管理界面 ──IAM JWT──→ api/ ──→ services/ ──→ engine/ ──→ storage/ ──刷新──→ 注册中心
+  (已有)               ↑                            (已有)
+                       └─────── Agent 上架服务 (本次新建) ───────┘
+```
+
+- `api/` 校验 IAM JWT，对外暴露 REST 接口
+- `services/` 上传编排、构建任务调度、调用注册中心
+- `engine/` 二次构建（Dockerfile 生成 + 镜像打包）
+- `storage/` 包文件落盘 + 镜像产物存储
 
 ### 7.2 核心数据结构
 
