@@ -197,6 +197,31 @@ npm 平台特定包的文件名遵循约定格式：
 
 > RPM / DEB 等其他格式的文件名解析规则后续补充，当前 MVP 阶段仅支持 `.tgz`。
 
+#### 3.3.1 解析阶段风险
+
+文件名解析仅发生在上传阶段，无法通过解析的包**直接拒绝**，不进入后续流程。
+
+**非法文件名**：
+
+| 场景 | 示例 | 拒绝原因 | 处理 |
+|------|------|------|------|
+| 缺少版本段 | `opencode-linux-x64.tgz` | 无法确定版本号 | 400，拒绝上传 |
+| 缺少平台段 | `opencode-1.17.14.tgz` | 无法确定目标平台 | 400，拒绝上传 |
+| 平台不在白名单 | `opencode-solaris-sparc-1.17.14.tgz` | 系统不支持该平台 | 400，拒绝上传 |
+| 疑似拼写错误 | `opencode-linux-x8-1.17.14.tgz` | 模糊匹配失败 | 400，拒绝上传 |
+| 文件名不含 `-{platform}-{version}` 结构 | `agent_package.tgz` | 完全无法解析 | 400，code=40001 |
+
+**错误包名（能解析但不匹配）**：
+
+| 场景 | 示例 | 风险 | 处理 |
+|------|------|------|------|
+| 名称不在已知 Agent 列表中 | `unknown-agent-linux-x64-1.0.0.tgz` | 非受支持的 Agent | 400，拒绝上传 |
+| 文件名版本与包内 `package.json` 版本不一致 | 文件名标 `2.1.89`，包内是 `2.1.88` | 实际内容与声明不符 | 上传阶段检测到即 400 拒绝 |
+| 后缀非 `.tgz` | `opencode-linux-x64-1.17.14.tar.gz` | 格式不匹配（文件名包含冗余 `-`） | 400，拒绝。建议管理员先 `mv` 重命名为 `.tgz` |
+| 后缀非 `.tgz` | `opencode-linux-x64-1.17.14.deb` | deb 格式当前不支持 | 400，后续扩展后再开放 |
+
+> 解析阶段只负责**格式校验 + 提取基本信息**，不保证包内容正确运行，后者由构建阶段兜底。
+
 ### 3.4 目录结构约定
 
 从 npm registry 下载的 `.tgz` 包解压后为标准 npm 包结构：
@@ -233,11 +258,13 @@ opencode-linux-arm64-musl-1.17.14.tgz
 
 ### 4.1 基础镜像依赖矩阵
 
-基础镜像名称规约：`registry.example.com/agent-base:<system_version>-<arch>`
+基础镜像由系统统一维护，随系统升级迭代。**OS 版本由系统的整体 OS 策略决定，不在基础镜像中单独指定**；以下依赖清单中 Ubuntu 版本仅为示例。
+
+基础镜像名称规约：`registry.example.com/agent-base:v<系统版本号>-<arch>`
 
 | 依赖 | 版本 | 用途 | 安装方式 |
 |------|------|------|----------|
-| Ubuntu | 22.04 LTS | OS 底座 | FROM ubuntu:22.04 |
+| Ubuntu | 随系统 OS 版本 | OS 底座 | FROM 系统维护的 base 镜像 |
 | Node.js | 22.x LTS (≥ 22.12.0) | Claude Code / OpenCode 运行时 | 预编译二进制 |
 | npm | 10.x (随 Node 22 内置) | npm offline install | 随 Node.js |
 | Git | ≥ 2.40 | 代码仓库操作 | apt install |
@@ -249,19 +276,35 @@ opencode-linux-arm64-musl-1.17.14.tgz
 
 ### 4.2 多 Agent 运行环境兼容方案
 
-基础镜像同时包含 Node.js 22，即可同时支撑 Claude Code 和 OpenCode 运行。所有 Agent 共享同一套运行时环境，不单独维护。
+基础镜像统一提供 Node.js 22 运行时，同时支撑 Claude Code 和 OpenCode 运行。**每个 Agent 独立构建为一个镜像**，不合并打包：
 
 ```
-基础镜像
-  ├── /opt/agents/              ← Agent 软件层（二次构建时注入）
-  │   ├── claude-code/          ← claude-code v2.1.89
-  │   └── opencode/             ← opencode v0.9.0
-  ├── /opt/mcp-servers/         ← MCP Server 预装层
-  │   ├── filesystem/
-  │   ├── git/
-  │   └── shell/
-  └── /usr/local/bin/           ← 全局 CLI 软链接
+基础镜像 (agent-base:vX.X.X-linux-x64)
+   │
+   ├── 二次构建 ──→ agent-claude-code:2.1.89  （独立镜像）
+   │                   ├── /opt/agents/claude-code/
+   │                   └── /usr/local/bin/claude → ...
+   │
+   ├── 二次构建 ──→ agent-opencode:1.17.14     （独立镜像）
+   │                   ├── /opt/agents/opencode/
+   │                   └── /usr/local/bin/opencode → ...
+   │
+   └── 二次构建 ──→ agent-claude-code:2.2.0    （同一 Agent 不同版本，独立镜像）
+                       ├── /opt/agents/claude-code/
+                       └── ...
 ```
+
+Agent 镜像内部结构示例：
+
+```
+agent-{id}:{version}
+  ├── /opt/agents/{id}/         ← 该 Agent 软件文件
+  ├── /opt/mcp-servers/         ← 继承基础镜像的 MCP Server 预装
+  ├── /usr/local/bin/{cli}      ← 全局 CLI 软链接
+  └── ...                        ← 继承基础镜像的运行时环境
+```
+
+> 每个 Agent 独立镜像，沙箱按需选择拉取具体版本。多租户共享同一镜像，实例化时由沙箱注入用户专属配置。
 
 ### 4.3 MCP 服务说明
 
@@ -878,7 +921,7 @@ async def handler(request, exc: AgentRegistryError):
 ### A. 基础镜像 Dockerfile 参考
 
 ```dockerfile
-FROM ubuntu:22.04
+FROM <系统统一维护的 OS 镜像>
 
 ARG NODE_VERSION=22.12.0
 ARG RG_VERSION=14.1.1
