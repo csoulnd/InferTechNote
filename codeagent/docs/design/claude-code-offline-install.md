@@ -23,7 +23,7 @@
 
 | 术语 | 说明 |
 |------|------|
-| **Agent 软件包** | 管理员上传的 `.tar.gz` 压缩包，内含 Agent 软件及 `agent.yaml` 清单文件 |
+| **Agent 软件包** | 管理员上传的 `.tgz` / `.tar.gz` 压缩包，内含 Agent 离线安装包（npm 格式）。元信息由系统自动解析提取 |
 | **基础镜像** | 预制的操作系统 + 运行时依赖（Node.js、Git、sshd 等）的 OCI 镜像，随系统版本升级迭代 |
 | **二次构建** | 将 Agent 软件包与基础镜像叠加，生成可直接运行的 OCI 格式镜像 |
 | **OCI** | Open Container Initiative，容器镜像工业标准格式 |
@@ -75,7 +75,7 @@ flowchart TB
 |------|------|------|------|
 | **管理界面** | 管理员操作入口；上传包、触发构建、查看状态 | 用户操作 | HTTP 请求 (JWT) |
 | **Agent 管理服务** | 接收上传、校验、存储包文件；管理构建任务生命周期；对外暴露 REST API | HTTP 请求 + tar.gz | 状态码 + JSON 响应 |
-| **镜像处理模块（Build Engine）** | 解压包 → 校验 agent.yaml → 叠加基础镜像 → 导出 OCI → 存储 → 回调注册 | 构建任务指令 | OCI 镜像 + 状态回调 |
+| **镜像处理模块（Build Engine）** | 解压包 → 读取包内 package.json → 叠加基础镜像 → 导出 OCI → 存储 → 回调注册 | 构建任务指令 | OCI 镜像 + 状态回调 |
 | **基础镜像仓库** | 提供预制的运行环境镜像 | — | OCI 镜像 (pull) |
 | **注册中心** | 统一管理上架后的 Agent 镜像元信息 | 镜像元数据 | 注册表查询 |
 | **Agent 服务（沙箱）** | 查询注册中心获取镜像地址，从镜像存储拉取镜像，为终端用户启动隔离实例 | 注册表查询结果 | 运行中的容器 |
@@ -95,7 +95,7 @@ sequenceDiagram
 
     Admin->>UI: 登录 (JWT)
     UI->>AM: POST /api/v1/agents/upload<br/>Authorization: Bearer <jwt>
-    AM->>AM: 校验包 (agent.yaml 完整性 / 大小)
+    AM->>AM: 校验 & 解析包 (文件名 + package.json / 大小)
     AM->>AM: 存储 tar.gz，分配 agent_id
     AM-->>UI: 200 { agent_id }
     UI-->>Admin: 上传成功
@@ -111,8 +111,8 @@ sequenceDiagram
     end
 
     BE->>BR: 拉取基础镜像
-    BE->>BE: 解压 tar.gz → 读取 agent.yaml
-    BE->>BE: 根据 agent.yaml 生成 Dockerfile 并构建
+    BE->>BE: 解压 tgz → 读取 package.json → 提取元信息
+    BE->>BE: 生成 Dockerfile 并执行构建
     BE->>STORE: 导出并存储 OCI 镜像
     BE->>REG: POST /registry/v1/refresh { image_name, tag, location }
     REG-->>BE: 200 OK
@@ -129,85 +129,97 @@ sequenceDiagram
 
 ## 3. 上传包规范
 
-### 3.1 方案 A：agent.yaml 清单文件（推荐）
+### 3.1 上传流程
 
-上传的 `.tar.gz` 包解压后**根目录必须包含 `agent.yaml`**，格式如下：
-
-```yaml
-# agent.yaml — Agent 软件包清单（必选）
-id: claude-code
-name: Claude Code
-version: 2.1.89
-runtime: nodejs
-runtime_version: "22"
-entrypoint: npx @anthropic-ai/claude-code
-install_mode: npm_offline
-platforms:
-  - linux-x64
-  - linux-arm64
-mcp_servers:
-  - id: filesystem
-    package: "@anthropic-ai/mcp-server-filesystem"
-    version: "0.1.0"
-  - id: git
-    package: "@anthropic-ai/mcp-server-git"
-    version: "0.1.0"
-```
-
-| 字段 | 类型 | 必选 | 说明 |
-|------|------|:---:|------|
-| `id` | string | ✓ | Agent 唯一标识（小写字母+连字符） |
-| `name` | string | ✓ | Agent 可读名称 |
-| `version` | string | ✓ | 语义化版本号 |
-| `runtime` | enum | ✓ | 运行时类型：`nodejs` / `python` / `binary` |
-| `runtime_version` | string | ✓ | 运行时版本约束，如 `"22"` |
-| `entrypoint` | string | ✓ | 容器内启动命令 |
-| `install_mode` | enum | ✓ | 安装方式：`npm_offline` / `binary_copy` |
-| `platforms` | []string | ✓ | 支持的 OS-Arch，如 `linux-x64` |
-| `mcp_servers` | []object | ✗ | 需预装的 MCP Server 清单 |
-
-**校验规则**：
-- `id` + `version` 组合全局唯一，重复上传拒绝
-- `platforms` 必须与基础镜像支持的平台有交集
-- `runtime_version` 必须被基础镜像满足
-
-### 3.2 方案 B：自动扫描（备选，不推荐）
-
-不要求 `agent.yaml`，系统解压后扫描包的内部特征：
-
-1. 检查 `package.json` 的 `name` 字段推断 Agent 类型
-2. `name: "@anthropic-ai/claude-code"` → 判定为 Claude Code
-3. 版本从 `node_modules/@anthropic-ai/claude-code/package.json` 读取
-
-**局限性**：
-- 依赖 npm 包命名规范，无法区分同名不同 Agent 场景
-- 运行时版本、支撑平台等关键信息无法自动获取，需维护硬编码映射表
-- 可作为早期原型方案，生产环境建议方案 A
-
-### 3.3 目录结构约定
+管理员上传 npm 官方 `.tgz` 包后，系统自动解析文件名提取元信息，管理员在 UI 中确认并补充必要字段即可，**无需手工编写任何清单文件**。
 
 ```
-agent-package.tar.gz
-├── agent.yaml                    # 方案 A（根目录）
-├── package.json
-├── package-lock.json
-├── node_modules/
-│   ├── @anthropic-ai/
-│   │   ├── claude-code/          # Agent 本体(含平台二进制)
-│   │   ├── claude-code-linux-x64/
-│   │   └── claude-code-linux-arm64/
-│   └── ...
-└── ... (其他依赖)
+管理员操作                                  系统行为
+─────────────────────────────────────────────────────────
+① 从 npm registry 下载 .tgz 包
+   例: opencode-linux-arm64-musl-1.17.14.tgz
+
+② 在管理界面上传该 .tgz                 → 存入包存储，返回包 ID
+                                          →
+③ 系统弹出确认表单                         ← 从文件名 + 包内提取元信息
+   ├─ Agent 名称: [opencode]   ← 已填      - 文件名解析 → name / version / platform
+   ├─ 版本:      [1.17.14]    ← 已填      - package.json: display_name / entrypoint
+   ├─ 平台:      [linux-arm64-musl] ← 已填
+   ├─ 入口命令:   [npx opencode] ← 已填
+   └─ 显示名称:   [OpenCode]    ← 可改
+
+④ 管理员确认 / 修改后提交                  → 写入 Agent 记录，状态: uploaded
 ```
 
-### 3.4 支持的 Agent 列表
+### 3.2 自动提取规则
 
-| Agent ID | 名称 | 运行时 | 说明 |
-|----------|------|:---:|------|
-| `claude-code` | Claude Code | Node.js 22 | npm 离线包 |
-| `opencode` | OpenCode | Node.js 22 | npm 离线包 |
+系统从上传包的文件名和包内容中自动提取以下信息：
 
-### 3.5 包大小限制
+| 元信息 | 来源 | 规则 |
+|--------|------|------|
+| `name` (agent_id) | 文件名第一段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `opencode` |
+| `version` | 文件名最后一段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `1.17.14` |
+| `platform` | 文件名中间段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `linux-arm64-musl` |
+| `platform` 映射 | 平台映射表 | `linux-x64` → `linux/amd64`, `linux-arm64` → `linux/arm64` ... |
+| `display_name` | 包内 `package.json` → `name` 或 `displayName` | — |
+| `entrypoint` | 包内 `package.json` → `bin` 字段或已知默认值 | `bin: { "opencode": "..." }` → `opencode` |
+| `runtime` | 文件后缀 + 包内容判断 | `.tgz` 内含 `node_modules/` → `nodejs` |
+| `runtime_version` | 基础镜像当前版本 | 固定为 Node.js 22（基础镜像提供） |
+
+管理员可在确认表单中覆盖 `display_name` 和 `entrypoint`；`name`、`version`、`platform` 由文件名唯一确定，不可改。
+
+### 3.3 文件名解析规范
+
+npm 平台特定包的文件名遵循约定格式：
+
+```
+{name}-{platform}-{version}.tgz
+
+示例:
+  opencode-linux-arm64-musl-1.17.14.tgz    → opencode, linux-arm64-musl, 1.17.14
+  opencode-linux-x64-1.17.14.tgz           → opencode, linux-x64, 1.17.14
+  opencode-win32-x64-1.17.14.tgz           → opencode, win32-x64, 1.17.14
+  opencode-darwin-arm64-1.17.14.tgz        → opencode, darwin-arm64, 1.17.14
+```
+
+解析逻辑：从文件名尾部向前取三段——`{version}.tgz`（版本号 + 扩展名）、`{platform}`（OS-arch 标识）、`{name}`（剩余部分）。
+
+因为 npm 包名可能含多个 `-`（如 `claude-code-linux-x64-2.1.89.tgz`），系统优先匹配已知的 platform 枚举值来定位分段边界。
+
+| 平台标识 | 映射目标 |
+|----------|----------|
+| `linux-x64` | `linux/amd64` |
+| `linux-arm64` | `linux/arm64` |
+| `linux-x64-musl` | `linux/amd64-musl` |
+| `linux-arm64-musl` | `linux/arm64-musl` |
+| `win32-x64` | `windows/amd64` |
+| `darwin-arm64` | `darwin/arm64` |
+
+> RPM / DEB 等其他格式的文件名解析规则后续补充，当前 MVP 阶段仅支持 `.tgz`。
+
+### 3.4 目录结构约定
+
+从 npm registry 下载的 `.tgz` 包解压后为标准 npm 包结构：
+
+```
+opencode-linux-arm64-musl-1.17.14.tgz
+  └── package/                          ← 解压后顶层
+      ├── package.json                  ← 含 name, version, bin 等元信息
+      ├── package-lock.json
+      └── node_modules/
+          └── ...
+```
+
+### 3.5 支持的 Agent 列表
+
+| Agent ID | 显示名称 | 运行时 | 入口命令 | npm 包前缀 |
+|----------|------|:---:|------|------|
+| `claude-code` | Claude Code | Node.js 22 | `claude` | `@anthropic-ai/claude-code` |
+| `opencode` | OpenCode | Node.js 22 | `opencode` | `opencode` |
+
+> agent_id 由文件名自动解析，上表中 agent_id 与实际 npm 包前缀的映射关系维护在后台 Agent 元信息配置中。后续新增 Agent 只需新增配置条目，无需改代码。
+
+### 3.6 包大小限制
 
 | 项目 | 值 |
 |------|-----|
@@ -300,7 +312,7 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 ### 4.4 镜像版本与系统升级策略
 
 - 基础镜像版本跟随系统版本迭代：`registry.example.com/agent-base:1.0.0-linux-x64`
-- 每次系统升级时重新构建基础镜像，agent.yaml 中声明的依赖若无法满足则拒绝上架
+- 每次系统升级时重新构建基础镜像，Agent 元信息中声明的依赖若无法满足则拒绝上架
 - 已上架 Agent 不受基础镜像升级影响（镜像已固化），如需升级需重新上架新版本
 
 ---
@@ -312,9 +324,9 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 ```mermaid
 flowchart TD
     S1["1. 接收构建任务<br/>task_id / agent_id / package_path / base_image<br/>（Agent 管理服务下发）"]
-    S2["2. 校验与解压<br/>- 读取 agent.yaml，校验完整性<br/>- 校验 agent_id + version 幂等<br/>- 解压 tar.gz 到构建工作区"]
+    S2["2. 校验与解压<br/>- 校验 agent_id + version 幂等<br/>- 解压 tgz，读取 package.json<br/>- 提取元信息"]
     S3["3. 拉取基础镜像<br/>- docker pull / skopeo copy<br/>- 从基础镜像仓库获取"]
-    S4["4. 生成 Dockerfile<br/>- 根据 agent.yaml 动态生成<br/>- COPY 到 /opt/agents/{id}/<br/>- 创建 cli 软链接"]
+    S4["4. 生成 Dockerfile<br/>- 根据 Agent 元信息动态生成<br/>- COPY 到 /opt/agents/{id}/<br/>- 创建 cli 软链接"]
     S5["5. 执行构建<br/>- docker build / buildah build<br/>- 日志流式输出到日志服务"]
     S6["6. 导出 OCI 镜像<br/>- 存储到镜像存储<br/>- 命名: agent-{id}:{version}"]
     S7["7. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调 Agent 管理服务: done"]
@@ -325,9 +337,9 @@ flowchart TD
     style S7 fill:#dcfce7,stroke:#16a34a
 ```
 
-### 5.2 依赖注入：agent.yaml → Dockerfile 生成规则
+### 5.2 Agent 元信息 → Dockerfile 生成规则
 
-以方案 A 的 `agent.yaml` 为例，Dockerfile 生成规则如下：
+以 Agent 元信息为例，Dockerfile 生成规则如下：
 
 ```dockerfile
 # 模板（由 Build Engine 动态生成）
@@ -355,7 +367,7 @@ COPY agent-package/ /opt/agents/<%= id %>/
 ENV PATH="/usr/local/bin:/opt/agents/<%= id %>/bin:${PATH}"
 ```
 
-- `<%= %>` 占位符从 `agent.yaml` 对应字段填充
+- `<%= %>` 占位符从 Agent 元信息 (agent_id, install_mode 等) 填充
 - `install_mode` 决定用 `npm install --offline` 还是 `COPY` 方式
 
 ### 5.3 构建状态机
@@ -415,7 +427,7 @@ Authorization: Bearer <JWT>
 | 字段 | 类型 | 必选 | 说明 |
 |------|------|:---:|------|
 | `package` | file | ✓ | `.tar.gz` 格式的 Agent 离线包 |
-| `agent_id` | string | ✗ | 如包内无 agent.yaml，需前端指定 |
+| `agent_id` | string | ✗ | 如未指定，系统自动从文件名解析 |
 
 **响应**：
 
@@ -437,8 +449,8 @@ Authorization: Bearer <JWT>
 | code | 说明 |
 |:---:|------|
 | 0 | 成功 |
-| 40001 | 缺少 agent.yaml 且未指定 agent_id |
-| 40002 | agent.yaml 字段校验失败 |
+| 40001 | 无法解析文件名，且未指定 agent_id |
+| 40002 | Agent 元信息确认字段校验失败（必要字段缺失） |
 | 40003 | 文件包大小超限 |
 | 40004 | agent_id + version 已存在 |
 | 40005 | 文件格式非 tar.gz |
@@ -618,7 +630,7 @@ agent-registry/
 │   └── registry_client.py        # 注册中心 HTTP Client
 ├── engine/                       # 镜像处理模块
 │   ├── builder.py                # Docker / Buildah 构建引擎
-│   ├── manifest.py               # agent.yaml 解析与校验
+│   ├── manifest.py               # 包元信息提取（文件名解析 + package.json 读取）
 │   └── dockerfile_gen.py         # Dockerfile 动态生成
 ├── models/                       # 数据模型
 │   ├── agent.py                  # Agent ORM / 领域模型
@@ -646,18 +658,16 @@ class AgentStatus(str, Enum):
     RETIRED = "retired"         # 已下架
 
 class AgentPackage(BaseModel):
-    agent_id: str               # 如 "claude-code"
-    name: str                   # 如 "Claude Code"
-    version: str                # 如 "2.1.89"
-    runtime: str                # nodejs / python / binary
-    runtime_version: str        # "22"
-    entrypoint: str             # 启动命令
-    install_mode: str           # npm_offline / binary_copy
-    platforms: List[str]        # ["linux-x64", "linux-arm64"]
-    mcp_servers: List[dict]     # 需预装的 MCP Server
+    agent_id: str               # 从文件名解析，如 "claude-code"
+    display_name: str           # 管理员确认的显示名称，如 "Claude Code"
+    version: str                # 从文件名解析，如 "2.1.89"
+    platform: str               # 从文件名解析，如 "linux-x64"
+    entrypoint: str             # 管理员确认，从 package.json bin 提取默认值
+    install_mode: str           # 由系统判断：含 node_modules → npm_offline
 
 class AgentRecord(AgentPackage):
-    package_path: str           # tar.gz 存储路径
+    package_path: str           # tgz 存储路径
+    source_filename: str        # 原始文件名，如 "claude-code-linux-x64-2.1.89.tgz"
     status: AgentStatus
     image: Optional[str]        # 构建完成后的镜像 URL
     image_digest: Optional[str]
@@ -708,8 +718,8 @@ class AgentService:
 class ImageBuilder:
     async def build(task: BuildTask) -> BuildResult
     async def cancel(task_id: str) -> None
-    async def _validate_manifest(package_path: str) -> AgentPackage
-    async def _generate_dockerfile(manifest: AgentPackage) -> str
+    async def _parse_package(package_path: str) -> AgentPackage
+    async def _generate_dockerfile(agent: AgentPackage) -> str
     async def _pull_base_image(base_image: str) -> None
     async def _export_oci(task: BuildTask) -> str
     async def _register(agent: AgentPackage, image: str) -> None
@@ -768,17 +778,17 @@ async def handler(request, exc: AgentRegistryError):
 | **传输** | 全链路 HTTPS |
 | **认证** | 管理界面→Agent 管理服务：IAM JWT；内部服务间：service token |
 | **授权** | 管理界面仅 `role: agent_admin` 可操作；普通用户只读 |
-| **上传校验** | agent.yaml 完整性校验；文件大小限制；文件魔数校验（tar.gz） |
+| **上传校验** | 文件名解析校验；文件大小限制；文件魔数校验（tgz/tar.gz） |
 | **构建隔离** | 每次构建在独立工作区执行，构建完成后清理临时文件 |
 | **镜像安全** | 基础镜像经安全扫描后方可发布；构建产物可选签名（cosign） |
-| **敏感信息** | API Key 等凭证不写入 agent.yaml，不写入镜像，由沙箱运行时注入 |
+| **敏感信息** | API Key 等凭证不写入包内，不写入镜像，由沙箱运行时注入 |
 
 ### 8.3 可扩展性
 
 | 维度 | 设计 |
 |------|------|
-| Agent 类型 | 新增 Agent 只需制作新的 npm 离线包 + agent.yaml，无需改动代码 |
-| 基础镜像 | 支持多 CPU 架构（x64 / ARM64），agent.yaml 中 `platforms` 声明 |
+| Agent 类型 | 新增 Agent 只需上传 npm 平台 tgz 包，系统自动解析，无需改动代码 |
+| 基础镜像 | 支持多 CPU 架构（x64 / ARM64），platform 由文件名解析 |
 | 安装模式 | `install_mode` 支持 `npm_offline`、`binary_copy`，后续可扩展 `apt_offline` 等 |
 | 注册中心 | 注册中心客户端抽象为接口，可适配不同镜像仓库（Harbor / Docker Registry / OCI Distribution） |
 
@@ -787,7 +797,7 @@ async def handler(request, exc: AgentRegistryError):
 | 措施 | 说明 |
 |------|------|
 | 构建日志 | 每次构建全量日志持久化存储，保留 30 天，含完整命令输出便于排错 |
-| 镜像版本追溯 | 镜像 digest + agent.yaml 版本一一对应，可追溯每次构建的输入 |
+| 镜像版本追溯 | 镜像 digest + Agent 版本一一对应，可追溯每次构建的输入 |
 | 配置化管理 | 基础镜像地址、包大小上限、重试策略等敏感配置集中管理，支持热更新 |
 | 健康检查 | Agent 管理服务暴露 `/health` 端点 + `/ready` 就绪探针 |
 
@@ -804,7 +814,7 @@ async def handler(request, exc: AgentRegistryError):
 
 | 维度 | 策略 |
 |------|------|
-| OS / Arch | 基础镜像维护 `linux-x64` 和 `linux-arm64` 两套，agent.yaml 声明兼容平台 |
+| OS / Arch | 基础镜像维护 `linux-x64` 和 `linux-arm64` 两套，上传时按包平台匹配 |
 | Agent 版本 | 同一 Agent 的多个版本可并存（claude-code:2.0.0 / 2.1.0），旧版本可选择性保留或下架 |
 | 基础镜像升级 | 基础镜像升级后，已上架 Agent 不受影响（镜像已固化）；新上架 Agent 自动使用新基础镜像 |
 | 向下兼容 | Agent 管理服务 API 版本化 (`/api/v1/`)，接口变更不破坏旧客户端 |
@@ -817,9 +827,9 @@ async def handler(request, exc: AgentRegistryError):
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
-| TC-01 | 上传含有效 agent.yaml 的 tar.gz | 200，返回 agent_id + version |
-| TC-02 | 上传不含 agent.yaml 的 tar.gz（且前端未指定 agent_id） | 400，code=40001，"缺少 agent.yaml" |
-| TC-03 | 上传 agent.yaml 缺少必填字段 | 400，code=40002，明确指出缺失字段 |
+| TC-01 | 上传标准命名的 tgz（如 `opencode-linux-x64-1.17.14.tgz`） | 200，自动解析返回 agent_id + version + platform |
+| TC-02 | 上传无法解析文件名的 tgz（如 `agent.tar.gz`），且未指定 agent_id | 400，code=40001，"无法解析文件名" |
+| TC-03 | 上传后管理员确认表单缺少必要字段 | 400，code=40002，明确指出缺失字段 |
 | TC-04 | 上传 tar.gz 超过 500 MB | 400，code=40003，"包大小超限" |
 | TC-05 | 重复上传相同 agent_id + version | 400，code=40004，"版本已存在" |
 | TC-06 | 上传非 tar.gz 格式文件 | 400，code=40005，"文件格式非法" |
@@ -912,44 +922,7 @@ EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D"]
 ```
 
-### B. agent.yaml JSON Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AgentPackage",
-  "type": "object",
-  "required": ["id", "name", "version", "runtime", "runtime_version", "entrypoint", "install_mode", "platforms"],
-  "properties": {
-    "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
-    "name": { "type": "string" },
-    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-    "runtime": { "enum": ["nodejs", "python", "binary"] },
-    "runtime_version": { "type": "string" },
-    "entrypoint": { "type": "string" },
-    "install_mode": { "enum": ["npm_offline", "binary_copy"] },
-    "platforms": {
-      "type": "array",
-      "items": { "type": "string" },
-      "minItems": 1
-    },
-    "mcp_servers": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["id", "package"],
-        "properties": {
-          "id": { "type": "string" },
-          "package": { "type": "string" },
-          "version": { "type": "string" }
-        }
-      }
-    }
-  }
-}
-```
-
-### C. 接口 OpenAPI 描述（核心部分）
+### B. 接口 OpenAPI 描述（核心部分）
 
 ```yaml
 openapi: "3.1.0"
