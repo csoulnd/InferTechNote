@@ -27,7 +27,7 @@
 | **基础镜像** | 预制的操作系统 + 运行时依赖（Node.js、Git、sshd 等）的 OCI 镜像，随系统版本升级迭代 |
 | **二次构建** | 将 Agent 软件包与基础镜像叠加，生成可直接运行的 OCI 格式镜像 |
 | **OCI** | Open Container Initiative，容器镜像工业标准格式 |
-| **注册中心** | 系统内统一的镜像仓库，存储所有已上架的 Agent 镜像，供沙箱调度服务拉取 |
+| **注册中心** | 仅维护镜像注册表（agent_id ↔ 镜像地址映射），不持有镜像文件本身。供沙箱调度服务查询可用镜像 |
 | **沙箱** | 为每个用户启动的隔离容器实例，基于 Agent 镜像运行 |
 
 ---
@@ -62,7 +62,8 @@ flowchart TB
     BE -->|"拉取基础镜像"| BR
     BE -->|"存储 OCI 镜像"| STORE
     BE -->|"构建完成 → 刷新注册表"| REG
-    SANDBOX -->|"拉取镜像"| REG
+    SANDBOX -->|"查询镜像地址"| REG
+    SANDBOX -->|"拉取镜像"| STORE
 
     style BE fill:#ffedd5,stroke:#ea580c
     style AM fill:#dbeafe,stroke:#2563eb
@@ -77,7 +78,7 @@ flowchart TB
 | **镜像处理模块（Build Engine）** | 解压包 → 校验 agent.yaml → 叠加基础镜像 → 导出 OCI → 存储 → 回调注册 | 构建任务指令 | OCI 镜像 + 状态回调 |
 | **基础镜像仓库** | 提供预制的运行环境镜像 | — | OCI 镜像 (pull) |
 | **注册中心** | 统一管理上架后的 Agent 镜像元信息 | 镜像元数据 | 注册表查询 |
-| **Agent 服务（沙箱）** | 从注册中心拉取镜像，为终端用户启动隔离实例 | 镜像引用 | 运行中的容器 |
+| **Agent 服务（沙箱）** | 查询注册中心获取镜像地址，从镜像存储拉取镜像，为终端用户启动隔离实例 | 注册表查询结果 | 运行中的容器 |
 
 ### 2.3 核心流程时序图
 
@@ -89,6 +90,7 @@ sequenceDiagram
     participant BE as 镜像处理模块
     participant BR as 基础镜像仓库
     participant REG as 注册中心
+    participant STORE as 镜像存储
     participant SBOX as Agent 服务(沙箱)
 
     Admin->>UI: 登录 (JWT)
@@ -111,14 +113,15 @@ sequenceDiagram
     BE->>BR: 拉取基础镜像
     BE->>BE: 解压 tar.gz → 读取 agent.yaml
     BE->>BE: 根据 agent.yaml 生成 Dockerfile 并构建
-    BE->>BE: 导出 OCI 镜像，存储到指定路径
-    BE->>REG: POST /registry/v1/refresh { image_name, tag, ... }
+    BE->>STORE: 导出并存储 OCI 镜像
+    BE->>REG: POST /registry/v1/refresh { image_name, tag, location }
     REG-->>BE: 200 OK
     BE->>AM: 回调：构建完成
     AM-->>UI: 200 { status: "done", image: "registry/agent:latest" }
     UI-->>Admin: 上架完成
 
-    SBOX->>REG: 拉取镜像
+    SBOX->>REG: 查询镜像地址
+    SBOX->>STORE: 拉取镜像
     SBOX->>SBOX: 启动沙箱容器实例
 ```
 
@@ -306,48 +309,20 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 
 ### 5.1 构建流程
 
-```
-┌─────────────────────────────────────────────────┐
-│ 1. Agent 管理服务下发构建任务                       │
-│    { task_id, agent_id, package_path, base_image }│
-└──────────────────────┬──────────────────────────┘
-                       ▼
-┌─────────────────────────────────────────────────┐
-│ 2. 校验与解压                                     │
-│    - 读取 agent.yaml，校验字段完整性                │
-│    - 校验 agent_id + version 唯一性（幂等检查）     │
-│    - 解压 tar.gz 到构建工作区                      │
-└──────────────────────┬──────────────────────────┘
-                       ▼
-┌─────────────────────────────────────────────────┐
-│ 3. 拉取基础镜像                                   │
-│    - docker pull / skopeo copy 从基础镜像仓库     │
-└──────────────────────┬──────────────────────────┘
-                       ▼
-┌─────────────────────────────────────────────────┐
-│ 4. 生成 Dockerfile                               │
-│    - 根据 agent.yaml 动态生成构建指令              │
-│    - COPY Agent 文件到 /opt/agents/{id}/         │
-│    - 创建全局 cli 软链接（如 /usr/local/bin/claude)│
-└──────────────────────┬──────────────────────────┘
-                       ▼
-┌─────────────────────────────────────────────────┐
-│ 5. 执行构建                                       │
-│    - docker build / buildah build                │
-│    - 构建日志流式输出到日志服务                     │
-└──────────────────────┬──────────────────────────┘
-                       ▼
-┌─────────────────────────────────────────────────┐
-│ 6. 导出 OCI 镜像                                  │
-│    - docker save / skopeo copy 到指定存储路径      │
-│    - 镜像命名规约: agent-base:{agent_id}-{version} │
-└──────────────────────┬──────────────────────────┘
-                       ▼
-┌─────────────────────────────────────────────────┐
-│ 7. 刷入注册中心                                   │
-│    - 调用注册中心 API 刷新注册表                    │
-│    - 回调 Agent 管理服务：更新任务状态为 done        │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    S1["1. 接收构建任务<br/>task_id / agent_id / package_path / base_image<br/>（Agent 管理服务下发）"]
+    S2["2. 校验与解压<br/>- 读取 agent.yaml，校验完整性<br/>- 校验 agent_id + version 幂等<br/>- 解压 tar.gz 到构建工作区"]
+    S3["3. 拉取基础镜像<br/>- docker pull / skopeo copy<br/>- 从基础镜像仓库获取"]
+    S4["4. 生成 Dockerfile<br/>- 根据 agent.yaml 动态生成<br/>- COPY 到 /opt/agents/{id}/<br/>- 创建 cli 软链接"]
+    S5["5. 执行构建<br/>- docker build / buildah build<br/>- 日志流式输出到日志服务"]
+    S6["6. 导出 OCI 镜像<br/>- 存储到镜像存储<br/>- 命名: agent-{id}:{version}"]
+    S7["7. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调 Agent 管理服务: done"]
+
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+
+    style S1 fill:#dbeafe,stroke:#2563eb
+    style S7 fill:#dcfce7,stroke:#16a34a
 ```
 
 ### 5.2 依赖注入：agent.yaml → Dockerfile 生成规则
