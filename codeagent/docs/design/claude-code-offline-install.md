@@ -661,16 +661,18 @@ JWT Payload:
 
 ### 7.1 模块划分
 
+本次代码设计的范围仅包含 **Agent 上架服务**（Agent 管理服务 + 镜像处理模块）。管理界面和注册中心均为外部已有组件，不在本文档的代码设计范围内。
+
 ```
-agent-registry/
+agent-onboarding/                # Agent 上架服务（本次新建）
 ├── api/                          # HTTP 接口层
-│   ├── routes.py                 # 路由注册
-│   ├── middleware.py             # JWT 鉴权中间件
+│   ├── routes.py                 # 路由注册（对管理界面暴露 REST API）
+│   ├── middleware.py             # JWT 鉴权中间件（验证 IAM 签发的 JWT）
 │   └── schemas.py                # 请求/响应 Pydantic Schema
 ├── services/                     # 业务逻辑层
 │   ├── agent_service.py          # Agent 管理（上传/查询/下架）
 │   ├── build_service.py          # 构建任务管理（状态机/调度）
-│   └── registry_client.py        # 注册中心 HTTP Client
+│   └── registry_client.py        # 注册中心 HTTP Client（调用外部注册中心接口）
 ├── engine/                       # 镜像处理模块
 │   ├── builder.py                # Docker / Buildah 构建引擎
 │   ├── manifest.py               # 包元信息提取（文件名解析 + package.json 读取）
@@ -680,9 +682,29 @@ agent-registry/
 │   └── build_task.py             # BuildTask ORM / 领域模型
 ├── storage/                      # 存储层
 │   ├── package_store.py          # 包文件存储（本地 / OSS）
-│   └── image_store.py            # 镜像产物存储
+│   └── image_store.py            # 镜像产物存储（OCI 镜像落盘 + 注册中心刷新）
 ├── config.py                     # 配置管理
 └── exceptions.py                 # 统一异常定义
+```
+
+**模块边界**：
+
+```
+┌─ 外部已有 ─────────────────────────────┐
+│  管理界面 (Vue)                         │ ← 通过 IAM JWT 调用 Agent 上架服务
+│  注册中心                                │ ← 接受 Agent 上架服务的刷新请求
+│  IAM 鉴权服务                            │ ← 签发 JWT
+└────────────────────────────────────────┘
+         │
+    ─────┼────── 本次设计范围边界
+         │
+┌─ Agent 上架服务 (本次新建) ───────────────┐
+│  ├── api/        ←── 接收管理界面请求      │
+│  ├── services/   ←── 业务编排            │
+│  │   └── registry_client.py ──→ 调注册中心 │
+│  ├── engine/     ←── 二次构建            │
+│  └── storage/    ←── 包/镜像落盘          │
+└─────────────────────────────────────────┘
 ```
 
 ### 7.2 核心数据结构
