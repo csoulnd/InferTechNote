@@ -449,11 +449,11 @@ ENV PATH="/usr/local/bin:/opt/agents/<%= id %>/bin:${PATH}"
 | `POST` | `/api/v1/agents/upload` | 管理界面 | 管理面后台服务 | 上传 Agent 离线包 |
 | `POST` | `/api/v1/agents/{id}/build` | 管理界面 | 管理面后台服务 | 触发二次构建 |
 | `GET` | `/api/v1/agents/{id}/build/status` | 管理界面 | 管理面后台服务 | 查询构建状态与进度 |
-| `GET` | `/api/v1/agents` | 管理界面 | 管理面后台服务 | 查询已上架 Agent 列表 |
 | `DELETE` | `/api/v1/agents/{id}` | 管理界面 | 管理面后台服务 | 下架 Agent（删除镜像+注销） |
 | `POST` | `/api/v1/agents/{id}/build/retry` | 管理界面 | 管理面后台服务 | 重试失败的构建 |
+| `GET` | `/registry/v1/agents` | 管理界面 | 注册中心 | 查询已上架 Agent 列表 |
 | `POST` | `/registry/v1/agents/refresh` | 镜像处理模块 | 注册中心 | 刷新注册表 |
-| `GET` | `/registry/v1/agents/{id}` | Agent 服务 | 注册中心 | 查询可用镜像信息 |
+| `GET` | `/registry/v1/agents/{id}` | Agent 服务 / 管理界面 | 注册中心 | 查询指定 Agent 镜像信息 |
 
 ### 6.2 各接口详细定义
 
@@ -582,8 +582,10 @@ Authorization: Bearer <JWT>
 
 #### 6.2.4 查询 Agent 列表
 
+管理界面直接调用注册中心查询已上架的 Agent 列表：
+
 ```
-GET /api/v1/agents?page=1&size=20
+GET /registry/v1/agents?page=1&size=20
 Authorization: Bearer <JWT>
 ```
 
@@ -607,6 +609,8 @@ Authorization: Bearer <JWT>
   }
 }
 ```
+
+> 管理界面展示的 Agent 列表直接由注册中心提供，不经过管理面后台服务中转。
 
 ### 6.3 注册中心交互协议
 
