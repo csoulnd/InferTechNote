@@ -38,12 +38,12 @@
 
 ```mermaid
 flowchart TB
-    subgraph 管理端
+    subgraph 管理面
         UI["管理界面<br/>(已有)"]
+        ADMIN["管理面后台服务<br/>Agent 上架 / 触发构建 / 状态查询<br/>(本次新增 Agent 上架子模块)"]
     end
 
-    subgraph Agent 上架服务
-        AM["Agent 管理服务<br/>上传 / 触发构建 / 状态查询"]
+    subgraph Agent 上架
         BE["镜像处理模块<br/>(Build Engine)<br/>二次构建"]
     end
 
@@ -57,8 +57,8 @@ flowchart TB
         SANDBOX["Agent 服务<br/>沙箱调度 / 拉起"]
     end
 
-    UI -->|"JWT Token<br/>POST upload/build/status"| AM
-    AM -->|"触发构建"| BE
+    UI -->|"JWT Token<br/>POST upload/build/status"| ADMIN
+    ADMIN -->|"触发构建"| BE
     BE -->|"拉取基础镜像"| BR
     BE -->|"存储 OCI 镜像"| STORE
     BE -->|"构建完成 → 刷新注册表"| REG
@@ -66,7 +66,7 @@ flowchart TB
     SANDBOX -->|"拉取镜像"| STORE
 
     style BE fill:#ffedd5,stroke:#ea580c
-    style AM fill:#dbeafe,stroke:#2563eb
+    style ADMIN fill:#dbeafe,stroke:#2563eb
 ```
 
 ### 2.2 组件职责
@@ -74,7 +74,7 @@ flowchart TB
 | 组件 | 职责 | 输入 | 输出 |
 |------|------|------|------|
 | **管理界面** | 管理员操作入口；上传包、触发构建、查看状态 | 用户操作 | HTTP 请求 (JWT) |
-| **Agent 管理服务** | 接收上传、校验、存储包文件；管理构建任务生命周期；对外暴露 REST API | HTTP 请求 + tar.gz | 状态码 + JSON 响应 |
+| **管理面后台服务** | 提供管理面统一入口；Agent 上架子模块负责接收上传、校验、管理构建任务生命周期 | HTTP 请求 + tar.gz | 状态码 + JSON 响应 |
 | **镜像处理模块（Build Engine）** | 解压包 → 读取包内 package.json → 叠加基础镜像 → 导出 OCI → 存储 → 回调注册 | 构建任务指令 | OCI 镜像 + 状态回调 |
 | **基础镜像仓库** | 提供预制的运行环境镜像 | — | OCI 镜像 (pull) |
 | **注册中心** | 统一管理上架后的 Agent 镜像元信息 | 镜像元数据 | 注册表查询 |
@@ -86,7 +86,7 @@ flowchart TB
 sequenceDiagram
     participant Admin as 管理员
     participant UI as 管理界面
-    participant AM as Agent 管理服务
+    participant ADMIN as 管理面后台服务
     participant BE as 镜像处理模块
     participant BR as 基础镜像仓库
     participant REG as 注册中心
@@ -94,20 +94,20 @@ sequenceDiagram
     participant SBOX as Agent 服务(沙箱)
 
     Admin->>UI: 登录 (JWT)
-    UI->>AM: POST /api/v1/agents/upload<br/>Authorization: Bearer <jwt>
-    AM->>AM: 校验 & 解析包 (文件名 + package.json / 大小)
-    AM->>AM: 存储 tar.gz，分配 agent_id
-    AM-->>UI: 200 { agent_id }
+    UI->>ADMIN: POST /api/v1/agents/upload<br/>Authorization: Bearer <jwt>
+    ADMIN->>ADMIN: 校验 & 解析包 (文件名 + package.json / 大小)
+    ADMIN->>ADMIN: 存储 tar.gz，分配 agent_id
+    ADMIN-->>UI: 200 { agent_id }
     UI-->>Admin: 上传成功
 
     Admin->>UI: 触发构建
-    UI->>AM: POST /api/v1/agents/{id}/build
-    AM->>BE: 下发构建任务 { agent_id, package_path, base_image }
-    AM-->>UI: 202 { task_id, status: "pending" }
+    UI->>ADMIN: POST /api/v1/agents/{id}/build
+    ADMIN->>BE: 下发构建任务 { agent_id, package_path, base_image }
+    ADMIN-->>UI: 202 { task_id, status: "pending" }
 
     loop 轮询 / 回调
-        UI->>AM: GET /api/v1/agents/{id}/build/status
-        AM-->>UI: { status: "building", progress: 40% }
+        UI->>ADMIN: GET /api/v1/agents/{id}/build/status
+        ADMIN-->>UI: { status: "building", progress: 40% }
     end
 
     BE->>BR: 拉取基础镜像
@@ -116,8 +116,8 @@ sequenceDiagram
     BE->>STORE: 导出并存储 OCI 镜像
     BE->>REG: POST /registry/v1/refresh { image_name, tag, location }
     REG-->>BE: 200 OK
-    BE->>AM: 回调：构建完成
-    AM-->>UI: 200 { status: "done", image: "registry/agent:latest" }
+    BE->>ADMIN: 回调：构建完成
+    ADMIN-->>UI: 200 { status: "done", image: "registry/agent:latest" }
     UI-->>Admin: 上架完成
 
     SBOX->>REG: 查询镜像地址
@@ -366,13 +366,13 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 
 ```mermaid
 flowchart TD
-    S1["1. 接收构建任务<br/>task_id / agent_id / package_path / base_image<br/>（Agent 管理服务下发）"]
+    S1["1. 接收构建任务<br/>task_id / agent_id / package_path / base_image<br/>（管理面后台服务下发）"]
     S2["2. 校验与解压<br/>- 校验 agent_id + version 幂等<br/>- 解压 tgz，读取 package.json<br/>- 提取元信息"]
     S3["3. 拉取基础镜像<br/>- docker pull / skopeo copy<br/>- 从基础镜像仓库获取"]
     S4["4. 生成 Dockerfile<br/>- 根据 Agent 元信息动态生成<br/>- COPY 到 /opt/agents/{id}/<br/>- 创建 cli 软链接"]
     S5["5. 执行构建<br/>- docker build / buildah build<br/>- 日志流式输出到日志服务"]
     S6["6. 导出 OCI 镜像<br/>- 存储到镜像存储<br/>- 命名: agent-{id}:{version}"]
-    S7["7. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调 Agent 管理服务: done"]
+    S7["7. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调管理面后台服务: done"]
 
     S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
 
@@ -446,12 +446,12 @@ ENV PATH="/usr/local/bin:/opt/agents/<%= id %>/bin:${PATH}"
 
 | 方法 | 路径 | 调用方 | 被调用方 | 说明 |
 |:---:|------|--------|----------|------|
-| `POST` | `/api/v1/agents/upload` | 管理界面 | Agent 管理服务 | 上传 Agent 离线包 |
-| `POST` | `/api/v1/agents/{id}/build` | 管理界面 | Agent 管理服务 | 触发二次构建 |
-| `GET` | `/api/v1/agents/{id}/build/status` | 管理界面 | Agent 管理服务 | 查询构建状态与进度 |
-| `GET` | `/api/v1/agents` | 管理界面 | Agent 管理服务 | 查询已上架 Agent 列表 |
-| `DELETE` | `/api/v1/agents/{id}` | 管理界面 | Agent 管理服务 | 下架 Agent（删除镜像+注销） |
-| `POST` | `/api/v1/agents/{id}/build/retry` | 管理界面 | Agent 管理服务 | 重试失败的构建 |
+| `POST` | `/api/v1/agents/upload` | 管理界面 | 管理面后台服务 | 上传 Agent 离线包 |
+| `POST` | `/api/v1/agents/{id}/build` | 管理界面 | 管理面后台服务 | 触发二次构建 |
+| `GET` | `/api/v1/agents/{id}/build/status` | 管理界面 | 管理面后台服务 | 查询构建状态与进度 |
+| `GET` | `/api/v1/agents` | 管理界面 | 管理面后台服务 | 查询已上架 Agent 列表 |
+| `DELETE` | `/api/v1/agents/{id}` | 管理界面 | 管理面后台服务 | 下架 Agent（删除镜像+注销） |
+| `POST` | `/api/v1/agents/{id}/build/retry` | 管理界面 | 管理面后台服务 | 重试失败的构建 |
 | `POST` | `/registry/v1/agents/refresh` | 镜像处理模块 | 注册中心 | 刷新注册表 |
 | `GET` | `/registry/v1/agents/{id}` | Agent 服务 | 注册中心 | 查询可用镜像信息 |
 
@@ -638,9 +638,11 @@ Authorization: Bearer <internal-service-token>
 
 ### 6.4 认证鉴权
 
+Agent 上架功能的接口作为**管理面后台服务**的一部分，鉴权由管理面统一 IAM 服务提供：
+
 ```
 请求链路:
-管理界面 → [IAM JWT] → Agent 管理服务
+管理界面 → [IAM JWT] → 管理面后台服务
 
 JWT Payload:
 {
@@ -650,10 +652,11 @@ JWT Payload:
 }
 ```
 
-- 管理界面与 Agent 管理服务之间通过 IAM 签发的 JWT 进行认证，验证通过后解析 `role` 字段
-- Agent 管理服务与镜像处理模块之间通过内部服务 Token 通信（内网环境，非 JWT）
+- 管理界面通过 IAM 服务获取 JWT，调用管理面后台服务时携带
+- 管理面后台服务验证 JWT 后解析 `sub` / `role`，仅 `role: agent_admin` 可操作上架接口
+- 管理面后台服务与镜像处理模块之间通过内部服务 Token 通信（内网环境）
 - 镜像处理模块与注册中心之间通过内部服务 Token 通信
-- 所有 HTTP 接口均强制 HTTPS（生产环境）
+- 所有外部 HTTP 接口均强制 HTTPS（生产环境）
 
 ---
 
@@ -661,30 +664,31 @@ JWT Payload:
 
 ### 7.1 模块划分
 
-本次代码设计的范围仅包含 **Agent 上架服务**（Agent 管理服务 + 镜像处理模块）。管理界面和注册中心均为外部已有组件，不在本文档的代码设计范围内。
+本次代码设计的范围是**管理面后台服务中新增的 Agent 上架子模块**。管理界面、IAM 和注册中心均为外部已有组件。
 
 ```
-agent-onboarding/                # Agent 上架服务（本次新建）
-├── api/                          # HTTP 接口层
-│   ├── routes.py                 # 路由注册（对管理界面暴露 REST API）
-│   ├── middleware.py             # JWT 鉴权中间件（验证 IAM 签发的 JWT）
-│   └── schemas.py                # 请求/响应 Pydantic Schema
-├── services/                     # 业务逻辑层
-│   ├── agent_service.py          # Agent 管理（上传/查询/下架）
-│   ├── build_service.py          # 构建任务管理（状态机/调度）
-│   └── registry_client.py        # 注册中心 HTTP Client（调用外部注册中心接口）
-├── engine/                       # 镜像处理模块
-│   ├── builder.py                # Docker / Buildah 构建引擎
-│   ├── manifest.py               # 包元信息提取（文件名解析 + package.json 读取）
-│   └── dockerfile_gen.py         # Dockerfile 动态生成
-├── models/                       # 数据模型
-│   ├── agent.py                  # Agent ORM / 领域模型
-│   └── build_task.py             # BuildTask ORM / 领域模型
-├── storage/                      # 存储层
-│   ├── package_store.py          # 包文件存储（本地 / OSS）
-│   └── image_store.py            # 镜像产物存储（OCI 镜像落盘 + 注册中心刷新）
-├── config.py                     # 配置管理
-└── exceptions.py                 # 统一异常定义
+admin-backend/                   # 管理面后台服务（已有）
+└── agent_onboarding/            # Agent 上架子模块（本次新增）
+    ├── api/                     # HTTP 接口层
+    │   ├── routes.py            # 路由注册（对外暴露 REST API）
+    │   ├── middleware.py        # JWT 鉴权中间件（验证 IAM 签发的 JWT）
+    │   └── schemas.py           # 请求/响应 Pydantic Schema
+    ├── services/                # 业务逻辑层
+    │   ├── agent_service.py     # Agent 管理（上传/查询/下架）
+    │   ├── build_service.py     # 构建任务管理（状态机/调度）
+    │   └── registry_client.py   # 注册中心 HTTP Client（调用外部注册中心接口）
+    ├── engine/                  # 镜像处理模块
+    │   ├── builder.py           # Docker / Buildah 构建引擎
+    │   ├── manifest.py          # 包元信息提取（文件名解析 + package.json 读取）
+    │   └── dockerfile_gen.py    # Dockerfile 动态生成
+    ├── models/                  # 数据模型
+    │   ├── agent.py             # Agent ORM / 领域模型
+    │   └── build_task.py        # BuildTask ORM / 领域模型
+    ├── storage/                 # 存储层
+    │   ├── package_store.py     # 包文件存储（本地 / OSS）
+    │   └── image_store.py       # 镜像产物存储（OCI 镜像落盘 + 注册中心刷新）
+    ├── config.py                # 配置管理
+    └── exceptions.py            # 统一异常定义
 ```
 
 **模块边界**：
@@ -692,7 +696,7 @@ agent-onboarding/                # Agent 上架服务（本次新建）
 ```
 管理界面 ──IAM JWT──→ api/ ──→ services/ ──→ engine/ ──→ storage/ ──刷新──→ 注册中心
   (已有)               ↑                            (已有)
-                       └─────── Agent 上架服务 (本次新建) ───────┘
+                       └── 管理面后台服务.agent_onboarding (本次新增) ───┘
 ```
 
 - `api/` 校验 IAM JWT，对外暴露 REST 接口
@@ -834,7 +838,7 @@ async def handler(request, exc: AgentRegistryError):
 | 层面 | 措施 |
 |------|------|
 | **传输** | 全链路 HTTPS |
-| **认证** | 管理界面→Agent 管理服务：IAM JWT；内部服务间：service token |
+| **认证** | 管理界面→管理面后台服务：IAM JWT；内部服务间：service token |
 | **授权** | 管理界面仅 `role: agent_admin` 可操作；普通用户只读 |
 | **上传校验** | 文件名解析校验；文件大小限制；文件魔数校验（tgz/tar.gz） |
 | **构建隔离** | 每次构建在独立工作区执行，构建完成后清理临时文件 |
@@ -857,7 +861,7 @@ async def handler(request, exc: AgentRegistryError):
 | 构建日志 | 每次构建全量日志持久化存储，保留 30 天，含完整命令输出便于排错 |
 | 镜像版本追溯 | 镜像 digest + Agent 版本一一对应，可追溯每次构建的输入 |
 | 配置化管理 | 基础镜像地址、包大小上限、重试策略等敏感配置集中管理，支持热更新 |
-| 健康检查 | Agent 管理服务暴露 `/health` 端点 + `/ready` 就绪探针 |
+| 健康检查 | Agent 上架子模块暴露 `/health` 端点 + `/ready` 就绪探针 |
 
 ### 8.5 可观测性
 
@@ -875,7 +879,7 @@ async def handler(request, exc: AgentRegistryError):
 | OS / Arch | 基础镜像维护 `linux-x64` 和 `linux-arm64` 两套，上传时按包平台匹配 |
 | Agent 版本 | 同一 Agent 的多个版本可并存（claude-code:2.0.0 / 2.1.0），旧版本可选择性保留或下架 |
 | 基础镜像升级 | 基础镜像升级后，已上架 Agent 不受影响（镜像已固化）；新上架 Agent 自动使用新基础镜像 |
-| 向下兼容 | Agent 管理服务 API 版本化 (`/api/v1/`)，接口变更不破坏旧客户端 |
+| 向下兼容 | Agent 上架接口 API 版本化 (`/api/v1/`)，接口变更不破坏旧客户端 |
 
 ---
 
