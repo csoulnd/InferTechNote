@@ -449,8 +449,7 @@ ENV PATH="/usr/local/bin:/opt/agents/<%= id %>/bin:${PATH}"
 | `POST` | `/api/v1/agents/upload` | 管理界面 | 管理面后台服务 | 上传 Agent 离线包 |
 | `POST` | `/api/v1/agents/{id}/versions/{version}/build` | 管理界面 | 管理面后台服务 | 触发二次构建 |
 | `GET` | `/api/v1/agents/{id}/versions/{version}/build/status` | 管理界面 | 管理面后台服务 | 查询构建状态与进度 |
-| `DELETE` | `/api/v1/agents/{id}` | 管理界面 | 管理面后台服务 | 下架 Agent（删除镜像+注销） |
-| `POST` | `/api/v1/agents/{id}/build/retry` | 管理界面 | 管理面后台服务 | 重试失败的构建 |
+| `DELETE` | `/api/v1/agents/{id}versions/{version}` | 管理界面 | 管理面后台服务 | 下架 Agent（删除镜像+注销） |
 | `GET` | `/registry/v1/agents` | 管理界面 | 注册中心 | 查询已上架 Agent 列表 |
 | `POST` | `/registry/v1/agents/refresh` | 镜像处理模块 | 注册中心 | 刷新注册表 |
 | `GET` | `/registry/v1/agents/{id}` | Agent 服务 / 管理界面 | 注册中心 | 查询指定 Agent 镜像信息 |
@@ -480,9 +479,7 @@ Authorization: Bearer <JWT>
   "code": 0,
   "data": {
     "agent_id": "claude-code",
-    "version": "2.1.89",
-    "package_path": "/data/packages/claude-code-2.1.89.tar.gz",
-    "uploaded_at": "2026-07-08T10:00:00Z"
+    "version": "2.1.89"
   }
 }
 ```
@@ -508,18 +505,8 @@ Authorization: Bearer <JWT>
 **请求体**：
 
 ```json
-{
-  "base_image": "registry.example.com/agent-base:1.0.0-linux-x64",
-  "platform": "linux-x64"
-}
+{}
 ```
-
-| 字段 | 类型 | 必选 | 说明 |
-|------|------|:---:|------|
-| `base_image` | string | ✓ | 基础镜像引用 |
-| `platform` | string | ✓ | 目标平台，须与上传包声明的平台一致 |
-
-> `agent_id` + `version` 在路径中唯一标识要构建的软件包，服务端根据此组合查找已上传的包文件。
 
 **响应**：
 
@@ -734,9 +721,7 @@ class AgentPackage(BaseModel):
     agent_id: str               # 从文件名解析，如 "claude-code"
     display_name: str           # 管理员确认的显示名称，如 "Claude Code"
     version: str                # 从文件名解析，如 "2.1.89"
-    platform: str               # 从文件名解析，如 "linux-x64"
     entrypoint: str             # 管理员确认，从 package.json bin 提取默认值
-    install_mode: str           # 由系统判断：含 node_modules → npm_offline
 
 class AgentRecord(AgentPackage):
     package_path: str           # tgz 存储路径
@@ -763,8 +748,6 @@ class BuildTask(BaseModel):
     task_id: str
     agent_id: str
     version: str
-    base_image: str             # 基础镜像引用
-    platform: str               # linux-x64
     status: BuildStatus
     progress: int               # 0-100
     log_url: Optional[str]
@@ -781,11 +764,11 @@ class BuildTask(BaseModel):
 ```python
 # services/agent_service.py
 class AgentService:
-    async def upload(package: UploadFile) -> AgentUploadResult
-    async def trigger_build(agent_id: str, base_image: str) -> BuildTask
-    async def get_build_status(agent_id: str) -> BuildTask
+    async def upload(agent_id: str, package: UploadFile) -> AgentUploadResult
+    async def trigger_build(agent_id: str, version: str) -> BuildTask
+    async def get_build_status(agent_id: str, version: str) -> BuildTask
     async def list_agents(page: int, size: int) -> AgentListResult
-    async def retire_agent(agent_id: str) -> None
+    async def retire_agent(agent_id: str, version: str) -> None
 
 # engine/builder.py
 class ImageBuilder:
@@ -861,7 +844,6 @@ async def handler(request, exc: AgentRegistryError):
 | 维度 | 设计 |
 |------|------|
 | Agent 类型 | 新增 Agent 只需上传 npm 平台 tgz 包，系统自动解析，无需改动代码 |
-| 基础镜像 | 支持多 CPU 架构（x64 / ARM64），platform 由文件名解析 |
 | 安装模式 | `install_mode` 支持 `npm_offline`、`binary_copy`，后续可扩展 `apt_offline` 等 |
 | 注册中心 | 注册中心客户端抽象为接口，可适配不同镜像仓库（Harbor / Docker Registry / OCI Distribution） |
 
@@ -887,7 +869,6 @@ async def handler(request, exc: AgentRegistryError):
 
 | 维度 | 策略 |
 |------|------|
-| OS / Arch | 基础镜像维护 `linux-x64` 和 `linux-arm64` 两套，上传时按包平台匹配 |
 | Agent 版本 | 同一 Agent 的多个版本可并存（claude-code:2.0.0 / 2.1.0），旧版本可选择性保留或下架 |
 | 基础镜像升级 | 基础镜像升级后，已上架 Agent 不受影响（镜像已固化）；新上架 Agent 自动使用新基础镜像 |
 | 向下兼容 | Agent 上架接口 API 版本化 (`/api/v1/`)，接口变更不破坏旧客户端 |
