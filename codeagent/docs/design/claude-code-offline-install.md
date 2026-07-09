@@ -101,12 +101,12 @@ sequenceDiagram
     UI-->>Admin: 上传成功
 
     Admin->>UI: 触发构建
-    UI->>ADMIN: POST /api/v1/agents/{id}/build
-    ADMIN->>BE: 下发构建任务 { agent_id, package_path, base_image }
+    UI->>ADMIN: POST /api/v1/agents/{id}/versions/{version}/build
+    ADMIN->>BE: 下发构建任务 { agent_id, version, package_path, base_image }
     ADMIN-->>UI: 202 { task_id, status: "pending" }
 
     loop 轮询 / 回调
-        UI->>ADMIN: GET /api/v1/agents/{id}/build/status
+        UI->>ADMIN: GET /api/v1/agents/{id}/versions/{version}/build/status
         ADMIN-->>UI: { status: "building", progress: 40% }
     end
 
@@ -447,8 +447,8 @@ ENV PATH="/usr/local/bin:/opt/agents/<%= id %>/bin:${PATH}"
 | 方法 | 路径 | 调用方 | 被调用方 | 说明 |
 |:---:|------|--------|----------|------|
 | `POST` | `/api/v1/agents/upload` | 管理界面 | 管理面后台服务 | 上传 Agent 离线包 |
-| `POST` | `/api/v1/agents/{id}/build` | 管理界面 | 管理面后台服务 | 触发二次构建 |
-| `GET` | `/api/v1/agents/{id}/build/status` | 管理界面 | 管理面后台服务 | 查询构建状态与进度 |
+| `POST` | `/api/v1/agents/{id}/versions/{version}/build` | 管理界面 | 管理面后台服务 | 触发二次构建 |
+| `GET` | `/api/v1/agents/{id}/versions/{version}/build/status` | 管理界面 | 管理面后台服务 | 查询构建状态与进度 |
 | `DELETE` | `/api/v1/agents/{id}` | 管理界面 | 管理面后台服务 | 下架 Agent（删除镜像+注销） |
 | `POST` | `/api/v1/agents/{id}/build/retry` | 管理界面 | 管理面后台服务 | 重试失败的构建 |
 | `GET` | `/registry/v1/agents` | 管理界面 | 注册中心 | 查询已上架 Agent 列表 |
@@ -501,7 +501,7 @@ Authorization: Bearer <JWT>
 #### 6.2.2 触发二次构建
 
 ```
-POST /api/v1/agents/{agent_id}/build
+POST /api/v1/agents/{agent_id}/versions/{version}/build
 Authorization: Bearer <JWT>
 ```
 
@@ -513,6 +513,13 @@ Authorization: Bearer <JWT>
   "platform": "linux-x64"
 }
 ```
+
+| 字段 | 类型 | 必选 | 说明 |
+|------|------|:---:|------|
+| `base_image` | string | ✓ | 基础镜像引用 |
+| `platform` | string | ✓ | 目标平台，须与上传包声明的平台一致 |
+
+> `agent_id` + `version` 在路径中唯一标识要构建的软件包，服务端根据此组合查找已上传的包文件。
 
 **响应**：
 
@@ -533,7 +540,7 @@ Authorization: Bearer <JWT>
 #### 6.2.3 查询构建状态
 
 ```
-GET /api/v1/agents/{agent_id}/build/status
+GET /api/v1/agents/{agent_id}/versions/{version}/build/status
 Authorization: Bearer <JWT>
 ```
 
