@@ -1,7 +1,7 @@
 # 三方 Agent 上架设计说明书
 
 > 版本：v1.0  
-> 状态：设计阶段
+> 状态：MVP 已实现（见 `control-panel/backend/app/image_process/`）
 
 ---
 
@@ -137,14 +137,14 @@ sequenceDiagram
 管理员操作                                  系统行为
 ─────────────────────────────────────────────────────────
 ① 从 npm registry 下载 .tgz 包
-   例: opencode-linux-arm64-musl-1.17.14.tgz
+   例: opencode-linux-arm64-1.17.14.tgz
 
 ② 在管理界面上传该 .tgz                 → 存入包存储，返回包 ID
                                           →
 ③ 系统弹出确认表单                         ← 从文件名 + 包内提取元信息
    ├─ Agent 名称: [opencode]   ← 已填      - 文件名解析 → name / version / platform
    ├─ 版本:      [1.17.14]    ← 已填      - package.json: display_name / entrypoint
-   ├─ 平台:      [linux-arm64-musl] ← 已填
+   ├─ 平台:      [linux-arm64] ← 已填
    ├─ 入口命令:   [npx opencode] ← 已填
    └─ 显示名称:   [OpenCode]    ← 可改
 
@@ -157,9 +157,9 @@ sequenceDiagram
 
 | 元信息 | 来源 | 规则 |
 |--------|------|------|
-| `name` (agent_id) | 文件名第一段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `opencode` |
-| `version` | 文件名最后一段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `1.17.14` |
-| `platform` | 文件名中间段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `linux-arm64-musl` |
+| `name` (agent_id) | 文件名第一段 | `opencode-linux-arm64-1.17.14.tgz` → `opencode` |
+| `version` | 文件名最后一段 | `opencode-linux-arm64-1.17.14.tgz` → `1.17.14` |
+| `platform` | 文件名中间段 | `opencode-linux-arm64-1.17.14.tgz` → `linux-arm64` |
 | `platform` 映射 | 平台映射表 | `linux-x64` → `linux/amd64`, `linux-arm64` → `linux/arm64` ... |
 | `display_name` | 包内 `package.json` → `name` 或 `displayName` | — |
 | `entrypoint` | 包内 `package.json` → `bin` 字段或已知默认值 | `bin: { "opencode": "..." }` → `opencode` |
@@ -176,7 +176,7 @@ npm 平台特定包的文件名遵循约定格式：
 {name}-{platform}-{version}.tgz
 
 示例:
-  opencode-linux-arm64-musl-1.17.14.tgz    → opencode, linux-arm64-musl, 1.17.14
+  opencode-linux-arm64-1.17.14.tgz    → opencode, linux-arm64, 1.17.14
   opencode-linux-x64-1.17.14.tgz           → opencode, linux-x64, 1.17.14
   opencode-win32-x64-1.17.14.tgz           → opencode, win32-x64, 1.17.14
   opencode-darwin-arm64-1.17.14.tgz        → opencode, darwin-arm64, 1.17.14
@@ -191,7 +191,6 @@ npm 平台特定包的文件名遵循约定格式：
 | `linux-x64` | `linux/amd64` |
 | `linux-arm64` | `linux/arm64` |
 | `linux-x64-musl` | `linux/amd64-musl` |
-| `linux-arm64-musl` | `linux/arm64-musl` |
 | `win32-x64` | `windows/amd64` |
 | `darwin-arm64` | `darwin/arm64` |
 
@@ -227,7 +226,7 @@ npm 平台特定包的文件名遵循约定格式：
 从 npm registry 下载的 `.tgz` 包解压后为标准 npm 包结构：
 
 ```
-opencode-linux-arm64-musl-1.17.14.tgz
+opencode-linux-arm64-1.17.14.tgz
   └── package/                          ← 解压后顶层
       ├── package.json                  ← 含 name, version, bin 等元信息
       ├── package-lock.json
@@ -258,50 +257,43 @@ opencode-linux-arm64-musl-1.17.14.tgz
 
 ### 4.1 基础镜像依赖矩阵
 
-基础镜像由系统统一维护，随系统升级迭代。**OS 版本由系统的整体 OS 策略决定，不在基础镜像中单独指定**；以下依赖清单中 Ubuntu 版本仅为示例。
+基础镜像由系统统一维护，随系统升级迭代。**OS 版本由系统的整体 OS 策略决定，不在基础镜像中单独指定**。
 
-基础镜像名称规约：`registry.example.com/agent-base:v<系统版本号>-<arch>`
+基础镜像规约：`agent-base:1.0`
 
 | 依赖 | 版本 | 用途 | 安装方式 |
 |------|------|------|----------|
-| Ubuntu | 随系统 OS 版本 | OS 底座 | FROM 系统维护的 base 镜像 |
-| Node.js | 22.x LTS (≥ 22.12.0) | Claude Code / OpenCode 运行时 | 预编译二进制 |
-| npm | 10.x (随 Node 22 内置) | npm offline install | 随 Node.js |
-| Git | ≥ 2.40 | 代码仓库操作 | apt install |
-| ripgrep | ≥ 14.0 | Claude Code 代码检索 | 官方二进制 |
-| OpenSSH Server | ≥ 8.9 | 沙箱 SSH 交互入口 | apt install |
-| bash | ≥ 5.1 | 基础 Shell | 系统自带 |
-| curl | ≥ 7.81 | API 连通性诊断 | 系统自带 |
-| ca-certificates | 最新 | HTTPS 通信 | 系统自带 |
+| openEuler | 24.03 | OS 底座 | FROM openeuler/openeuler:24.03 |
+| Node.js | 24.18.0（通过 nvm 安装） | Claude Code / OpenCode 运行时 | nvm + npmmirror 镜像 |
+| npm | 随 Node 24 内置 | npm install | 随 Node.js |
+| OpenSSH Server | 系统自带 | 沙箱 SSH 交互入口 | yum install |
+| curl | 系统自带 | 下载 nvm / 连通性诊断 | yum install |
+| ca-certificates | 系统自带 | HTTPS 通信 | yum install |
+| findutils | 系统自带 | `find` 命令（提取可执行文件） | yum install |
 
 ### 4.2 多 Agent 运行环境兼容方案
 
-基础镜像统一提供 Node.js 22 运行时，同时支撑 Claude Code 和 OpenCode 运行。**每个 Agent 独立构建为一个镜像**，不合并打包：
+基础镜像统一提供 Node.js 运行时，同时支撑 Claude Code 和 OpenCode 运行。**每个 Agent 独立构建为一个镜像**，不合并打包：
 
 ```
-基础镜像 (agent-base:vX.X.X-linux-x64)
+基础镜像 (agent-base:1.0)
    │
    ├── 二次构建 ──→ agent-claude-code:2.1.89  （独立镜像）
-   │                   ├── /opt/agents/claude-code/
-   │                   └── /usr/local/bin/claude → ...
+   │                   └── /root/.local/bin/claude
    │
    ├── 二次构建 ──→ agent-opencode:1.17.14     （独立镜像）
-   │                   ├── /opt/agents/opencode/
-   │                   └── /usr/local/bin/opencode → ...
+   │                   └── /root/.local/bin/opencode
    │
    └── 二次构建 ──→ agent-claude-code:2.2.0    （同一 Agent 不同版本，独立镜像）
-                       ├── /opt/agents/claude-code/
-                       └── ...
+                       └── /root/.local/bin/claude
 ```
 
 Agent 镜像内部结构示例：
 
 ```
-agent-{id}:{version}
-  ├── /opt/agents/{id}/         ← 该 Agent 软件文件
-  ├── /opt/mcp-servers/         ← 继承基础镜像的 MCP Server 预装
-  ├── /usr/local/bin/{cli}      ← 全局 CLI 软链接
-  └── ...                        ← 继承基础镜像的运行时环境
+{id}:{version}
+  ├── /root/.local/bin/{cli}     ← 从 tgz 提取的可执行文件
+  ├── ...                         ← 继承基础镜像的运行时环境（Node.js、sshd 等）
 ```
 
 > 每个 Agent 独立镜像，沙箱按需选择拉取具体版本。多租户共享同一镜像，实例化时由沙箱注入用户专属配置。
@@ -354,7 +346,7 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 
 ### 4.4 镜像版本与系统升级策略
 
-- 基础镜像版本跟随系统版本迭代：`registry.example.com/agent-base:1.0.0-linux-x64`
+- 基础镜像名：`agent-base:1.0`
 - 每次系统升级时重新构建基础镜像，Agent 元信息中声明的依赖若无法满足则拒绝上架
 - 已上架 Agent 不受基础镜像升级影响（镜像已固化），如需升级需重新上架新版本
 
@@ -367,51 +359,43 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 ```mermaid
 flowchart TD
     S1["1. 接收构建任务<br/>task_id / agent_id / package_path / base_image<br/>（管理面后台服务下发）"]
-    S2["2. 校验与解压<br/>- 校验 agent_id + version 幂等<br/>- 解压 tgz，读取 package.json<br/>- 提取元信息"]
-    S3["3. 拉取基础镜像<br/>- docker pull / skopeo copy<br/>- 从基础镜像仓库获取"]
-    S4["4. 生成 Dockerfile<br/>- 根据 Agent 元信息动态生成<br/>- COPY 到 /opt/agents/{id}/<br/>- 创建 cli 软链接"]
-    S5["5. 执行构建<br/>- docker build / buildah build<br/>- 日志流式输出到日志服务"]
-    S6["6. 导出 OCI 镜像<br/>- 存储到镜像存储<br/>- 命名: agent-{id}:{version}"]
-    S7["7. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调管理面后台服务: done"]
+    S2["2. 执行构建<br/>- docker build / buildah build<br/>- 日志流式输出到日志服务"]
+    S3["3. 导出 OCI 镜像<br/>- 存储到镜像存储<br/>- 命名: agent-{id}:{version}"]
+    S4["4. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调管理面后台服务: done"]
 
-    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+    S1 --> S2 --> S3 --> S4
 
     style S1 fill:#dbeafe,stroke:#2563eb
-    style S7 fill:#dcfce7,stroke:#16a34a
+    style S4 fill:#dcfce7,stroke:#16a34a
 ```
 
-### 5.2 Agent 元信息 → Dockerfile 生成规则
+### 5.2 二次打包 Dockerfile
 
 以 Agent 元信息为例，Dockerfile 生成规则如下：
 
 ```dockerfile
-# 模板（由 Build Engine 动态生成）
-FROM registry.example.com/agent-base:1.0.0-linux-x64
+# agent.Dockerfile（使用 Docker build arg）
+ARG BASE_IMAGE=agent-base:1.0
+FROM ${BASE_IMAGE}
+ARG HOME_DIR=/root
+ARG TGZ_FILE
+ARG AGENT_ID
+ARG VERSION
+ARG CMD
 
-<% if install_mode == "npm_offline" %>
-# npm 离线安装
-COPY agent-package/ /tmp/agent-package/
-WORKDIR /tmp/agent-package
-RUN npm install --offline --omit=dev
-RUN npm link
-<% endif %>
-
-<% if install_mode == "binary_copy" %>
-# 直接拷贝二进制
-COPY agent-package/bin/ /usr/local/bin/
-RUN chmod +x /usr/local/bin/*
-<% endif %>
-
-# 创建 Agent 目录
-RUN mkdir -p /opt/agents/<%= id %>/
-COPY agent-package/ /opt/agents/<%= id %>/
-
-# 全局路径
-ENV PATH="/usr/local/bin:/opt/agents/<%= id %>/bin:${PATH}"
+WORKDIR ${HOME_DIR}
+COPY ${TGZ_FILE} /tmp/
+RUN mkdir -p /tmp/agent-package \
+    && tar xzf /tmp/${TGZ_FILE} -C /tmp/agent-package \
+    && mkdir -p ${HOME_DIR}/.local/bin \
+    && find /tmp/agent-package/package -type f -executable -exec cp {} ${HOME_DIR}/.local/bin/ \; \
+    && rm -rf /tmp/agent-package /tmp/${TGZ_FILE}
+ENV PATH="${HOME_DIR}/.local/bin:$PATH"
+LABEL agent_id="${AGENT_ID}"
+LABEL version="${VERSION}"
+CMD /bin/bash -c "service ssh restart && ${CMD}"
 ```
 
-- `<%= %>` 占位符从 Agent 元信息 (agent_id, install_mode 等) 填充
-- `install_mode` 决定用 `npm install --offline` 还是 `COPY` 方式
 
 ### 5.3 构建状态机
 
@@ -433,10 +417,100 @@ ENV PATH="/usr/local/bin:/opt/agents/<%= id %>/bin:${PATH}"
 
 | 项目 | 规约 |
 |------|------|
-| 镜像名称 | `agent-{agent_id}:{version}` |
-| 存储路径 | `/data/agent-images/{agent_id}/{version}/` |
-| 镜像格式 | OCI (application/vnd.oci.image.manifest.v1+json) |
-| Tag 策略 | 固定版本号，不追加 `latest` |
+| 镜像名称 | `{agent_id}:{version}` |
+| 存储路径 | 由 `output_dir` 参数指定 |
+| 镜像格式 | gzip 压缩 tar 包 (`{agent_id}-{version}.tar.gz`) |
+
+### 5.5 容器化部署
+
+镜像处理模块（Build Engine）以容器化方式部署，在容器内执行镜像构建。支持四种构建方案，详见 `containerized-build.md`。
+
+#### 5.5.1 方案总览
+
+| 维度 | Docker-out-of-Docker | Buildah + vfs | Buildah + overlay | BuildKit |
+|------|---------------------|---------------|-------------------|----------|
+| **守护进程** | 需要 dockerd | 无（daemonless） | 无（daemonless） | 无（daemonless） |
+| **容器用户** | docker 组成员 | 普通用户 | 普通用户 | 普通用户 |
+| **构建耗时** | 11.07s | 22.3s | 18.3s | 穿刺中 |
+| **镜像体积** | 45.1 kB (virtual 459 MB) | 573 MB (virtual 1.03 GB) | 192 MB (virtual 650 MB) | 穿刺中 |
+| **存储引擎** | overlay2（宿主机 Docker） | vfs（无共享层，每次全量复制） | overlay（共享层 + fuse-overlayfs） | 待确认 |
+| **内核要求** | — | — | 宿主机内核 ≥ 5.4 | 待确认 |
+| **安全评级** | 🔴 高风险 | 🟠 中高风险 | 🔴 高风险 | 🟢 低风险 |
+
+#### 5.5.2 特权对比矩阵
+
+| 特权 | Docker-out-of-Docker | Buildah + vfs | Buildah + overlay | BuildKit | 作用 |
+|------|:---:|:---:|:---:|:---:|------|
+| 挂载 `docker.sock` | ✔️ | — | — | — | 与宿主机 Docker daemon 通信 |
+| `--cap-add SYS_ADMIN` | — | ✔️ | ✔️ | — | mount、umount、pivot_root 等管理操作 |
+| `--security-opt seccomp=unconfined` | — | ✔️ | ✔️ | 部分放宽¹ | 放行 `mount`、`clone`、`unshare` 等系统调用 |
+| `--security-opt apparmor=unconfined` | — | ✔️ | ✔️ | 部分放宽¹ | 解除 AppArmor 对 mount/namespace 的限制 |
+| `--security-opt systempaths=unconfined` | — | ✔️ | ✔️ | — | 解除 `/proc`、`/sys` 路径写保护 |
+| `--device /dev/fuse` | — | — | ✔️ | — | FUSE 用户空间文件系统（overlay 存储引擎依赖） |
+
+> ¹ BuildKit 仅需放宽 seccomp/apparmor 中与构建相关的特定规则（非全局 `unconfined`），精确配置仍在穿刺中。
+
+#### 5.5.3 安全风险概要
+
+> 详细分析见 `codeagent/knowledge-base/notes/containerized-build-security-analysis.md`
+
+| 方案 | 核心攻击面 | 关键逃逸路径 | 逃逸难度 |
+|------|-----------|-------------|:---:|
+| **Docker-out-of-Docker** | `docker.sock` 等效宿主机 root | `docker run --privileged -v /:/host` | 极低（一条命令） |
+| **Buildah + vfs** | `SYS_ADMIN` + seccomp/apparmor 关闭 | cgroup release_agent（需 cgroup v1）、mount 宿主机磁盘设备 | 中等 |
+| **Buildah + overlay** | vfs 全部攻击面 + `/dev/fuse` | 上述全部 + FUSE 文件系统劫持、overlay 镜像层投毒 | 中低（最多路径） |
+| **BuildKit** | seccomp/apparmor 部分放宽（无 SYS_ADMIN） | 待穿刺确认（预期攻击面显著小于 Buildah） | 待评估（预期高） |
+
+**缓解措施**（构建容器独立部署时）：
+
+| 措施 | Docker 方案 | Buildah 方案 | BuildKit 方案 |
+|------|-----------|-------------|-------------|
+| 对外接口保护 | Unix socket / HTTPS + 非对称加密访问控制 | 同左 | 同左 |
+| 输入校验 | 严格校验构建参数，禁止运行前端上传的 npm 包或二进制 | 同左 | 同左 |
+| 构建隔离 | Docker socket 代理 | 自定义 seccomp profile（移除 kexec、bpf 等） | 自定义 seccomp profile（精确放行） |
+| 长期方向 | rootless Docker | rootless Buildah（无需 SYS_ADMIN） | BuildKit 原生无需 SYS_ADMIN |
+| 接口签名 | `build(task_id, agent_id, version, tgz_path, output_dir)` | 同左 | 同左 |
+
+#### 5.5.4 部署模式
+
+`build.py` 支持两种部署方式：
+
+| 维度 | 合并部署（进程内） | 独立部署 |
+|------|------------------|----------|
+| 架构 | `build.py` 作为 FastAPI 进程内模块调用 | `build.py` 作为独立 CLI/守护进程运行 |
+| 资源隔离 | 构建占用 FastAPI worker 线程 | 构建资源独立分配，不影响 API 响应 |
+| 部署复杂度 | 无需额外组件 | 需要启动独立特权容器 |
+| 故障隔离 | 构建崩溃可能影响 API 服务 | 构建崩溃不影响 API 服务 |
+
+**合并部署（进程内）**：
+
+```
+┌─────────────────────────────────┐
+│  FastAPI 进程                     │
+│  ┌──────────┐  ┌──────────────┐ │
+│  │ API 路由  │→│ build_service │ │
+│  │ (agents) │  │   .py        │ │
+│  └──────────┘  └──────┬───────┘ │
+│                       │          │
+│               ┌───────▼────────┐ │
+│               │  engine/       │ │
+│               │  build.py      │ │
+│               │  (DockerBuilder│ │
+│               │   .build())    │ │
+│               └────────────────┘ │
+└─────────────────────────────────┘
+```
+
+**独立部署（CLI/守护进程）**：
+
+```
+┌──────────────┐   HTTP                   ┌──────────────────┐
+│ FastAPI 进程   │◄──────────────────────►│ build.py daemon   │
+│ build_service │                        │ (独立进程/容器)     │
+│ .py          │                         │ DockerBuilder     │
+│              │                        │ .build()          │
+└──────────────┘                        └──────────────────┘
+```
 
 ---
 
@@ -444,15 +518,14 @@ ENV PATH="/usr/local/bin:/opt/agents/<%= id %>/bin:${PATH}"
 
 ### 6.1 接口矩阵总览
 
-| 方法 | 路径 | 调用方 | 被调用方 | 说明 |
-|:---:|------|--------|----------|------|
-| `POST` | `/api/v1/agents/upload` | 管理界面 | 管理面后台服务 | 上传 Agent 离线包 |
-| `POST` | `/api/v1/agents/{id}/versions/{version}/build` | 管理界面 | 管理面后台服务 | 触发二次构建 |
-| `GET` | `/api/v1/agents/{id}/versions/{version}/build/status` | 管理界面 | 管理面后台服务 | 查询构建状态与进度 |
-| `DELETE` | `/api/v1/agents/{id}versions/{version}` | 管理界面 | 管理面后台服务 | 下架 Agent（删除镜像+注销） |
-| `GET` | `/registry/v1/agents` | 管理界面 | 注册中心 | 查询已上架 Agent 列表 |
-| `POST` | `/registry/v1/agents/refresh` | 镜像处理模块 | 注册中心 | 刷新注册表 |
-| `GET` | `/registry/v1/agents/{id}` | Agent 服务 / 管理界面 | 注册中心 | 查询指定 Agent 镜像信息 |
+| 方法 | 路径 | 说明 |
+|:---:|------|------|
+| `POST` | `/api/v1/agents/upload` | 上传 Agent 离线包 |
+| `GET` | `/api/v1/agents` | 分页查询已上传 Agent |
+| `POST` | `/api/v1/agents/{id}/versions/{version}/build` | 触发二次构建（异步） |
+| `GET` | `/api/v1/agents/{id}/versions/{version}/build/status` | 查询构建状态与进度 |
+
+> **MVP 未实现**：`DELETE /agents/{id}/versions/{version}`（下架）、注册中心相关接口。列表接口 `/api/v1/agents` 走本地数据库，非注册中心。
 
 ### 6.2 各接口详细定义
 
@@ -665,157 +738,238 @@ JWT Payload:
 本次代码设计的范围是**管理面后台服务中新增的 Agent 上架子模块**。管理界面、IAM 和注册中心均为外部已有组件。
 
 ```
-admin-backend/                   # 管理面后台服务（已有）
-└── agent_onboarding/            # Agent 上架子模块（本次新增）
-    ├── api/                     # HTTP 接口层
-    │   ├── routes.py            # 路由注册（对外暴露 REST API）
-    │   ├── middleware.py        # JWT 鉴权中间件（验证 IAM 签发的 JWT）
-    │   └── schemas.py           # 请求/响应 Pydantic Schema
-    ├── services/                # 业务逻辑层
-    │   ├── agent_service.py     # Agent 管理（上传/查询/下架）
-    │   ├── build_service.py     # 构建任务管理（状态机/调度）
-    │   └── registry_client.py   # 注册中心 HTTP Client（调用外部注册中心接口）
-    ├── engine/                  # 镜像处理模块
-    │   ├── builder.py           # Docker / Buildah 构建引擎
-    │   ├── manifest.py          # 包元信息提取（文件名解析 + package.json 读取）
-    │   └── dockerfile_gen.py    # Dockerfile 动态生成
-    ├── models/                  # 数据模型
-    │   ├── agent.py             # Agent ORM / 领域模型
-    │   └── build_task.py        # BuildTask ORM / 领域模型
-    ├── storage/                 # 存储层
-    │   ├── package_store.py     # 包文件存储（本地 / OSS）
-    │   └── image_store.py       # 镜像产物存储（OCI 镜像落盘 + 注册中心刷新）
-    ├── config.py                # 配置管理
-    └── exceptions.py            # 统一异常定义
+control-panel/backend/app/           # 管理面后台服务
+├── api/v1/
+│   └── agents.py                    # Agent 上架路由（upload/list/build/status）
+├── image_process/                   # Agent 上架子模块（本次新增）
+│   ├── __init__.py
+│   ├── agent_service.py             # Agent 管理（上传/查询）
+│   ├── build_service.py             # 构建任务管理（状态机/异步调度）
+│   └── engine/                      # 镜像处理引擎
+│       ├── __init__.py
+│       ├── build.py                 # 构建引擎（DockerBuilder + BuildahBuilder 类继承）
+│       ├── manifest.py              # 文件名解析 + package.json 提取
+│       ├── agent.Dockerfile         # Agent 镜像 Dockerfile 模板（ARG 化）
+│       └── base.Dockerfile          # 基础镜像 Dockerfile
+├── models/
+│   └── agent.py                     # Agent + BuildTask ORM 模型
+├── schemas/
+│   └── agent.py                     # Pydantic 请求/响应 Schema
+├── config.py                        # 配置管理（扩展 image process 配置项）
+└── main.py                          # FastAPI 入口（已注册 agent router + 表创建）
 ```
+
+> **实现说明**：与原始设计的差异见下表。
+
+| 设计项 | 原设计 | 实际实现 |
+|--------|--------|----------|
+| 注册中心 | 独立组件，3 个接口 | **未实现**（MVP 不包含） |
+| 下架接口 | DELETE /agents/{id}/versions/{version} | **未实现**（MVP 不包含） |
+| `api/middleware.py` | 新建 JWT 中间件 | **复用**已有 `iam/security.py` |
+| `engine/dockerfile_gen.py` | 独立文件 | **合并入** `build.py` |
+| `storage/` | 独立包（package_store + image_store） | **删除**，直接用 `pathlib.Path` |
+| `exceptions.py` | 自定义异常层级 | **删除**，直接用 `fastapi.HTTPException` |
+| 平台支持 | 6 个 (linux-x64, arm64, win32, darwin...) | **仅 linux-arm64** |
+| 构建后端 | 仅 Docker | **Docker + Buildah** 双模式（类继承） |
+| 日志 | 文件 `build.log` | **Python logging**（info=成功, error=失败, debug=子进程输出） |
+| 镜像输出 | OCI tar | **tar.gz**（`{agent_id}-{version}.tar.gz`） |
+| 基础镜像 | `registry.example.com/agent-base:1.0.0-linux-x64` | **`agent-base:1.0`**（内网镜像，自建 base.Dockerfile） |
+| Agent 包存储 | `PackageStore` 类 | **直接文件读写**（`Path.mkdir() + write_bytes()`） |
 
 **模块边界**：
 
 ```
-管理界面 ──IAM JWT──→ api/ ──→ services/ ──→ engine/ ──→ storage/ ──刷新──→ 注册中心
-  (已有)               ↑                            (已有)
-                       └── 管理面后台服务.agent_onboarding (本次新增) ───┘
+管理界面 ──IAM JWT──→ api/v1/agents.py ──→ image_process/agent_service.py ──→ engine/manifest.py
+                              │                    │                              │
+                              │                    └── image_process/build_service.py
+                              │                              │
+                              │                    └── engine/build.py (DockerBuilder / BuildahBuilder)
+                              │
+                              └── app/debug.py (/debug/agent-registry 调试页)
 ```
 
-- `api/` 校验 IAM JWT，对外暴露 REST 接口
-- `services/` 上传编排、构建任务调度、调用注册中心
-- `engine/` 二次构建（Dockerfile 生成 + 镜像打包）
-- `storage/` 包文件落盘 + 镜像产物存储
+- `api/v1/agents.py` 校验 IAM JWT，对外暴露 REST 接口（upload / list / build / status）
+- `image_process/agent_service.py` 上传编排、本地文件存储、列表查询
+- `image_process/build_service.py` 构建任务状态机 + asyncio 后台调度
+- `engine/build.py` 镜像构建引擎（Docker + Buildah 双后端，通过 AbstractBuilder 多态）
+- `engine/manifest.py` 文件名解析 + 包元信息提取
+- `agent.Dockerfile` 独立 Dockerfile 模板（build-arg 方式）
 
 ### 7.2 核心数据结构
 
-```python
-# models/agent.py
-from pydantic import BaseModel
-from typing import List, Optional
-from enum import Enum
+数据模型使用 **SQLAlchemy 2.0 ORM**（持久层） + **Pydantic v2**（API 请求/响应）。
 
-class AgentStatus(str, Enum):
-    UPLOADED = "uploaded"       # 包已上传，未构建
-    BUILDING = "building"       # 构建中
-    READY = "ready"             # 构建完成，已注册
-    FAILED = "failed"           # 构建失败
-    RETIRED = "retired"         # 已下架
+**ORM 模型** (`app/models/agent.py`)：
 
-class AgentPackage(BaseModel):
-    agent_id: str               # 从文件名解析，如 "claude-code"
-    display_name: str           # 管理员确认的显示名称，如 "Claude Code"
-    version: str                # 从文件名解析，如 "2.1.89"
-    entrypoint: str             # 管理员确认，从 package.json bin 提取默认值
+| 模型 | 表名 | 关键字段 |
+|------|------|----------|
+| `Agent(Base)` | `agent` | `id`(UUID PK), `agent_id`(unique, indexed), `display_name`, `version`, `platform`, `entrypoint`, `package_path`, `source_filename`, `status`(uploaded/ready/failed), `image`, `image_digest`, `created_at`, `updated_at` |
+| `BuildTask(Base)` | `build_task` | `task_id`(PK), `agent_id`(indexed), `version`, `status`(pending/building/done/failed/cancelled), `progress`(0-100), `image`, `image_digest`, `error_code`, `error_message`, `created_at`, `started_at`, `finished_at` |
 
-class AgentRecord(AgentPackage):
-    package_path: str           # tgz 存储路径
-    source_filename: str        # 原始文件名，如 "claude-code-linux-x64-2.1.89.tgz"
-    status: AgentStatus
-    image: Optional[str]        # 构建完成后的镜像 URL
-    image_digest: Optional[str]
-    created_at: str
-    updated_at: str
-```
+**Pydantic Schema** (`app/schemas/agent.py`)：
 
-```python
-# models/build_task.py
-from enum import Enum
-
-class BuildStatus(str, Enum):
-    PENDING = "pending"
-    BUILDING = "building"
-    DONE = "done"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-class BuildTask(BaseModel):
-    task_id: str
-    agent_id: str
-    version: str
-    status: BuildStatus
-    progress: int               # 0-100
-    log_url: Optional[str]
-    image: Optional[str]
-    image_digest: Optional[str]
-    error_code: Optional[str]
-    error_message: Optional[str]
-    started_at: Optional[str]
-    finished_at: Optional[str]
-```
+| Schema | 用途 |
+|--------|------|
+| `AgentUploadResult` | POST /upload 响应：`agent_id`, `version`, `platform`, `display_name`, `entrypoint`, `source_filename` |
+| `AgentInfo` | 列表项：+`status`, `image`, `image_digest`, `created_at` |
+| `AgentListResult` | GET / 响应：`total: int`, `items: list[AgentInfo]` |
+| `BuildTaskResponse` | POST /build 响应：`task_id`, `agent_id`, `version`, `status`, `created_at` |
+| `BuildStatusResponse` | GET /status 响应：+`progress`, `image`, `image_digest`, `error_code`, `error_message`, `duration_seconds`, `registered` |
 
 ### 7.3 核心函数签名
 
 ```python
-# services/agent_service.py
-class AgentService:
-    async def upload(agent_id: str, package: UploadFile) -> AgentUploadResult
-    async def trigger_build(agent_id: str, version: str) -> BuildTask
-    async def get_build_status(agent_id: str, version: str) -> BuildTask
-    async def list_agents(page: int, size: int) -> AgentListResult
-    async def retire_agent(agent_id: str, version: str) -> None
+# image_process/agent_service.py（模块级 async 函数）
+async def upload(session: AsyncSession, filename: str, content: bytes) -> AgentUploadResult
+async def list_agents(session: AsyncSession, page=1, page_size=20) -> AgentListResult
+async def get_agent(session: AsyncSession, agent_id: str, version: str) -> Agent | None
 
-# engine/builder.py
-class ImageBuilder:
-    async def build(task: BuildTask) -> BuildResult
-    async def cancel(task_id: str) -> None
-    async def _parse_package(package_path: str) -> AgentPackage
-    async def _generate_dockerfile(agent: AgentPackage) -> str
-    async def _pull_base_image(base_image: str) -> None
-    async def _export_oci(task: BuildTask) -> str
-    async def _register(agent: AgentPackage, image: str) -> None
+# image_process/build_service.py（模块级 async 函数）
+async def create_and_start(session: AsyncSession, agent_id: str, version: str) -> BuildTaskResponse
+async def get_status(session: AsyncSession, agent_id: str, version: str) -> BuildStatusResponse | None
+async def cancel(session: AsyncSession, agent_id: str, version: str) -> bool
+
+# image_process/engine/build.py
+class AbstractBuilder(ABC):
+    async def build_image(work_dir, image_name, build_args) -> None
+    async def save_image(image_name, agent_id, version, work_dir) -> None
+    async def get_image_id(image_name) -> str
+    async def check_available() -> bool
+
+class DockerBuilder(AbstractBuilder):    # docker build / save / inspect
+    async def run(cmd: list[str], fail_msg: str) -> None        # 子进程 + 日志
+    async def run_shell(cmd: str, fail_msg: str) -> None         # shell pipe 模式
+    async def _stream(proc, fail_msg) -> None                     # 逐行 logger.debug
+
+class BuildahBuilder(DockerBuilder):    # 继承 run/run_shell/_stream，覆写 build_image/save_image/get_image_id
+    # buildah bud --storage-driver vfs / buildah push / buildah inspect
+
+async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_progress=None) -> BuildResult
 ```
 
 ### 7.4 异常处理策略
 
-```python
-# exceptions.py
-class AgentRegistryError(Exception):
-    """基础异常，附带错误码"""
-    def __init__(self, code: int, message: str):
-        self.code = code
-        self.message = message
-
-class PackageValidationError(AgentRegistryError):
-    """包校验失败 (40001-40005)"""
-    pass
-
-class BuildError(AgentRegistryError):
-    """构建失败 (50001-50099)"""
-    pass
-
-class RegistryError(AgentRegistryError):
-    """注册中心交互失败"""
-    pass
-
-# 在路由层统一捕获并转换为 HTTP 响应
-@app.exception_handler(AgentRegistryError)
-async def handler(request, exc: AgentRegistryError):
-    return JSONResponse(status_code=400, content={
-        "code": exc.code, "message": exc.message
-    })
-```
+异常直接使用 `fastapi.HTTPException`（含 `code` + `message` detail），构建引擎使用 `BuildError(Exception)`。不使用自定义异常层级。
 
 ---
 
-## 8. DFX 设计
+## 8. 安装部署
 
-### 8.1 可靠性
+### 8.1 目录结构
+
+系统运行时目录统一存放在服务用户 `$HOME/.jiuwen/` 下：
+
+```
+$HOME/.jiuwen/
+├── data/              ← 安装阶段释放（基础镜像等静态资源）
+├── uploads/            ← 管理员上传的 .tgz 包暂存
+├── agents/             ← 校验通过的 Agent 包
+├── run/                ← 镜像处理模块构建工作目录
+└── images/             ← 构建完成的镜像产物
+```
+
+| 目录 | 用途 | 写入时机 | 清理策略 |
+|------|------|---------|---------|
+| `data/` | 基础镜像等静态资源 | `pip install` 时从 whl 包释放 | 随 whl 包升级覆盖 |
+| `uploads/` | 管理员上传的 Agent 包暂存 | 上传请求到达时 | 校验通过后移走；校验失败即时删除 |
+| `agents/` | 校验通过的 Agent 包永久存储 | 上传校验通过后从 `uploads/` 移入 | 仅在下架时删除 |
+| `run/` | 构建任务临时工作区 | 每次构建任务启动时创建 `run/{task_id}/` | 构建完成后（无论成功/失败）清理 |
+| `images/` | 构建完成的镜像产物 | 构建成功后写入 | 仅在下架对应版本时删除 |
+
+### 8.2 安装流程
+
+#### 8.2.1 whl 包构建阶段
+
+基础镜像在系统构建阶段生成，随管理面后台服务的 whl 安装包分发：
+
+```
+构建流程：
+  1. 构建基础镜像 → agent-base:1.0.tar.gz
+  2. 将基础镜像放入 whl 源码树的 data/ 目录
+  3. 打包 whl → data/ 目录内容随包分发
+
+whl 包结构：
+  control_panel/
+  ├── ...
+  └── data/
+      └── agent-base:1.0.tar.gz    ← 基础镜像
+```
+
+#### 8.2.2 pip install 阶段
+
+```bash
+pip install control_panel-1.0.0-py3-none-any.whl
+```
+
+安装过程中，whl 包的 `data/` 目录内容释放到 `$HOME/.jiuwen/data/`：
+
+| 源（whl 包内） | 目标（安装后） |
+|---------------|---------------|
+| `data/agent-base:1.0.tar.gz` | `$HOME/.jiuwen/data/agent-base:1.0.tar.gz` |
+
+首次安装时自动创建 `$HOME/.jiuwen/` 目录树；升级安装时仅覆盖 `data/` 目录，不影响 `agents/`、`images/` 中已有数据。
+
+### 8.3 上传流程
+
+管理员通过管理界面上传 Agent 离线包（`.tgz`），系统处理流程：
+
+```
+1. 接收上传
+   管理界面 → POST /api/v1/agents/upload
+   → 暂存到 $HOME/.jiuwen/uploads/{filename}
+
+2. 校验
+   - 文件名解析（提取 agent_id / version / platform）
+   - 文件大小（≤ 500 MB）
+   - 文件格式（.tgz）
+   - 版本幂等（同一 agent_id + version 不重复）
+
+3. 校验结果
+   ├── 通过 → 移动到 $HOME/.jiuwen/agents/{agent_id}-{version}.tgz
+   │         → 写入 Agent 记录（status: uploaded）
+   └── 失败 → 删除 $HOME/.jiuwen/uploads/{filename}
+             → 返回 400 错误码
+```
+
+### 8.4 构建流程
+
+镜像处理模块的运行时行为：
+
+```
+1. 准备阶段
+   工作目录:  $HOME/.jiuwen/run/{task_id}/
+   基础镜像:  $HOME/.jiuwen/data/agent-base:1.0.tar.gz
+   Agent 包:  $HOME/.jiuwen/agents/{agent_id}-{version}.tgz
+
+2. 构建阶段
+   - 加载基础镜像（docker load / buildah pull）
+   - 解压 Agent 包 → 生成 Dockerfile → 执行构建
+   - 日志输出到日志服务
+
+3. 导出阶段
+   - 产物: $HOME/.jiuwen/images/{agent_id}-{version}.tar.gz
+   - 注册: 回调注册中心 API
+
+4. 清理阶段
+   - 删除 $HOME/.jiuwen/run/{task_id}/
+```
+
+### 8.5 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `JIUWEN_HOME` | `$HOME/.jiuwen` | 数据根目录，可通过此变量自定义路径 |
+| `JIUWEN_DATA` | `$JIUWEN_HOME/data` | 静态资源目录 |
+| `JIUWEN_UPLOADS` | `$JIUWEN_HOME/uploads` | 上传暂存目录 |
+| `JIUWEN_AGENTS` | `$JIUWEN_HOME/agents` | Agent 包存储目录 |
+| `JIUWEN_RUN` | `$JIUWEN_HOME/run` | 构建工作目录 |
+| `JIUWEN_IMAGES` | `$JIUWEN_HOME/images` | 镜像产物目录 |
+
+---
+
+## 9. DFX 设计
+
+### 9.1 可靠性
 
 | 场景 | 策略 |
 |------|------|
@@ -827,7 +981,7 @@ async def handler(request, exc: AgentRegistryError):
 | 并发构建 | 不同 Agent 构建并行执行，同一 Agent 同一版本串行（幂等锁） |
 | 进程崩溃恢复 | 启动时扫描 `building` 状态任务，重新调度或标记 `failed` |
 
-### 8.2 安全性
+### 9.2 安全性
 
 | 层面 | 措施 |
 |------|------|
@@ -835,11 +989,11 @@ async def handler(request, exc: AgentRegistryError):
 | **认证** | 管理界面→管理面后台服务：IAM JWT；内部服务间：service token |
 | **授权** | 管理界面仅 `role: agent_admin` 可操作；普通用户只读 |
 | **上传校验** | 文件名解析校验；文件大小限制；文件魔数校验（tgz/tar.gz） |
-| **构建隔离** | 每次构建在独立工作区执行，构建完成后清理临时文件 |
+| **构建隔离** | 每次构建在独立工作区执行，构建完成后清理临时文件；容器化构建安全分析见第 5.5.3 节及 `containerized-build-security-analysis.md` |
 | **镜像安全** | 基础镜像经安全扫描后方可发布；构建产物可选签名（cosign） |
 | **敏感信息** | API Key 等凭证不写入包内，不写入镜像，由沙箱运行时注入 |
 
-### 8.3 可扩展性
+### 9.3 可扩展性
 
 | 维度 | 设计 |
 |------|------|
@@ -847,7 +1001,7 @@ async def handler(request, exc: AgentRegistryError):
 | 安装模式 | `install_mode` 支持 `npm_offline`、`binary_copy`，后续可扩展 `apt_offline` 等 |
 | 注册中心 | 注册中心客户端抽象为接口，可适配不同镜像仓库（Harbor / Docker Registry / OCI Distribution） |
 
-### 8.4 可维护性
+### 9.4 可维护性
 
 | 措施 | 说明 |
 |------|------|
@@ -856,7 +1010,7 @@ async def handler(request, exc: AgentRegistryError):
 | 配置化管理 | 基础镜像地址、包大小上限、重试策略等敏感配置集中管理，支持热更新 |
 | 健康检查 | Agent 上架子模块暴露 `/health` 端点 + `/ready` 就绪探针 |
 
-### 8.5 可观测性
+### 9.5 可观测性
 
 | 指标 | 方式 |
 |------|------|
@@ -865,7 +1019,7 @@ async def handler(request, exc: AgentRegistryError):
 | 监控指标 | Prometheus 指标：`agent_build_total`、`agent_build_duration_seconds`、`agent_build_errors_total` |
 | 告警 | 构建失败率 > 10% 告警；单次构建超 10 分钟告警；存储使用率 > 80% 告警 |
 
-### 8.6 兼容性
+### 9.6 兼容性
 
 | 维度 | 策略 |
 |------|------|
@@ -875,9 +1029,9 @@ async def handler(request, exc: AgentRegistryError):
 
 ---
 
-## 9. 验收标准
+## 10. 验收标准
 
-### 9.1 上传校验
+### 10.1 上传校验
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
@@ -888,7 +1042,7 @@ async def handler(request, exc: AgentRegistryError):
 | TC-05 | 重复上传相同 agent_id + version | 400，code=40004，"版本已存在" |
 | TC-06 | 上传非 tar.gz 格式文件 | 400，code=40005，"文件格式非法" |
 
-### 9.2 构建
+### 10.2 构建
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
@@ -899,14 +1053,14 @@ async def handler(request, exc: AgentRegistryError):
 | TC-11 | 基础镜像不存在 | status=failed，error_code="BUILD_BASE_IMAGE_NOT_FOUND" |
 | TC-12 | 构建过程中取消 | status=cancelled |
 
-### 9.3 注册
+### 10.3 注册
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
 | TC-13 | 构建完成后注册中心可查询到新镜像 | GET /registry/v1/agents/claude-code 返回包含 2.1.89 |
 | TC-14 | 注册中心不可达时任务失败 | status=failed，error_code="REGISTRY_REFRESH_FAILED" |
 
-### 9.4 运行验证（端到端）
+### 10.4 运行验证（端到端）
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
@@ -915,7 +1069,7 @@ async def handler(request, exc: AgentRegistryError):
 | TC-17 | Agent 启动并完成一轮完整对话 | Claude Code → 发起对话 → 流式回复 → 正常退出 |
 | TC-18 | MCP Server 被 Agent 正确加载 | Agent 启动日志中看到 MCP Server 连接成功 |
 
-### 9.5 DFX
+### 10.5 DFX
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
@@ -927,53 +1081,43 @@ async def handler(request, exc: AgentRegistryError):
 
 ---
 
-## 10. 附录
+## 11. 附录
 
 ### A. 基础镜像 Dockerfile 参考
 
+实际文件：`control-panel/backend/app/image_process/engine/base.Dockerfile`
+
 ```dockerfile
-FROM <系统统一维护的 OS 镜像>
+FROM openeuler/openeuler:24.03
+ARG NODE_VERSION=24.18.0
+ARG HOME_DIR=/root
 
-ARG NODE_VERSION=22.12.0
-ARG RG_VERSION=14.1.1
+RUN yum install -y \
+        openssh-server curl ca-certificates findutils \
+    && yum clean all && rm -rf /var/cache/yum
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        openssh-server \
-        git \
-        curl \
-        ca-certificates \
-        build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# nvm（gitcode raw 镜像）
+RUN mkdir -p ~/.nvm \
+    && curl -fsSL https://raw.gitcode.com/GitHub_Trending/nv/nvm/raw/v0.40.5/nvm.sh \
+        -o ~/.nvm/nvm.sh \
+    && echo ". ~/.nvm/nvm.sh" > ~/.bashrc
 
-# Node.js (预编译二进制)
-COPY node-v${NODE_VERSION}-linux-x64.tar.xz /tmp/
-RUN tar -xf /tmp/node-v${NODE_VERSION}-linux-x64.tar.xz -C /usr/local --strip-components=1 \
-    && rm /tmp/node-v${NODE_VERSION}-linux-x64.tar.xz
+# Node.js（npmmirror 镜像）
+RUN /bin/bash -c ". ~/.bashrc \
+    && export NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node \
+    && nvm install ${NODE_VERSION}"
+ENV PATH="$HOME_DIR/.nvm/versions/node/v${NODE_VERSION}/bin:${PATH}"
 
-# ripgrep
-COPY ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz /tmp/
-RUN tar -xf /tmp/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz -C /tmp/ \
-    && mv /tmp/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg /usr/local/bin/ \
-    && rm -rf /tmp/ripgrep-*
+RUN npm config set registry https://registry.npmmirror.com
 
-# MCP Server 预装
-RUN npm install -g \
-    @anthropic-ai/mcp-server-filesystem \
-    @anthropic-ai/mcp-server-git \
-    @anthropic-ai/mcp-server-shell \
+# MCP Server
+RUN npm install -g @modelcontextprotocol/server-filesystem \
     && npm cache clean --force
 
-# 配置 sshd
+# sshd
 RUN mkdir /var/run/sshd \
     && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \
     && echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config
-
-# Agent 目录
-RUN mkdir -p /opt/agents /opt/mcp-servers /workspace
-
-EXPOSE 22
-CMD ["/usr/sbin/sshd", "-D"]
 ```
 
 ### B. 接口 OpenAPI 描述（核心部分）
