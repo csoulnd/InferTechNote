@@ -27,4 +27,60 @@ GPU 有成百上千个极简小计算核心（流处理器 CUDA Core / ALU），
 短板：一旦出现大量分支判断（一部分线程走 A 逻辑、一部分走 B），会出现线程束分化，性能暴跌；复杂递归、复杂指针运算几乎不适合 GPU。
 </details>
 
-GPU快的核心：[高并发计算](# "相比于CPU，单位面积内逻辑控制单元更少，流处理器更多")；低内存延迟；特化内存与计算架构
+- GPU快的核心：[高并发计算](# "相比于CPU，单位面积内逻辑控制单元更少，流处理器更多")；[低内存延迟](# 'SIMT核心管理多个线程组（wrap）不会因为等待内存数据阻塞执行')；[特化内存与计算架构](# 'GPU常配备高带宽内存；GPU还会集成专用计算单元')
+- 算力评估：FLOPS（Floating-Point Operations Per Second，每秒浮点运算次数）来表示，通常数量级为T(万亿)，也即是大家听到的TFLOPS，公式如下：
+
+```
+算力（FLOPS）= CUDA核心数 × 加速频率 × 每核心单个周期浮点计算系数
+```
+- GPU架构原型：[Fermi](https://www.nvidia.com/content/PDF/fermi_white_papers/NVIDIA_Fermi_Compute_Architecture_Whitepaper.pdf)架构是现代通用GPU架构的基石
+
+### GPU 架构简图
+
+以 Fermi 为代表的现代通用 GPU，整体可理解为「大量 SM + 共享 L2 + 高带宽显存」：
+
+```mermaid
+flowchart TB
+    CPU["CPU（主机）"]
+
+    subgraph GPU["GPU 芯片"]
+        direction TB
+        GPC["GPC × N<br/>图形处理集群"]
+        SM["SM × 大量<br/>流式多处理器"]
+        L2["L2 缓存"]
+        MC["内存控制器"]
+
+        GPC --> SM
+        SM --> L2
+        L2 --> MC
+    end
+
+    VRAM[("HBM / GDDR<br/>高带宽显存")]
+
+    CPU <-->|PCIe| GPC
+    MC <--> VRAM
+```
+
+SM 是 GPU 的基本计算单元，内部结构大致如下：
+
+```mermaid
+flowchart LR
+    subgraph SM["SM（流式多处理器）"]
+        direction TB
+        WS["Warp 调度器<br/>（SIMT 执行）"]
+        CORE["CUDA Core × 32<br/>浮点 / 整数 ALU"]
+        REG["寄存器文件"]
+        SHMEM["共享内存 / L1"]
+
+        WS --> CORE
+        CORE --- REG
+        CORE --- SHMEM
+    end
+```
+
+### CUDA编程简要示例
+
+## 参考文档
+
+1. [知乎专栏](https://zhuanlan.zhihu.com/p/678001378)
+2. [知乎专栏](https://zhuanlan.zhihu.com/p/31825598174)
