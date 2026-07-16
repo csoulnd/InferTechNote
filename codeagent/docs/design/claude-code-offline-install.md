@@ -137,14 +137,14 @@ sequenceDiagram
 管理员操作                                  系统行为
 ─────────────────────────────────────────────────────────
 ① 从 npm registry 下载 .tgz 包
-   例: opencode-linux-arm64-musl-1.17.14.tgz
+   例: opencode-linux-arm64-1.17.14.tgz
 
 ② 在管理界面上传该 .tgz                 → 存入包存储，返回包 ID
                                           →
 ③ 系统弹出确认表单                         ← 从文件名 + 包内提取元信息
    ├─ Agent 名称: [opencode]   ← 已填      - 文件名解析 → name / version / platform
    ├─ 版本:      [1.17.14]    ← 已填      - package.json: display_name / entrypoint
-   ├─ 平台:      [linux-arm64-musl] ← 已填
+   ├─ 平台:      [linux-arm64] ← 已填
    ├─ 入口命令:   [npx opencode] ← 已填
    └─ 显示名称:   [OpenCode]    ← 可改
 
@@ -157,9 +157,9 @@ sequenceDiagram
 
 | 元信息 | 来源 | 规则 |
 |--------|------|------|
-| `name` (agent_id) | 文件名第一段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `opencode` |
-| `version` | 文件名最后一段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `1.17.14` |
-| `platform` | 文件名中间段 | `opencode-linux-arm64-musl-1.17.14.tgz` → `linux-arm64-musl` |
+| `name` (agent_id) | 文件名第一段 | `opencode-linux-arm64-1.17.14.tgz` → `opencode` |
+| `version` | 文件名最后一段 | `opencode-linux-arm64-1.17.14.tgz` → `1.17.14` |
+| `platform` | 文件名中间段 | `opencode-linux-arm64-1.17.14.tgz` → `linux-arm64` |
 | `platform` 映射 | 平台映射表 | `linux-x64` → `linux/amd64`, `linux-arm64` → `linux/arm64` ... |
 | `display_name` | 包内 `package.json` → `name` 或 `displayName` | — |
 | `entrypoint` | 包内 `package.json` → `bin` 字段或已知默认值 | `bin: { "opencode": "..." }` → `opencode` |
@@ -176,7 +176,7 @@ npm 平台特定包的文件名遵循约定格式：
 {name}-{platform}-{version}.tgz
 
 示例:
-  opencode-linux-arm64-musl-1.17.14.tgz    → opencode, linux-arm64-musl, 1.17.14
+  opencode-linux-arm64-1.17.14.tgz    → opencode, linux-arm64, 1.17.14
   opencode-linux-x64-1.17.14.tgz           → opencode, linux-x64, 1.17.14
   opencode-win32-x64-1.17.14.tgz           → opencode, win32-x64, 1.17.14
   opencode-darwin-arm64-1.17.14.tgz        → opencode, darwin-arm64, 1.17.14
@@ -191,7 +191,6 @@ npm 平台特定包的文件名遵循约定格式：
 | `linux-x64` | `linux/amd64` |
 | `linux-arm64` | `linux/arm64` |
 | `linux-x64-musl` | `linux/amd64-musl` |
-| `linux-arm64-musl` | `linux/arm64-musl` |
 | `win32-x64` | `windows/amd64` |
 | `darwin-arm64` | `darwin/arm64` |
 
@@ -227,7 +226,7 @@ npm 平台特定包的文件名遵循约定格式：
 从 npm registry 下载的 `.tgz` 包解压后为标准 npm 包结构：
 
 ```
-opencode-linux-arm64-musl-1.17.14.tgz
+opencode-linux-arm64-1.17.14.tgz
   └── package/                          ← 解压后顶层
       ├── package.json                  ← 含 name, version, bin 等元信息
       ├── package-lock.json
@@ -274,31 +273,27 @@ opencode-linux-arm64-musl-1.17.14.tgz
 
 ### 4.2 多 Agent 运行环境兼容方案
 
-基础镜像统一提供 Node.js 22 运行时，同时支撑 Claude Code 和 OpenCode 运行。**每个 Agent 独立构建为一个镜像**，不合并打包：
+基础镜像统一提供 Node.js 运行时，同时支撑 Claude Code 和 OpenCode 运行。**每个 Agent 独立构建为一个镜像**，不合并打包：
 
 ```
-基础镜像 (agent-base:vX.X.X-linux-x64)
+基础镜像 (agent-base:1.0)
    │
    ├── 二次构建 ──→ agent-claude-code:2.1.89  （独立镜像）
-   │                   ├── /opt/agents/claude-code/
-   │                   └── /usr/local/bin/claude → ...
+   │                   └── /root/.local/bin/claude
    │
    ├── 二次构建 ──→ agent-opencode:1.17.14     （独立镜像）
-   │                   ├── /opt/agents/opencode/
-   │                   └── /usr/local/bin/opencode → ...
+   │                   └── /root/.local/bin/opencode
    │
    └── 二次构建 ──→ agent-claude-code:2.2.0    （同一 Agent 不同版本，独立镜像）
-                       ├── /opt/agents/claude-code/
-                       └── ...
+                       └── /root/.local/bin/claude
 ```
 
 Agent 镜像内部结构示例：
 
 ```
 {id}:{version}
-  ├── $HOME/.local/bin/{cli}     ← 从 tgz 提取的可执行文件
-  ├── /opt/mcp-servers/          ← 继承基础镜像的 MCP Server 预装
-  └── ...                         ← 继承基础镜像的运行时环境
+  ├── /root/.local/bin/{cli}     ← 从 tgz 提取的可执行文件
+  ├── ...                         ← 继承基础镜像的运行时环境（Node.js、sshd 等）
 ```
 
 > 每个 Agent 独立镜像，沙箱按需选择拉取具体版本。多租户共享同一镜像，实例化时由沙箱注入用户专属配置。
@@ -351,7 +346,7 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 
 ### 4.4 镜像版本与系统升级策略
 
-- 基础镜像版本跟随系统版本迭代：`registry.example.com/agent-base:1.0.0-linux-x64`
+- 基础镜像名：`agent-base:1.0`
 - 每次系统升级时重新构建基础镜像，Agent 元信息中声明的依赖若无法满足则拒绝上架
 - 已上架 Agent 不受基础镜像升级影响（镜像已固化），如需升级需重新上架新版本
 
@@ -364,20 +359,17 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 ```mermaid
 flowchart TD
     S1["1. 接收构建任务<br/>task_id / agent_id / package_path / base_image<br/>（管理面后台服务下发）"]
-    S2["2. 校验与解压<br/>- 校验 agent_id + version 幂等<br/>- 解压 tgz，读取 package.json<br/>- 提取元信息"]
-    S3["3. 拉取基础镜像<br/>- docker pull / skopeo copy<br/>- 从基础镜像仓库获取"]
-    S4["4. 生成 Dockerfile<br/>- 根据 Agent 元信息动态生成<br/>- COPY 到 /opt/agents/{id}/<br/>- 创建 cli 软链接"]
-    S5["5. 执行构建<br/>- docker build / buildah build<br/>- 日志流式输出到日志服务"]
-    S6["6. 导出 OCI 镜像<br/>- 存储到镜像存储<br/>- 命名: agent-{id}:{version}"]
-    S7["7. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调管理面后台服务: done"]
+    S2["2. 执行构建<br/>- docker build / buildah build<br/>- 日志流式输出到日志服务"]
+    S3["3. 导出 OCI 镜像<br/>- 存储到镜像存储<br/>- 命名: agent-{id}:{version}"]
+    S4["4. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调管理面后台服务: done"]
 
-    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+    S1 --> S2 --> S3 --> S4
 
     style S1 fill:#dbeafe,stroke:#2563eb
-    style S7 fill:#dcfce7,stroke:#16a34a
+    style S4 fill:#dcfce7,stroke:#16a34a
 ```
 
-### 5.2 Agent 元信息 → Dockerfile 生成规则
+### 5.2 二次打包 Dockerfile
 
 以 Agent 元信息为例，Dockerfile 生成规则如下：
 
@@ -404,8 +396,6 @@ LABEL version="${VERSION}"
 CMD /bin/bash -c "service ssh restart && ${CMD}"
 ```
 
-- `<%= %>` 占位符从 Agent 元信息 (agent_id, install_mode 等) 填充
-- `install_mode` 决定用 `npm install --offline` 还是 `COPY` 方式
 
 ### 5.3 构建状态机
 
@@ -433,24 +423,55 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 
 ### 5.5 容器化部署
 
-**Docker和Buildah的容器化构建**：
+镜像处理模块（Build Engine）以容器化方式部署，在容器内执行镜像构建。支持四种构建方案，详见 `containerized-build.md`。
 
-| 维度 | Docker | Buildah |
-|------|--------|---------|
-| 守护进程 | 需要 dockerd | 无（daemonless） |
-| 特权用户 | docker 组成员或 root | 普通用户 |
-| 特殊权限 | 需挂载 `/var/run/docker.sock` | 需额外权限（见下方） |
-| 构建速度 | 快（原生 overlay2 缓存） | 中等（vfs 无共享层，每次全量复制） |
+#### 5.5.1 方案总览
 
-**Buildah 容器内构建所需权限**：
+| 维度 | Docker-out-of-Docker | Buildah + vfs | Buildah + overlay | BuildKit |
+|------|---------------------|---------------|-------------------|----------|
+| **守护进程** | 需要 dockerd | 无（daemonless） | 无（daemonless） | 无（daemonless） |
+| **容器用户** | docker 组成员 | 普通用户 | 普通用户 | 普通用户 |
+| **构建耗时** | 11.07s | 22.3s | 18.3s | 穿刺中 |
+| **镜像体积** | 45.1 kB (virtual 459 MB) | 573 MB (virtual 1.03 GB) | 192 MB (virtual 650 MB) | 穿刺中 |
+| **存储引擎** | overlay2（宿主机 Docker） | vfs（无共享层，每次全量复制） | overlay（共享层 + fuse-overlayfs） | 待确认 |
+| **内核要求** | — | — | 宿主机内核 ≥ 5.4 | 待确认 |
+| **安全评级** | 🔴 高风险 | 🟠 中高风险 | 🔴 高风险 | 🟢 低风险 |
 
-| 参数 | 类型 | 作用 |
-|------|------|------|
-| `--security-opt seccomp=unconfined` | 安全选项 | 允许 `unshare`/`clone`（用户命名空间） |
-| `--security-opt apparmor=unconfined` | 安全选项 | 解除 AppArmor 的 mount/namespace 限制 |
-| `--security-opt systempaths=unconfined` | 安全选项 | 解除 `/proc/sys/kernel` 路径限制 |
-| `--cap-add SYS_ADMIN` | 能力 | mount、umount、pivot_root |
-| `--cap-add SETFCAP` | 能力 | 设置文件能力 |
+#### 5.5.2 特权对比矩阵
+
+| 特权 | Docker-out-of-Docker | Buildah + vfs | Buildah + overlay | BuildKit | 作用 |
+|------|:---:|:---:|:---:|:---:|------|
+| 挂载 `docker.sock` | ✔️ | — | — | — | 与宿主机 Docker daemon 通信 |
+| `--cap-add SYS_ADMIN` | — | ✔️ | ✔️ | — | mount、umount、pivot_root 等管理操作 |
+| `--security-opt seccomp=unconfined` | — | ✔️ | ✔️ | 部分放宽¹ | 放行 `mount`、`clone`、`unshare` 等系统调用 |
+| `--security-opt apparmor=unconfined` | — | ✔️ | ✔️ | 部分放宽¹ | 解除 AppArmor 对 mount/namespace 的限制 |
+| `--security-opt systempaths=unconfined` | — | ✔️ | ✔️ | — | 解除 `/proc`、`/sys` 路径写保护 |
+| `--device /dev/fuse` | — | — | ✔️ | — | FUSE 用户空间文件系统（overlay 存储引擎依赖） |
+
+> ¹ BuildKit 仅需放宽 seccomp/apparmor 中与构建相关的特定规则（非全局 `unconfined`），精确配置仍在穿刺中。
+
+#### 5.5.3 安全风险概要
+
+> 详细分析见 `codeagent/knowledge-base/notes/containerized-build-security-analysis.md`
+
+| 方案 | 核心攻击面 | 关键逃逸路径 | 逃逸难度 |
+|------|-----------|-------------|:---:|
+| **Docker-out-of-Docker** | `docker.sock` 等效宿主机 root | `docker run --privileged -v /:/host` | 极低（一条命令） |
+| **Buildah + vfs** | `SYS_ADMIN` + seccomp/apparmor 关闭 | cgroup release_agent（需 cgroup v1）、mount 宿主机磁盘设备 | 中等 |
+| **Buildah + overlay** | vfs 全部攻击面 + `/dev/fuse` | 上述全部 + FUSE 文件系统劫持、overlay 镜像层投毒 | 中低（最多路径） |
+| **BuildKit** | seccomp/apparmor 部分放宽（无 SYS_ADMIN） | 待穿刺确认（预期攻击面显著小于 Buildah） | 待评估（预期高） |
+
+**缓解措施**（构建容器独立部署时）：
+
+| 措施 | Docker 方案 | Buildah 方案 | BuildKit 方案 |
+|------|-----------|-------------|-------------|
+| 对外接口保护 | Unix socket / HTTPS + 非对称加密访问控制 | 同左 | 同左 |
+| 输入校验 | 严格校验构建参数，禁止运行前端上传的 npm 包或二进制 | 同左 | 同左 |
+| 构建隔离 | Docker socket 代理 | 自定义 seccomp profile（移除 kexec、bpf 等） | 自定义 seccomp profile（精确放行） |
+| 长期方向 | rootless Docker | rootless Buildah（无需 SYS_ADMIN） | BuildKit 原生无需 SYS_ADMIN |
+| 接口签名 | `build(task_id, agent_id, version, tgz_path, output_dir)` | 同左 | 同左 |
+
+#### 5.5.4 部署模式
 
 `build.py` 支持两种部署方式：
 
@@ -832,9 +853,123 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 
 ---
 
-## 8. DFX 设计
+## 8. 安装部署
 
-### 8.1 可靠性
+### 8.1 目录结构
+
+系统运行时目录统一存放在服务用户 `$HOME/.jiuwen/` 下：
+
+```
+$HOME/.jiuwen/
+├── data/              ← 安装阶段释放（基础镜像等静态资源）
+├── uploads/            ← 管理员上传的 .tgz 包暂存
+├── agents/             ← 校验通过的 Agent 包
+├── run/                ← 镜像处理模块构建工作目录
+└── images/             ← 构建完成的镜像产物
+```
+
+| 目录 | 用途 | 写入时机 | 清理策略 |
+|------|------|---------|---------|
+| `data/` | 基础镜像等静态资源 | `pip install` 时从 whl 包释放 | 随 whl 包升级覆盖 |
+| `uploads/` | 管理员上传的 Agent 包暂存 | 上传请求到达时 | 校验通过后移走；校验失败即时删除 |
+| `agents/` | 校验通过的 Agent 包永久存储 | 上传校验通过后从 `uploads/` 移入 | 仅在下架时删除 |
+| `run/` | 构建任务临时工作区 | 每次构建任务启动时创建 `run/{task_id}/` | 构建完成后（无论成功/失败）清理 |
+| `images/` | 构建完成的镜像产物 | 构建成功后写入 | 仅在下架对应版本时删除 |
+
+### 8.2 安装流程
+
+#### 8.2.1 whl 包构建阶段
+
+基础镜像在系统构建阶段生成，随管理面后台服务的 whl 安装包分发：
+
+```
+构建流程：
+  1. 构建基础镜像 → agent-base:1.0.tar.gz
+  2. 将基础镜像放入 whl 源码树的 data/ 目录
+  3. 打包 whl → data/ 目录内容随包分发
+
+whl 包结构：
+  control_panel/
+  ├── ...
+  └── data/
+      └── agent-base:1.0.tar.gz    ← 基础镜像
+```
+
+#### 8.2.2 pip install 阶段
+
+```bash
+pip install control_panel-1.0.0-py3-none-any.whl
+```
+
+安装过程中，whl 包的 `data/` 目录内容释放到 `$HOME/.jiuwen/data/`：
+
+| 源（whl 包内） | 目标（安装后） |
+|---------------|---------------|
+| `data/agent-base:1.0.tar.gz` | `$HOME/.jiuwen/data/agent-base:1.0.tar.gz` |
+
+首次安装时自动创建 `$HOME/.jiuwen/` 目录树；升级安装时仅覆盖 `data/` 目录，不影响 `agents/`、`images/` 中已有数据。
+
+### 8.3 上传流程
+
+管理员通过管理界面上传 Agent 离线包（`.tgz`），系统处理流程：
+
+```
+1. 接收上传
+   管理界面 → POST /api/v1/agents/upload
+   → 暂存到 $HOME/.jiuwen/uploads/{filename}
+
+2. 校验
+   - 文件名解析（提取 agent_id / version / platform）
+   - 文件大小（≤ 500 MB）
+   - 文件格式（.tgz）
+   - 版本幂等（同一 agent_id + version 不重复）
+
+3. 校验结果
+   ├── 通过 → 移动到 $HOME/.jiuwen/agents/{agent_id}-{version}.tgz
+   │         → 写入 Agent 记录（status: uploaded）
+   └── 失败 → 删除 $HOME/.jiuwen/uploads/{filename}
+             → 返回 400 错误码
+```
+
+### 8.4 构建流程
+
+镜像处理模块的运行时行为：
+
+```
+1. 准备阶段
+   工作目录:  $HOME/.jiuwen/run/{task_id}/
+   基础镜像:  $HOME/.jiuwen/data/agent-base:1.0.tar.gz
+   Agent 包:  $HOME/.jiuwen/agents/{agent_id}-{version}.tgz
+
+2. 构建阶段
+   - 加载基础镜像（docker load / buildah pull）
+   - 解压 Agent 包 → 生成 Dockerfile → 执行构建
+   - 日志输出到日志服务
+
+3. 导出阶段
+   - 产物: $HOME/.jiuwen/images/{agent_id}-{version}.tar.gz
+   - 注册: 回调注册中心 API
+
+4. 清理阶段
+   - 删除 $HOME/.jiuwen/run/{task_id}/
+```
+
+### 8.5 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `JIUWEN_HOME` | `$HOME/.jiuwen` | 数据根目录，可通过此变量自定义路径 |
+| `JIUWEN_DATA` | `$JIUWEN_HOME/data` | 静态资源目录 |
+| `JIUWEN_UPLOADS` | `$JIUWEN_HOME/uploads` | 上传暂存目录 |
+| `JIUWEN_AGENTS` | `$JIUWEN_HOME/agents` | Agent 包存储目录 |
+| `JIUWEN_RUN` | `$JIUWEN_HOME/run` | 构建工作目录 |
+| `JIUWEN_IMAGES` | `$JIUWEN_HOME/images` | 镜像产物目录 |
+
+---
+
+## 9. DFX 设计
+
+### 9.1 可靠性
 
 | 场景 | 策略 |
 |------|------|
@@ -846,7 +981,7 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 | 并发构建 | 不同 Agent 构建并行执行，同一 Agent 同一版本串行（幂等锁） |
 | 进程崩溃恢复 | 启动时扫描 `building` 状态任务，重新调度或标记 `failed` |
 
-### 8.2 安全性
+### 9.2 安全性
 
 | 层面 | 措施 |
 |------|------|
@@ -854,11 +989,11 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 | **认证** | 管理界面→管理面后台服务：IAM JWT；内部服务间：service token |
 | **授权** | 管理界面仅 `role: agent_admin` 可操作；普通用户只读 |
 | **上传校验** | 文件名解析校验；文件大小限制；文件魔数校验（tgz/tar.gz） |
-| **构建隔离** | 每次构建在独立工作区执行，构建完成后清理临时文件 |
+| **构建隔离** | 每次构建在独立工作区执行，构建完成后清理临时文件；容器化构建安全分析见第 5.5.3 节及 `containerized-build-security-analysis.md` |
 | **镜像安全** | 基础镜像经安全扫描后方可发布；构建产物可选签名（cosign） |
 | **敏感信息** | API Key 等凭证不写入包内，不写入镜像，由沙箱运行时注入 |
 
-### 8.3 可扩展性
+### 9.3 可扩展性
 
 | 维度 | 设计 |
 |------|------|
@@ -866,7 +1001,7 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 | 安装模式 | `install_mode` 支持 `npm_offline`、`binary_copy`，后续可扩展 `apt_offline` 等 |
 | 注册中心 | 注册中心客户端抽象为接口，可适配不同镜像仓库（Harbor / Docker Registry / OCI Distribution） |
 
-### 8.4 可维护性
+### 9.4 可维护性
 
 | 措施 | 说明 |
 |------|------|
@@ -875,7 +1010,7 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 | 配置化管理 | 基础镜像地址、包大小上限、重试策略等敏感配置集中管理，支持热更新 |
 | 健康检查 | Agent 上架子模块暴露 `/health` 端点 + `/ready` 就绪探针 |
 
-### 8.5 可观测性
+### 9.5 可观测性
 
 | 指标 | 方式 |
 |------|------|
@@ -884,7 +1019,7 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 | 监控指标 | Prometheus 指标：`agent_build_total`、`agent_build_duration_seconds`、`agent_build_errors_total` |
 | 告警 | 构建失败率 > 10% 告警；单次构建超 10 分钟告警；存储使用率 > 80% 告警 |
 
-### 8.6 兼容性
+### 9.6 兼容性
 
 | 维度 | 策略 |
 |------|------|
@@ -894,9 +1029,9 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 
 ---
 
-## 9. 验收标准
+## 10. 验收标准
 
-### 9.1 上传校验
+### 10.1 上传校验
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
@@ -907,7 +1042,7 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 | TC-05 | 重复上传相同 agent_id + version | 400，code=40004，"版本已存在" |
 | TC-06 | 上传非 tar.gz 格式文件 | 400，code=40005，"文件格式非法" |
 
-### 9.2 构建
+### 10.2 构建
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
@@ -918,14 +1053,14 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 | TC-11 | 基础镜像不存在 | status=failed，error_code="BUILD_BASE_IMAGE_NOT_FOUND" |
 | TC-12 | 构建过程中取消 | status=cancelled |
 
-### 9.3 注册
+### 10.3 注册
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
 | TC-13 | 构建完成后注册中心可查询到新镜像 | GET /registry/v1/agents/claude-code 返回包含 2.1.89 |
 | TC-14 | 注册中心不可达时任务失败 | status=failed，error_code="REGISTRY_REFRESH_FAILED" |
 
-### 9.4 运行验证（端到端）
+### 10.4 运行验证（端到端）
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
@@ -934,7 +1069,7 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 | TC-17 | Agent 启动并完成一轮完整对话 | Claude Code → 发起对话 → 流式回复 → 正常退出 |
 | TC-18 | MCP Server 被 Agent 正确加载 | Agent 启动日志中看到 MCP Server 连接成功 |
 
-### 9.5 DFX
+### 10.5 DFX
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
@@ -946,7 +1081,7 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 
 ---
 
-## 10. 附录
+## 11. 附录
 
 ### A. 基础镜像 Dockerfile 参考
 
