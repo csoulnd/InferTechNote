@@ -448,7 +448,7 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 | 系统路径无限制 | — | ✔️ | ✔️ | — | 允许访问所有虚拟文件系统（构建时需访问 /proc 等） | 容器内进程可访问 /proc、/sys，降低逃逸难度 |
 | FUSE 设备 | — | — | ✔️ | — | 支持 fuse-overlayfs，提高构建速度、减少磁盘占用 | 风险较低，需配合 SYS_ADMIN、AppArmor、Seccomp 等特权才能实现逃逸 |
 
-> ¹ BuildKit 仅需放宽 apparmor/seccomp/landlock 中与构建相关的特定规则（非全局 `unconfined`），精确配置仍在穿刺中。宿主机需配置 `kernel.apparmor_restrict_unprivileged_userns=0`。BuildKit 不使用 SYS_ADMIN，安全评级显著优于其他方案。
+> ¹ BuildKit 仅需放宽 apparmor/seccomp/系统路径限制 中与构建相关的特定规则（非全局 `unconfined`），精确配置仍在穿刺中。宿主机需配置 `kernel.apparmor_restrict_unprivileged_userns=0`。BuildKit 不使用 SYS_ADMIN，安全评级显著优于其他方案。
 
 #### 5.5.3 安全风险概要
 

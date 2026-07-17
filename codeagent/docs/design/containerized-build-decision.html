@@ -113,7 +113,7 @@
       <td><span class="tag-green">风险较低，需配合其他特权</span></td>
     </tr>
   </table>
-  <div class="note">BuildKit 不使用 SYS_ADMIN、不放开 systempaths，仅需 apparmor/seccomp/landlock 部分放宽（非全局 unconfined）。需配置 kernel.apparmor_restrict_unprivileged_userns=0</div>
+  <div class="note">BuildKit 不使用 SYS_ADMIN、不放开 systempaths，仅需 apparmor/seccomp/系统路径限制 部分放宽（非全局 unconfined）。需配置 kernel.apparmor_restrict_unprivileged_userns=0</div>
 </section>
 
 <!-- Slide 6: 逃逸难度汇总 -->
