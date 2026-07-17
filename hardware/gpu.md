@@ -1,5 +1,5 @@
 # Why GPU so Fast？
-希望通过这篇文章了解一下GPU的发展和和相关的硬件知识
+希望通过这篇文章了解一下GPU的发展和和相关的硬件知识，帮助学习NPU的相关知识
 
 ## GPU的诞生
 
@@ -80,6 +80,89 @@ flowchart LR
 
 ### CUDA编程简要示例
 
+以CPU上的SAXPY为例，对比下两段代码
+CPU:
+'''
+// SAXPY函数实现
+void saxpy(int n, float a, float *x, float *y) {
+    for (int i = 0; i < n; i++) {
+        y[i] = a * x[i] + y[i];
+    }
+}
+
+int main() {
+    float a = 2.0;
+    int n; // 向量长度
+    float *x; // 向量x
+    float *y; // 向量y
+    // 此处省略内存分配、元素赋值、长度指定
+    // ...
+    // 调用SAXPY函数
+    saxpy(n, a, x, y);
+
+    return 0;
+}
+'''
+GPU:
+'''
+__global__ void saxpy(int n, float a, float *x, float *y) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        y[i] = a * x[i] + y[i];
+    }
+}
+
+int main() {
+    float a = 2.0;
+    int n; // 向量长度
+    float *hx; // host向量x
+    float *hy; // host向量y
+    // 此处省略内存分配、元素赋值、长度指定
+       
+    // GPU内存分配
+    int vector_size = n * sizeof(float); // 向量数据大小
+    float *dx; // device向量x
+    float *dy; // device向量y
+    cudaMalloc(&dx, vector_size);
+    cudaMalloc(&dy, vector_size);
+    
+    // 将host向量内容拷贝到device向量
+    cudaMemcpy(dx, hx, vector_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(dy, hy, vector_size, cudaMemcpyHostToDevice);
+    
+    // 执行saxpy
+    int t = 256; // 每个thread block的线程数
+    int blocks_num = (n + t - 1) / t; // thread block数量
+    saxpy<<<blocks_num, t>>>(n, a, dx, dy);
+    
+    // 将device向量y内容（计算结果）拷贝到host向量y
+    cudaMemcpy(hy, dy, vector_size, cudaMemcpyDeviceToHost);
+    
+    // ... (剩余逻辑)
+    
+    return 0;
+}
+'''
+#### Host? Device!
+GPU编程的思维是将GPU当作CPU的协同外设使用，通常GPU自身无法独立运行，需要CPU指定任务，分配数据，驱动运行。__gloable__代表内核函数，交给GPU来执行。
+cudaMalloc、cudaMemcpy，是CPU操作GPU内存的操作,CPU分配GPU的内存用于GPU的数据搬运和计算，因此我们常说的Host,Device就由来于此。文中提到的统一内存（unified memory）代指CPU和GPU共享同一段地址空间的内存架构，理论上可以实现数据交换自动化，没有host to device但是事实上呢？
+
+#### 线程组织
+在CUDA编程中，线程以thread，thread block，grid的层级结构进行组织
+● 线程（thread，绿色部分）：最基本的执行单元。线程包含独立寄存器状态和独立程序计数器。
+
+● 线程块（thread block，黄色部分）：由多个线程组成的集合，支持一维、二维或三维结构。线程块内的线程可以通过共享内存进行通信，线程块之间无法通过共享内存通信，但可通过全局内存进行数据交互。
+
+● Warp（蓝色线框）：硬件底层概念，GPU实际运行时将32个线程组成一个warp，同一warp内的线程同步执行相同的指令。
+
+● 线程块与warp的关系：warp是底层概念，NVIDIA的warp固定包含32个线程，warp是线程硬件调度的最小粒度。线程块是软件概念，线程块有多少个线程组成由代码指定。在运行时，硬件会将线程块中的线程32个为一组打包成多个warp进行调度，因此，线程块里的线程数最好为32的整数倍，以避免为拼凑完整warp而自动分配无效线程造成资源浪费。
+
+● 网格（grid，总体）：网格是所有线程块的集合，支持一维、二维或三维结构，覆盖整个计算任务的运行范围。
+AMD叫法：NDRange；Work Group；Wavefront；Work Item
+线程块计算：线程块包含的线程数可以指定，线程块的数量由计算规模确定，
+'''
+int blocks_num = (n + t - 1) / t; // thread block数量,向上取整写法
+'''
 ## 参考文档
 
 1. [知乎专栏](https://zhuanlan.zhihu.com/p/678001378)
