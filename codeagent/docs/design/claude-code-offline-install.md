@@ -431,24 +431,24 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 |------|---------------------|---------------|-------------------|----------|
 | **守护进程** | 需要 dockerd | 无（daemonless） | 无（daemonless） | 无（daemonless） |
 | **容器用户** | docker 组成员 | 普通用户 | 普通用户 | 普通用户 |
+| **外部依赖** | 宿主机：docker | 宿主机：docker；容器：buildah | 宿主机：docker、内核 ≥ 5.4；容器：buildah | 宿主机：`kernel.apparmor_restrict_unprivileged_userns=0`；容器：fuse3、shadow-utils、配置 subuid/subgid |
 | **构建耗时** | 较快 | 较慢 | 中等 | 穿刺中 |
 | **构建容器新增体积** | 较少 | 较多 | 中等 | 穿刺中 |
 | **存储引擎** | overlay2（宿主机 Docker） | vfs（无共享层，每次全量复制） | overlay（共享层 + fuse-overlayfs） | 待确认 |
-| **内核要求** | — | — | 宿主机内核 ≥ 5.4 | 待确认 |
 | **安全评级** | 🔴 高风险 | 🟠 中高风险 | 🔴 高风险 | 🟢 低风险 |
 
 #### 5.5.2 特权对比矩阵
 
-| 特权 | Docker-out-of-Docker | Buildah + vfs | Buildah + overlay | BuildKit | 作用 |
-|------|:---:|:---:|:---:|:---:|------|
-| Docker socket 挂载 | ✔️ | — | — | — | 与宿主机 Docker daemon 通信 |
-| SYS_ADMIN 能力项 | — | ✔️ | ✔️ | — | mount、umount、pivot_root 等管理操作 |
-| Seccomp 无限制 | — | ✔️ | ✔️ | 部分放宽¹ | 放行 `mount`、`clone`、`unshare` 等系统调用 |
-| AppArmor 无限制 | — | ✔️ | ✔️ | 部分放宽¹ | 解除 AppArmor 对 mount/namespace 的限制 |
-| 系统路径无限制 | — | ✔️ | ✔️ | — | 解除 `/proc`、`/sys` 路径写保护 |
-| FUSE 设备 (`/dev/fuse`) | — | — | ✔️ | — | FUSE 用户空间文件系统（overlay 存储引擎依赖） |
+| 特权 | Docker | Buildah vfs | Buildah overlay | BuildKit | 作用 | 风险 |
+|------|:---:|:---:|:---:|:---:|------|------|
+| Docker socket 挂载 | ✔️ | — | — | — | 控制宿主机 Docker daemon | 攻击者可创建特权容器实现逃逸 |
+| SYS_ADMIN 能力项 | — | ✔️ | ✔️ | — | 挂载文件系统、创建隔离命名空间 | 允许执行高危系统调用（mount、加载内核模块等） |
+| Seccomp 无限制 | — | ✔️ | ✔️ | 部分放宽¹ | 放行 mount、unshare 等系统调用 | 高风险系统调用可执行，降低逃逸难度 |
+| AppArmor 无限制 | — | ✔️ | ✔️ | 部分放宽¹ | 支持容器内挂载 overlayfs | 容器内进程可访问 /proc、/sys 等特殊文件 |
+| 系统路径无限制 | — | ✔️ | ✔️ | — | 允许访问所有虚拟文件系统（构建时需访问 /proc 等） | 容器内进程可访问 /proc、/sys，降低逃逸难度 |
+| FUSE 设备 | — | — | ✔️ | — | 支持 fuse-overlayfs，提高构建速度、减少磁盘占用 | 风险较低，需配合 SYS_ADMIN、AppArmor、Seccomp 等特权才能实现逃逸 |
 
-> ¹ BuildKit 仅需放宽 seccomp/apparmor 中与构建相关的特定规则（非全局 `unconfined`），精确配置仍在穿刺中。
+> ¹ BuildKit 仅需放宽 apparmor/seccomp/landlock 中与构建相关的特定规则（非全局 `unconfined`），精确配置仍在穿刺中。宿主机需配置 `kernel.apparmor_restrict_unprivileged_userns=0`。BuildKit 不使用 SYS_ADMIN，安全评级显著优于其他方案。
 
 #### 5.5.3 安全风险概要
 
@@ -465,7 +465,7 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 
 | 措施 | Docker 方案 | Buildah 方案 | BuildKit 方案 |
 |------|-----------|-------------|-------------|
-| 对外接口保护 | Unix socket / HTTPS + 非对称加密访问控制 | 同左 | 同左 |
+| 对外接口保护 | Unix socket / HTTPS + 非对称加密密钥或配置文件权限访问控制 | 同左 | 同左 |
 | 输入校验 | 严格校验构建参数，禁止运行前端上传的 npm 包或二进制 | 同左 | 同左 |
 | 构建隔离 | Docker socket 代理 | 自定义 seccomp profile（移除 kexec、bpf 等） | 自定义 seccomp profile（精确放行） |
 | 长期方向 | rootless Docker | rootless Buildah（无需 SYS_ADMIN） | BuildKit 原生无需 SYS_ADMIN |
