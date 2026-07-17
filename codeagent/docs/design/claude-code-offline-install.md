@@ -431,8 +431,8 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 |------|---------------------|---------------|-------------------|----------|
 | **守护进程** | 需要 dockerd | 无（daemonless） | 无（daemonless） | 无（daemonless） |
 | **容器用户** | docker 组成员 | 普通用户 | 普通用户 | 普通用户 |
-| **构建耗时** | 11.07s | 22.3s | 18.3s | 穿刺中 |
-| **镜像体积** | 45.1 kB (virtual 459 MB) | 573 MB (virtual 1.03 GB) | 192 MB (virtual 650 MB) | 穿刺中 |
+| **构建耗时** | 较快 | 较慢 | 中等 | 穿刺中 |
+| **构建容器新增体积** | 较少 | 较多 | 中等 | 穿刺中 |
 | **存储引擎** | overlay2（宿主机 Docker） | vfs（无共享层，每次全量复制） | overlay（共享层 + fuse-overlayfs） | 待确认 |
 | **内核要求** | — | — | 宿主机内核 ≥ 5.4 | 待确认 |
 | **安全评级** | 🔴 高风险 | 🟠 中高风险 | 🔴 高风险 | 🟢 低风险 |
@@ -441,12 +441,12 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 
 | 特权 | Docker-out-of-Docker | Buildah + vfs | Buildah + overlay | BuildKit | 作用 |
 |------|:---:|:---:|:---:|:---:|------|
-| 挂载 `docker.sock` | ✔️ | — | — | — | 与宿主机 Docker daemon 通信 |
-| `--cap-add SYS_ADMIN` | — | ✔️ | ✔️ | — | mount、umount、pivot_root 等管理操作 |
-| `--security-opt seccomp=unconfined` | — | ✔️ | ✔️ | 部分放宽¹ | 放行 `mount`、`clone`、`unshare` 等系统调用 |
-| `--security-opt apparmor=unconfined` | — | ✔️ | ✔️ | 部分放宽¹ | 解除 AppArmor 对 mount/namespace 的限制 |
-| `--security-opt systempaths=unconfined` | — | ✔️ | ✔️ | — | 解除 `/proc`、`/sys` 路径写保护 |
-| `--device /dev/fuse` | — | — | ✔️ | — | FUSE 用户空间文件系统（overlay 存储引擎依赖） |
+| Docker socket 挂载 | ✔️ | — | — | — | 与宿主机 Docker daemon 通信 |
+| SYS_ADMIN 能力项 | — | ✔️ | ✔️ | — | mount、umount、pivot_root 等管理操作 |
+| Seccomp 无限制 | — | ✔️ | ✔️ | 部分放宽¹ | 放行 `mount`、`clone`、`unshare` 等系统调用 |
+| AppArmor 无限制 | — | ✔️ | ✔️ | 部分放宽¹ | 解除 AppArmor 对 mount/namespace 的限制 |
+| 系统路径无限制 | — | ✔️ | ✔️ | — | 解除 `/proc`、`/sys` 路径写保护 |
+| FUSE 设备 (`/dev/fuse`) | — | — | ✔️ | — | FUSE 用户空间文件系统（overlay 存储引擎依赖） |
 
 > ¹ BuildKit 仅需放宽 seccomp/apparmor 中与构建相关的特定规则（非全局 `unconfined`），精确配置仍在穿刺中。
 
@@ -473,44 +473,14 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 
 #### 5.5.4 部署模式
 
-`build.py` 支持两种部署方式：
+镜像处理模块支持两种部署方式：
 
 | 维度 | 合并部署（进程内） | 独立部署 |
 |------|------------------|----------|
-| 架构 | `build.py` 作为 FastAPI 进程内模块调用 | `build.py` 作为独立 CLI/守护进程运行 |
-| 资源隔离 | 构建占用 FastAPI worker 线程 | 构建资源独立分配，不影响 API 响应 |
+| 架构 | 镜像处理模块作为控制面进程内调用 | 镜像处理模块作为独立进程运行 |
+| 资源隔离 | 构建镜像与控制面共享资源 | 构建资源独立分配，不影响 API 响应 |
 | 部署复杂度 | 无需额外组件 | 需要启动独立特权容器 |
 | 故障隔离 | 构建崩溃可能影响 API 服务 | 构建崩溃不影响 API 服务 |
-
-**合并部署（进程内）**：
-
-```
-┌─────────────────────────────────┐
-│  FastAPI 进程                     │
-│  ┌──────────┐  ┌──────────────┐ │
-│  │ API 路由  │→│ build_service │ │
-│  │ (agents) │  │   .py        │ │
-│  └──────────┘  └──────┬───────┘ │
-│                       │          │
-│               ┌───────▼────────┐ │
-│               │  engine/       │ │
-│               │  build.py      │ │
-│               │  (DockerBuilder│ │
-│               │   .build())    │ │
-│               └────────────────┘ │
-└─────────────────────────────────┘
-```
-
-**独立部署（CLI/守护进程）**：
-
-```
-┌──────────────┐   HTTP                   ┌──────────────────┐
-│ FastAPI 进程   │◄──────────────────────►│ build.py daemon   │
-│ build_service │                        │ (独立进程/容器)     │
-│ .py          │                         │ DockerBuilder     │
-│              │                        │ .build()          │
-└──────────────┘                        └──────────────────┘
-```
 
 ---
 
@@ -857,57 +827,60 @@ async def build(task_id, agent_id, version, tgz_path, output_dir, cmd=None, on_p
 
 ### 8.1 目录结构
 
-系统运行时目录统一存放在服务用户 `$HOME/.jiuwen/` 下：
+系统目录分为**共享空间**和**用户空间**两部分：
 
 ```
-$HOME/.jiuwen/
-├── data/              ← 安装阶段释放（基础镜像等静态资源）
-├── uploads/            ← 管理员上传的 .tgz 包暂存
-├── agents/             ← 校验通过的 Agent 包
-├── run/                ← 镜像处理模块构建工作目录
-└── images/             ← 构建完成的镜像产物
+共享空间:
+  $AGENTOS_COMMON/                          ← 默认 /home/agentos/common
+  └── agent-base-1.0.tar.gz                 ← 基础镜像
+
+用户空间（每个管理员独立）:
+  $AGENTOS_HOME_BASE/$username/             ← 默认 /home/agentos/users/{username}
+  ├── uploads/                               ← Agent 包上传暂存
+  ├── agents/                                ← 校验通过的 Agent 包
+  ├── run/                                   ← 镜像构建工作目录
+  └── images/                                ← 构建完成的镜像产物
 ```
 
 | 目录 | 用途 | 写入时机 | 清理策略 |
 |------|------|---------|---------|
-| `data/` | 基础镜像等静态资源 | `pip install` 时从 whl 包释放 | 随 whl 包升级覆盖 |
-| `uploads/` | 管理员上传的 Agent 包暂存 | 上传请求到达时 | 校验通过后移走；校验失败即时删除 |
-| `agents/` | 校验通过的 Agent 包永久存储 | 上传校验通过后从 `uploads/` 移入 | 仅在下架时删除 |
-| `run/` | 构建任务临时工作区 | 每次构建任务启动时创建 `run/{task_id}/` | 构建完成后（无论成功/失败）清理 |
-| `images/` | 构建完成的镜像产物 | 构建成功后写入 | 仅在下架对应版本时删除 |
+| `$AGENTOS_COMMON/` | 基础镜像等共享静态资源 | 系统部署时 | 系统升级时覆盖 |
+| `$AGENTOS_HOME_BASE/$username/uploads/` | 管理员上传的 Agent 包暂存 | 上传请求到达时 | 校验通过后移走；校验失败即时删除 |
+| `$AGENTOS_HOME_BASE/$username/agents/` | 校验通过的 Agent 包永久存储 | 上传校验通过后从 `uploads/` 移入 | 仅在下架时删除 |
+| `$AGENTOS_HOME_BASE/$username/run/` | 构建任务临时工作区 | 每次构建任务启动时创建 `run/{task_id}/` | 构建完成后（无论成功/失败）清理 |
+| `$AGENTOS_HOME_BASE/$username/images/` | 构建完成的镜像产物 | 构建成功后写入 | 仅在下架对应版本时删除 |
 
 ### 8.2 安装流程
 
-#### 8.2.1 whl 包构建阶段
+#### 8.2.1 基础镜像分发
 
-基础镜像在系统构建阶段生成，随管理面后台服务的 whl 安装包分发：
+基础镜像随源码树的 `deploy/` 目录分发，不再打入 whl 包的 `data/` 目录：
 
 ```
-构建流程：
-  1. 构建基础镜像 → agent-base:1.0.tar.gz
-  2. 将基础镜像放入 whl 源码树的 data/ 目录
-  3. 打包 whl → data/ 目录内容随包分发
-
-whl 包结构：
-  control_panel/
-  ├── ...
-  └── data/
-      └── agent-base:1.0.tar.gz    ← 基础镜像
+源码树结构：
+  deploy/
+  └── agent-base-1.0.tar.gz    ← 基础镜像
 ```
 
-#### 8.2.2 pip install 阶段
+系统部署时，将基础镜像拷贝到共享空间：
 
-```bash
-pip install control_panel-1.0.0-py3-none-any.whl
+| 源 | 目标 |
+|---|------|
+| `deploy/agent-base-1.0.tar.gz` | `$AGENTOS_COMMON/agent-base-1.0.tar.gz` |
+
+首次部署时自动创建 `$AGENTOS_COMMON/` 和 `$AGENTOS_HOME_BASE/` 目录树；升级部署时仅覆盖共享空间中的基础镜像，不影响用户空间已有数据。
+
+#### 8.2.2 用户空间初始化
+
+管理员首次上传 Agent 包时，系统自动创建其用户空间目录：
+
 ```
-
-安装过程中，whl 包的 `data/` 目录内容释放到 `$HOME/.jiuwen/data/`：
-
-| 源（whl 包内） | 目标（安装后） |
-|---------------|---------------|
-| `data/agent-base:1.0.tar.gz` | `$HOME/.jiuwen/data/agent-base:1.0.tar.gz` |
-
-首次安装时自动创建 `$HOME/.jiuwen/` 目录树；升级安装时仅覆盖 `data/` 目录，不影响 `agents/`、`images/` 中已有数据。
+$AGENTOS_HOME_BASE/$username/
+├── uploads/
+├── agents/
+├── run/
+└── images/
+```
 
 ### 8.3 上传流程
 
@@ -916,7 +889,7 @@ pip install control_panel-1.0.0-py3-none-any.whl
 ```
 1. 接收上传
    管理界面 → POST /api/v1/agents/upload
-   → 暂存到 $HOME/.jiuwen/uploads/{filename}
+   → 暂存到 $AGENTOS_HOME_BASE/$username/uploads/{filename}
 
 2. 校验
    - 文件名解析（提取 agent_id / version / platform）
@@ -925,9 +898,9 @@ pip install control_panel-1.0.0-py3-none-any.whl
    - 版本幂等（同一 agent_id + version 不重复）
 
 3. 校验结果
-   ├── 通过 → 移动到 $HOME/.jiuwen/agents/{agent_id}-{version}.tgz
+   ├── 通过 → 移动到 $AGENTOS_HOME_BASE/$username/agents/{agent_id}-{version}.tgz
    │         → 写入 Agent 记录（status: uploaded）
-   └── 失败 → 删除 $HOME/.jiuwen/uploads/{filename}
+   └── 失败 → 删除 $AGENTOS_HOME_BASE/$username/uploads/{filename}
              → 返回 400 错误码
 ```
 
@@ -937,9 +910,9 @@ pip install control_panel-1.0.0-py3-none-any.whl
 
 ```
 1. 准备阶段
-   工作目录:  $HOME/.jiuwen/run/{task_id}/
-   基础镜像:  $HOME/.jiuwen/data/agent-base:1.0.tar.gz
-   Agent 包:  $HOME/.jiuwen/agents/{agent_id}-{version}.tgz
+   工作目录:  $AGENTOS_HOME_BASE/$username/run/{task_id}/
+   基础镜像:  $AGENTOS_COMMON/agent-base-1.0.tar.gz
+   Agent 包:  $AGENTOS_HOME_BASE/$username/agents/{agent_id}-{version}.tgz
 
 2. 构建阶段
    - 加载基础镜像（docker load / buildah pull）
@@ -947,23 +920,19 @@ pip install control_panel-1.0.0-py3-none-any.whl
    - 日志输出到日志服务
 
 3. 导出阶段
-   - 产物: $HOME/.jiuwen/images/{agent_id}-{version}.tar.gz
+   - 产物: $AGENTOS_HOME_BASE/$username/images/{agent_id}-{version}.tar.gz
    - 注册: 回调注册中心 API
 
 4. 清理阶段
-   - 删除 $HOME/.jiuwen/run/{task_id}/
+   - 删除 $AGENTOS_HOME_BASE/$username/run/{task_id}/
 ```
 
 ### 8.5 环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `JIUWEN_HOME` | `$HOME/.jiuwen` | 数据根目录，可通过此变量自定义路径 |
-| `JIUWEN_DATA` | `$JIUWEN_HOME/data` | 静态资源目录 |
-| `JIUWEN_UPLOADS` | `$JIUWEN_HOME/uploads` | 上传暂存目录 |
-| `JIUWEN_AGENTS` | `$JIUWEN_HOME/agents` | Agent 包存储目录 |
-| `JIUWEN_RUN` | `$JIUWEN_HOME/run` | 构建工作目录 |
-| `JIUWEN_IMAGES` | `$JIUWEN_HOME/images` | 镜像产物目录 |
+| `AGENTOS_COMMON` | `/home/agentos/common` | 共享资源目录（基础镜像存放路径） |
+| `AGENTOS_HOME_BASE` | `/home/agentos/users` | 用户数据根目录（上传/构建/镜像产物均在此下按用户隔离） |
 
 ---
 
