@@ -137,7 +137,7 @@ overlay存储引擎 18.3s 192MB (virtual 650MB)
 
 风险：容器内进程能够访问/proc，/sys等特殊文件，降低容器逃逸的难度。
 
-#### 关闭landlock系统路径限制（--security-opt systempaths=unconfined）
+#### 关闭系统路径限制（--security-opt systempaths=unconfined）
 
 作用：容器内进程可以访问所有虚拟文件系统，如/proc等，这些文件在构建时需要被访问
 
