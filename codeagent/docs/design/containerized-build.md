@@ -47,24 +47,18 @@ docker load -i /tmp/test.tar.gz && docker run --rm -it test:1.0
 
 耗时 11.07（没有计入openeuler镜像的加载时间） 45.1kB (virtual 459MB)
 
-### 安全风险分析
+### 外部依赖
 
-安全风险：直接挂载docker.sock，攻击者若控制构建容器，攻击者直接通过docker创建特权容器，实现逃逸（[案例](https://www.freebuf.com/articles/system/382166.html)）。
+宿主机：docker
+容器：配置容器用户加入docker组
 
-缓解措施：构建容器独立部署，与控制面独立，严格校验对外参数。禁止直接运行前端上传npm包或者二进制。
+### 权限风险分析
 
-构建容器对外接口：
+#### docker.sock
 
-```bash
-def build(
-    task_id: str,
-    agent_id: str,
-    version: str,
-    tgz_path: Path,
-    output_dir: Path): ...
-```
+作用：用于控制宿主机docker。
 
-接口通过unix socket或https协议对外暴露，并使用非对称加密密钥进行访问控制。
+风险：攻击者若控制构建容器，攻击者直接通过docker创建特权容器，实现逃逸（[案例](https://www.freebuf.com/articles/system/382166.html)）。
 
 ## 使用buildah构建容器镜像
 
@@ -102,8 +96,6 @@ docker load -i /tmp/test.tar.gz && docker run --rm -it localhost/test:1.0
 
 ### 基于overlay存储引擎的buildah构建镜像
 
-使用overlay存储引擎，要求宿主机内核版本>=5.4。
-
 构建命令如下，与vfs存储引擎的区别是需要挂载/dev/fuse，并且需要将storage-driver参数改为overlay
 ```bash
 # 构建镜像，需要提前下载openeuler.tar.gz到当前目录
@@ -120,14 +112,73 @@ vfs存储引擎 22.3s 573MB (virtual 1.03GB)
 
 overlay存储引擎 18.3s 192MB (virtual 650MB)
 
-### 安全风险分析
+### 外部依赖
 
-安全风险：需要使用CAP_SYS_ADMIN，存在逃逸风险（[案例](https://www.cnblogs.com/CVE-Lemon/p/18674802)，依赖cgroup v1）。
+宿主机：docker，使用overlay存储引擎时，要求宿主机内核版本>=5.4。
+容器：buildah
 
-缓解措施：与docker一致。
+### 权限风险分析
+
+#### CAP_SYS_ADMIN
+
+作用：挂载文件系统和创建隔离的命名空间，[issue#4563](https://github.com/podman-container-tools/buildah/issues/4563)。
+
+风险：CAP_SYS_ADMIN权限允许容器执行部分高危系统调用，如挂载文件系统，加载内核模块等。
+
+#### 放开secomp过滤
+
+作用：使用mount，unshare等系统调用。
+
+风险：mount等高风险系统调用能够执行，降低容器逃逸的难度。
+
+#### 放开apparmor权限控制
+
+作用：支持容器内挂载overlayfs。
+
+风险：容器内进程能够访问/proc，/sys等特殊文件，降低容器逃逸的难度。
+
+#### 关闭landlock系统路径限制（--security-opt systempaths=unconfined）
+
+作用：容器内进程可以访问所有虚拟文件系统，如/proc等，这些文件在构建时需要被访问
+
+风险：容器内进程能够访问/proc，/sys等特殊文件，降低容器逃逸的难度。
+
+#### 挂载/dev/fuse设备
+
+作用：支持overlayfs，提高构建速度，减少磁盘占用。
+
+风险：用户态overlayfs文件系统，风险较低。需要配合CAP_SYS_ADMIN、apparmor、seccomp等漏洞或不安全配置实现逃逸。
 
 ## 使用buildkit构建容器镜像
 
-和buildah一样，buildkit不需要使用特殊用户，也不需要特权容器。buildkit编译镜像只需要配置apparmor和seccomp，不需要配置CAP_SYS_ADMIN。
+buildkit不需要使用特殊用户，也不需要特权容器。buildkit编译镜像只需要配置apparmor和seccomp，不需要配置CAP_SYS_ADMIN。
 
-具体构建步骤还在穿刺中。
+### 外部依赖
+
+宿主机：
+- 配置sysctl.conf，`kernel.apparmor_restrict_unprivileged_userns=0`
+容器：
+- fuse3
+- shadow-utils
+- 配置subuid/subgid
+
+### 权限风险分析
+
+buildkit的容器化构建需要apparmor，secomp和landlock三类特权。具体风险已在上文分析。
+
+# 容器化构建的风险缓解措施
+
+缓解措施：构建容器独立部署，与控制面独立，严格校验对外参数。禁止直接运行前端上传npm包或者二进制。
+
+构建容器对外接口：
+
+```bash
+def build(
+    task_id: str,
+    agent_id: str,
+    version: str,
+    tgz_path: Path,
+    output_dir: Path): ...
+```
+
+接口通过unix socket或https协议对外暴露，并使用非对称加密密钥或配置文件权限进行访问控制。

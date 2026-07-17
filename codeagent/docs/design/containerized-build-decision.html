@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>容器化构建方案：权限与部署方式决策</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.0/dist/theme/white.css">
+<style>
+  :root { --r-heading-text-transform: none; }
+  .reveal { font-size: 28px; }
+  .reveal h2 { font-size: 1.4em; }
+  .reveal table { font-size: 0.55em; margin: 0 auto; border-collapse: collapse; }
+  .reveal th { background: #1a365d; color: #fff; padding: 6px 10px; white-space: nowrap; }
+  .reveal td { padding: 5px 10px; border: 1px solid #cbd5e0; vertical-align: middle; }
+  .reveal tr:nth-child(even) { background: #f7fafc; }
+  .cover h1 { font-size: 1.8em; margin-bottom: 0.3em; }
+  .cover p { color: #4a5568; font-size: 0.8em; }
+  .tag-red { background: #fed7d7; color: #c53030; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+  .tag-orange { background: #feebc8; color: #c05621; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+  .tag-green { background: #c6f6d5; color: #276749; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+  .tag-blue { background: #bee3f8; color: #2a4365; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+  .check { color: #38a169; font-weight: bold; }
+  .cross { color: #a0aec0; }
+  .note { font-size: 0.55em; color: #718096; margin-top: 0.5em; text-align: left; }
+  .section-title h2 { font-size: 1.8em; }
+  .section-title p { color: #4a5568; font-size: 0.8em; }
+  .two-col { display: flex; gap: 24px; justify-content: center; align-items: flex-start; }
+  .two-col > div { flex: 1; }
+  .highlight { background: #fefcbf; padding: 2px 4px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: 封面 -->
+<section class="cover">
+  <h1>容器化构建方案</h1>
+  <h3 style="color:#4a5568;">权限与部署方式决策</h3>
+  <p style="margin-top:1.5em;">Agent OS · 三方 Agent 上架基础设施</p>
+</section>
+
+<!-- Slide 2: 背景 -->
+<section>
+  <h2>背景</h2>
+  <table>
+    <tr><th style="width:30%;">场景</th><td>管理员上传三方 Agent 离线包（Claude Code、OpenCode 等），系统在容器内自动构建 OCI 镜像</td></tr>
+    <tr><th>核心挑战</th><td>镜像构建需要特殊权限（mount 文件系统、操作 Docker daemon 等），如何在<span class="highlight">安全</span>与<span class="highlight">可用</span>之间权衡？</td></tr>
+    <tr><th>决策维度</th><td>① <strong>权限方案</strong> — 四种构建方案各需不同特权<br>② <strong>部署方式</strong> — 进程内合并部署 vs 独立特权容器</td></tr>
+  </table>
+</section>
+
+<!-- Slide 3: 方案总览 -->
+<section>
+  <h2>四种构建方案总览</h2>
+  <table>
+    <tr><th>维度</th><th>Docker</th><th>Buildah + vfs</th><th>Buildah + overlay</th><th>BuildKit</th></tr>
+    <tr><td><strong>守护进程</strong></td><td>需要 dockerd</td><td>无</td><td>无</td><td>无</td></tr>
+    <tr><td><strong>容器用户</strong></td><td>docker 组成员</td><td>普通用户</td><td>普通用户</td><td>普通用户</td></tr>
+    <tr><td><strong>外部依赖</strong></td><td>宿主机：docker</td><td>宿主机：docker<br>容器：buildah</td><td>宿主机：docker<br>内核 ≥ 5.4<br>容器：buildah</td><td>内核 sysctl 配置<br>容器：fuse3<br>shadow-utils<br>subuid/subgid</td></tr>
+    <tr><td><strong>构建耗时</strong></td><td>较快</td><td>较慢</td><td>中等</td><td>穿刺中</td></tr>
+    <tr><td><strong>新增体积</strong></td><td>较少</td><td>较多</td><td>中等</td><td>穿刺中</td></tr>
+    <tr><td><strong>安全评级</strong></td><td><span class="tag-red">高风险</span></td><td><span class="tag-orange">中高风险</span></td><td><span class="tag-red">高风险</span></td><td><span class="tag-green">低风险</span></td></tr>
+  </table>
+</section>
+
+<!-- Slide 4: 决策点一·标题 -->
+<section class="section-title">
+  <h2>决策点一：权限方案</h2>
+  <p>四种方案需要的特权及对应的安全风险</p>
+</section>
+
+<!-- Slide 5: 权限对比矩阵 -->
+<section>
+  <h2>特权对比矩阵</h2>
+  <table>
+    <tr><th>特权</th><th>Docker</th><th>Buildah<br>vfs</th><th>Buildah<br>overlay</th><th>BuildKit</th><th>作用</th><th>风险</th></tr>
+    <tr>
+      <td><strong>Docker socket</strong></td>
+      <td class="check">✔</td><td class="cross">—</td><td class="cross">—</td><td class="cross">—</td>
+      <td>控制宿主机 Docker daemon</td>
+      <td><span class="tag-red">攻击者可创建特权容器实现逃逸</span></td>
+    </tr>
+    <tr>
+      <td><strong>SYS_ADMIN</strong></td>
+      <td class="cross">—</td><td class="check">✔</td><td class="check">✔</td><td class="cross">—</td>
+      <td>挂载文件系统、创建隔离命名空间</td>
+      <td><span class="tag-red">高危系统调用（mount、加载内核模块等）</span></td>
+    </tr>
+    <tr>
+      <td><strong>Seccomp 无限制</strong></td>
+      <td class="cross">—</td><td class="check">✔</td><td class="check">✔</td><td>部分放宽</td>
+      <td>放行 mount、unshare 等系统调用</td>
+      <td><span class="tag-orange">高风险调用可执行，降低逃逸难度</span></td>
+    </tr>
+    <tr>
+      <td><strong>AppArmor 无限制</strong></td>
+      <td class="cross">—</td><td class="check">✔</td><td class="check">✔</td><td>部分放宽</td>
+      <td>支持容器内挂载 overlayfs</td>
+      <td><span class="tag-orange">可访问 /proc、/sys 等特殊文件</span></td>
+    </tr>
+    <tr>
+      <td><strong>系统路径无限制</strong></td>
+      <td class="cross">—</td><td class="check">✔</td><td class="check">✔</td><td class="cross">—</td>
+      <td>允许访问所有虚拟文件系统</td>
+      <td><span class="tag-orange">可访问 /proc、/sys，降低逃逸难度</span></td>
+    </tr>
+    <tr>
+      <td><strong>FUSE 设备</strong></td>
+      <td class="cross">—</td><td class="cross">—</td><td class="check">✔</td><td class="cross">—</td>
+      <td>支持 fuse-overlayfs，提高构建速度</td>
+      <td><span class="tag-green">风险较低，需配合其他特权</span></td>
+    </tr>
+  </table>
+  <div class="note">BuildKit 不使用 SYS_ADMIN、不放开 systempaths，仅需 apparmor/seccomp/landlock 部分放宽（非全局 unconfined）。需配置 kernel.apparmor_restrict_unprivileged_userns=0</div>
+</section>
+
+<!-- Slide 6: 逃逸难度汇总 -->
+<section>
+  <h2>安全风险：逃逸路径与难度</h2>
+  <table>
+    <tr><th>方案</th><th>核心攻击面</th><th>关键逃逸路径</th><th>逃逸难度</th><th>评级</th></tr>
+    <tr>
+      <td><strong>Docker</strong></td>
+      <td>docker.sock → 宿主机 root</td>
+      <td>docker run --privileged -v /:/host</td>
+      <td><span class="tag-red">极低（一条命令）</span></td>
+      <td><span class="tag-red">高风险</span></td>
+    </tr>
+    <tr>
+      <td><strong>Buildah vfs</strong></td>
+      <td>SYS_ADMIN + seccomp/apparmor 关闭</td>
+      <td>cgroup release_agent、mount 宿主机磁盘设备</td>
+      <td><span class="tag-orange">中等</span></td>
+      <td><span class="tag-orange">中高风险</span></td>
+    </tr>
+    <tr>
+      <td><strong>Buildah overlay</strong></td>
+      <td>vfs 攻击面 + /dev/fuse</td>
+      <td>上述全部 + FUSE 文件系统劫持、overlay 镜像层投毒</td>
+      <td><span class="tag-red">中低（最多路径）</span></td>
+      <td><span class="tag-red">高风险</span></td>
+    </tr>
+    <tr>
+      <td><strong>BuildKit</strong></td>
+      <td>seccomp/apparmor 部分放宽（无 SYS_ADMIN）</td>
+      <td>待穿刺确认（攻击面显著小于 Buildah）</td>
+      <td><span class="tag-green">待评估（预期高）</span></td>
+      <td><span class="tag-green">低风险</span></td>
+    </tr>
+  </table>
+</section>
+
+<!-- Slide 7: 决策点二·标题 -->
+<section class="section-title">
+  <h2>决策点二：部署方式</h2>
+  <p>镜像处理模块的进程模型选择</p>
+</section>
+
+<!-- Slide 8: 部署方式对比 -->
+<section>
+  <h2>合并部署 vs 独立部署</h2>
+  <table>
+    <tr><th style="width:22%;">维度</th><th style="width:39%;">合并部署（进程内）</th><th style="width:39%;">独立部署</th></tr>
+    <tr>
+      <td><strong>架构</strong></td>
+      <td>镜像处理模块作为控制面进程内调用</td>
+      <td>镜像处理模块作为独立进程运行</td>
+    </tr>
+    <tr>
+      <td><strong>资源隔离</strong></td>
+      <td><span class="tag-orange">构建镜像与控制面共享资源</span></td>
+      <td><span class="tag-green">构建资源独立分配，不影响 API 响应</span></td>
+    </tr>
+    <tr>
+      <td><strong>部署复杂度</strong></td>
+      <td><span class="tag-green">无需额外组件</span></td>
+      <td><span class="tag-orange">需启动独立特权容器</span></td>
+    </tr>
+    <tr>
+      <td><strong>故障隔离</strong></td>
+      <td><span class="tag-orange">构建崩溃可能影响 API 服务</span></td>
+      <td><span class="tag-green">构建崩溃不影响 API 服务</span></td>
+    </tr>
+    <tr>
+      <td><strong>适用阶段</strong></td>
+      <td>MVP / 功能验证</td>
+      <td>生产环境</td>
+    </tr>
+  </table>
+  <div class="note">缓解措施：构建容器通过 Unix socket 或 HTTPS 暴露接口 + 非对称加密密钥或配置文件权限访问控制；严格校验构建参数，禁止直接运行上传的二进制。</div>
+</section>
+
+<!-- Slide 9: 当前推荐 -->
+<section>
+  <h2>当前推荐</h2>
+  <table>
+    <tr><th style="width:28%;">决策维度</th><th style="width:36%;">当前选择</th><th style="width:36%;">理由</th></tr>
+    <tr>
+      <td><strong>构建方案</strong></td>
+      <td><span class="tag-blue">Buildah + overlay</span></td>
+      <td>Daemonless、性能中等、已有实测数据；通过 seccomp profile 精细控制可降风险</td>
+    </tr>
+    <tr>
+      <td><strong>部署方式</strong></td>
+      <td><span class="tag-blue">合并部署</span></td>
+      <td>MVP 阶段快速验证，部署简单；后续生产化时切换为独立部署</td>
+    </tr>
+    <tr>
+      <td><strong>加固措施</strong></td>
+      <td colspan="2">自定义 seccomp profile（移除 kexec、bpf 等危险调用）+ AppArmor profile + 构建接口输入校验</td>
+    </tr>
+    <tr>
+      <td><strong>演进方向</strong></td>
+      <td colspan="2">BuildKit 穿刺完成后评估切换（原生无需 SYS_ADMIN，安全评级显著更优）</td>
+    </tr>
+  </table>
+</section>
+
+<!-- Slide 10: 总结 -->
+<section>
+  <h2>总结</h2>
+  <table>
+    <tr><th style="width:18%;">关键结论</th><td>
+      <strong>权限：</strong>Docker socket 和 SYS_ADMIN 是最大攻击面，BuildKit 是长远安全最优解<br>
+      <strong>部署：</strong>合并部署降低复杂度，独立部署提升安全隔离——按阶段演进
+    </td></tr>
+    <tr><th>当前方案</th><td>Buildah overlay + 合并部署 + seccomp/AppArmor 精细加固定</td></tr>
+    <tr><th>下一步</th><td>① 编写自定义 seccomp/AppArmor profile ② 完成 BuildKit 穿刺 ③ 生产化时切换到独立部署</td></tr>
+  </table>
+  <p style="margin-top:1em;font-size:0.6em;color:#718096;">参考文档：claude-code-offline-install.md §5.5 / containerized-build.md</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.0/dist/reveal.js"></script>
+<script>
+  Reveal.initialize({ hash: true, slideNumber: true, center: true, transition: 'slide' });
+</script>
+</body>
+</html>
