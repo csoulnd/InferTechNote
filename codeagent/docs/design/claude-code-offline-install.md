@@ -39,59 +39,62 @@
 ```mermaid
 flowchart TB
     subgraph 管理面
-        UI["管理界面<br/>(已有)"]
-        ADMIN["管理面后台服务<br/>Agent 上架 / 触发构建 / 状态查询<br/>(本次新增 Agent 上架子模块)"]
+        UI["管理面前端<br/>上传安装包 / 触发构建 / 查看状态"]
+        subgraph 管理面后端
+            ADMIN["Agent 上架服务<br/>上传 / 校验 / 任务管理 / 状态查询"]
+            BE["镜像处理模块<br/>(Build Engine)<br/>二次构建"]
+        end
     end
 
-    subgraph Agent 上架
-        BE["镜像处理模块<br/>(Build Engine)<br/>二次构建"]
-    end
-
-    subgraph 基础设施
+    subgraph 分布式存储系统
         BR["基础镜像仓库"]
-        REG["注册中心"]
         STORE["镜像存储"]
     end
 
+    REG["TongTu 注册中心<br/>Agent 镜像与运行规格"]
+
     subgraph 消费侧
-        SANDBOX["Agent 服务<br/>沙箱调度 / 拉起"]
+        YUANRONG["YuanRong<br/>查询规格 / 拉取镜像 / 拉起实例"]
     end
 
-    UI -->|"JWT Token<br/>POST upload/build/status"| ADMIN
+    UI -->|"JWT Token<br/>上传 / 构建 / 状态查询"| ADMIN
     ADMIN -->|"触发构建"| BE
     BE -->|"拉取基础镜像"| BR
     BE -->|"存储 OCI 镜像"| STORE
-    BE -->|"构建完成 → 刷新注册表"| REG
-    SANDBOX -->|"查询镜像地址"| REG
-    SANDBOX -->|"拉取镜像"| STORE
+    BE -->|"构建完成 → 注册镜像及运行规格"| REG
+    YUANRONG -->|"查询镜像及 runtime_spec"| REG
+    YUANRONG -->|"拉取镜像"| STORE
+    YUANRONG -->|"拉起 Agent 实例"| YUANRONG
 
     style BE fill:#ffedd5,stroke:#ea580c
     style ADMIN fill:#dbeafe,stroke:#2563eb
+    style REG fill:#dcfce7,stroke:#16a34a
+    style YUANRONG fill:#f3e8ff,stroke:#9333ea
 ```
 
 ### 2.2 组件职责
 
 | 组件 | 职责 | 输入 | 输出 |
 |------|------|------|------|
-| **管理界面** | 管理员操作入口；上传包、触发构建、查看状态 | 用户操作 | HTTP 请求 (JWT) |
-| **管理面后台服务** | 提供管理面统一入口；Agent 上架子模块负责接收上传、校验、管理构建任务生命周期 | HTTP 请求 + tar.gz | 状态码 + JSON 响应 |
-| **镜像处理模块（Build Engine）** | 解压包 → 读取包内 package.json → 叠加基础镜像 → 导出 OCI → 存储 → 回调注册 | 构建任务指令 | OCI 镜像 + 状态回调 |
-| **基础镜像仓库** | 提供预制的运行环境镜像 | — | OCI 镜像 (pull) |
-| **注册中心** | 统一管理上架后的 Agent 镜像元信息 | 镜像元数据 | 注册表查询 |
-| **Agent 服务（沙箱）** | 查询注册中心获取镜像地址，从镜像存储拉取镜像，为终端用户启动隔离实例 | 注册表查询结果 | 运行中的容器 |
+| **管理面前端** | 管理员操作入口；上传包、触发构建、查看状态 | 用户操作 | 管理面后端 HTTP 请求（JWT） |
+| **管理面后端 / Agent 上架服务** | 接收上传、校验安装包、管理构建任务生命周期，并调用 TongTu 完成镜像注册 | HTTP 请求 + tgz | 状态码 + JSON 响应 |
+| **镜像处理模块（Build Engine）** | 管理面后端内部模块；解压包 → 读取包内 package.json → 叠加基础镜像 → 导出 OCI → 写入分布式存储 | 构建任务指令 | OCI 镜像 + 构建结果 |
+| **分布式存储系统** | 存放基础镜像和构建完成的 Agent 镜像，供构建侧及消费侧访问 | 镜像读写请求 | OCI 镜像 |
+| **TongTu 注册中心** | 管理 Agent 镜像元信息及 YuanRong 拉起所需的运行规格 | 镜像与运行规格 | 注册和查询结果 |
+| **YuanRong** | 消费侧组件；查询 TongTu 获取镜像及运行规格，从分布式存储拉取镜像并拉起 Agent 实例 | 注册中心查询结果 | 运行中的 Agent 实例 |
 
 ### 2.3 核心流程时序图
 
 ```mermaid
 sequenceDiagram
     participant Admin as 管理员
-    participant UI as 管理界面
-    participant ADMIN as 管理面后台服务
+    participant UI as 管理面前端
+    participant ADMIN as 管理面后端(Agent 上架)
     participant BE as 镜像处理模块
-    participant BR as 基础镜像仓库
-    participant REG as 注册中心
-    participant STORE as 镜像存储
-    participant SBOX as Agent 服务(沙箱)
+    participant BR as 分布式存储(基础镜像)
+    participant REG as TongTu 注册中心
+    participant STORE as 分布式存储(Agent 镜像)
+    participant YR as YuanRong
 
     Admin->>UI: 登录 (JWT)
     UI->>ADMIN: POST /api/v1/thirdparty_agent/installers<br/>Authorization: Bearer <jwt>
@@ -120,9 +123,9 @@ sequenceDiagram
     ADMIN-->>UI: 200 { status: "done", image: "registry/agent:latest" }
     UI-->>Admin: 上架完成
 
-    SBOX->>REG: 查询镜像地址
-    SBOX->>STORE: 拉取镜像
-    SBOX->>SBOX: 启动沙箱容器实例
+    YR->>REG: 查询镜像及 runtime_spec
+    YR->>STORE: 拉取镜像
+    YR->>YR: 拉起 Agent 实例
 ```
 
 ---
@@ -713,11 +716,13 @@ Issue #311。
 
 ### 6.4 认证鉴权
 
-Agent 上架功能的接口作为**管理面后台服务**的一部分，鉴权由管理面统一 IAM 服务提供：
+Agent 上架属于管理员专用能力，采用“前端可见性控制 + 前端路由守卫 +
+后端强制鉴权”三层控制。前端控制用于避免普通用户看到或进入管理页面，
+后端鉴权才是安全边界，不能因为前端隐藏入口而省略。
 
 ```
 请求链路:
-管理界面 → [IAM JWT] → 管理面后台服务
+管理面前端 → [IAM JWT] → 管理面后端
 
 JWT Payload:
 {
@@ -727,11 +732,45 @@ JWT Payload:
 }
 ```
 
-- 管理界面通过 IAM 服务获取 JWT，调用管理面后台服务时携带
-- 管理面后台服务复用已有 `require_admin`，仅 `role: admin` 可操作上架接口
+- 管理面前端通过 IAM 服务获取 JWT，调用管理面后端时携带
+- 未登录用户不展示 Agent 上架入口；直接访问页面时跳转登录页
+- 已登录但 `role != "admin"` 的用户不展示菜单；直接访问路由时跳转 403 页面
+- 管理面后端所有 `/api/v1/thirdparty_agent/**` 接口均复用已有
+  `require_admin`，独立完成 JWT 校验和 `role == "admin"` 检查
+- 缺少、无效或过期 Token 返回 HTTP 401；Token 有效但不是管理员返回 HTTP 403
+- 即使请求绕过前端、直接调用 API，也必须由后端拒绝非管理员请求
 - 管理面后台服务与镜像处理模块之间通过内部服务 Token 通信（内网环境）
 - 镜像处理模块与注册中心之间通过内部服务 Token 通信
 - 所有外部 HTTP 接口均强制 HTTPS（生产环境）
+
+#### 6.4.1 前端实现约束
+
+前端后续实现复用当前管理面的权限机制：
+
+- `useAuth()` 根据登录态中的 `role` 计算 `isAdmin`
+- 在菜单配置中将 Agent 上架菜单标记为 `adminOnly`
+- `SideMenu.vue` 根据 `isAdmin` 过滤管理员菜单
+- Agent 上架路由设置 `meta.admin: true` 或加入管理员路由集合
+- `router.beforeEach` 对非管理员的直接路由访问跳转 `forbidden`
+- 收到后端 401 时清理失效登录态并跳转登录页；收到 403 时跳转无权限页
+
+前端不得仅依赖按钮级 `v-if`。菜单、路由和页面内操作按钮均应使用同一
+`isAdmin` 判断，避免不同入口产生不一致行为。
+
+#### 6.4.2 后端实现约束
+
+PR #22 已在以下三个路由中声明
+`_admin: TokenData = Depends(require_admin)`：
+
+| 接口 | 未认证 | 普通用户 | 管理员 |
+|------|:------:|:--------:|:------:|
+| `POST /api/v1/thirdparty_agent/installers` | 401 | 403 | 允许 |
+| `POST /api/v1/thirdparty_agent/build_tasks` | 401 | 403 | 允许 |
+| `GET /api/v1/thirdparty_agent/build_tasks/{task_id}` | 401 | 403 | 允许 |
+
+后续新增的镜像列表、重试、取消或下架接口也必须显式依赖
+`require_admin`。不得仅在服务层根据 `uploaded_by` 判断权限，也不得信任
+客户端提交的用户名；`uploaded_by` 必须取自验证通过的 JWT 用户信息。
 
 ---
 
@@ -744,7 +783,8 @@ JWT Payload:
 - 本模块负责上传、包校验与存储、异步镜像构建、注册中心调用和构建状态查询。
 - IAM 复用现有实现。
 - 注册中心、Docker/Buildah、基础镜像以及元戎实例拉起能力是外部依赖。
-- 正式前端界面及前端 API 封装、注册中心自身实现、元戎实例拉起不属于当前 PR。
+- 正式前端界面及前端 API 封装不属于当前 PR；后续实现必须遵循第 6.4.1 节
+  的管理员菜单与路由控制。注册中心自身实现、元戎实例拉起也不属于当前 PR。
 - 镜像列表由管理面后台代理注册中心；当前 PR 尚未实现该代理接口。
 
 ```
@@ -989,7 +1029,7 @@ $AGENTOS_HOME_BASE/$username/
 |------|------|
 | **传输** | 全链路 HTTPS |
 | **认证** | 管理界面→管理面后台服务：IAM JWT；内部服务间：service token |
-| **授权** | 仅 `role: admin` 可操作 |
+| **授权** | 前端隐藏管理员菜单并保护路由；后端所有第三方 Agent API 使用 `require_admin` 强制校验 |
 | **上传校验** | 文件大小限制；tgz 解包；`package/package.json` JSON 与必填字段校验 |
 | **构建隔离** | 每次构建在独立工作区执行，构建完成后清理临时文件；容器化构建安全分析见第 5.5.3 节及 `containerized-build-security-analysis.md` |
 | **镜像安全** | 基础镜像经安全扫描后方可发布；构建产物可选签名（cosign） |
@@ -1080,6 +1120,9 @@ $AGENTOS_HOME_BASE/$username/
 | TC-21 | 同一 Agent 同一版本重复触发构建 | 返回已有任务的 status，不启动新任务（幂等） |
 | TC-22 | 构建日志可追溯 | 构建失败后可查看完整构建日志 |
 | TC-23 | 未授权用户（非 admin）调接口 | 403 Forbidden |
+| TC-24 | 未携带 Token 或 Token 无效/过期 | 401 Unauthorized |
+| TC-25 | 普通用户登录管理面 | 不展示 Agent 上架菜单，直接访问路由跳转 403 页面 |
+| TC-26 | 普通用户绕过前端直接调用三个 Agent 上架 API | 后端均返回 403，不执行上传、构建或查询 |
 
 ---
 
