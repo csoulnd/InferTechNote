@@ -27,7 +27,7 @@
 | **基础镜像** | 预制的操作系统 + 运行时依赖（Node.js、Git、sshd 等）的 OCI 镜像，随系统版本升级迭代 |
 | **二次构建** | 将 Agent 软件包与基础镜像叠加，生成可直接运行的 OCI 格式镜像 |
 | **OCI** | Open Container Initiative，容器镜像工业标准格式 |
-| **注册中心** | 仅维护镜像注册表（agent_id ↔ 镜像地址映射），不持有镜像文件本身。供沙箱调度服务查询可用镜像 |
+| **注册中心** | TongTu 维护 Agent 版本、镜像 tag 与运行规格，不持有镜像 tar.gz 文件本身。供 YuanRong 查询可用镜像 |
 | **沙箱** | 为每个用户启动的隔离容器实例，基于 Agent 镜像运行 |
 
 ---
@@ -48,22 +48,24 @@ flowchart TB
 
     subgraph 分布式存储系统
         BR["基础镜像仓库"]
-        STORE["镜像存储"]
+        STORE["镜像 tar.gz 存储"]
     end
 
     REG["TongTu 注册中心<br/>Agent 镜像与运行规格"]
+    RUNTIME["单机镜像运行时<br/>docker / buildah"]
 
     subgraph 消费侧
-        YUANRONG["YuanRong<br/>查询规格 / 拉取镜像 / 拉起实例"]
+        YUANRONG["YuanRong<br/>查询规格 / 使用镜像 tag / 拉起实例"]
     end
 
     UI -->|"JWT Token<br/>上传 / 构建 / 状态查询"| ADMIN
     ADMIN -->|"触发构建"| BE
     BE -->|"拉取基础镜像"| BR
-    BE -->|"存储 OCI 镜像"| STORE
-    BE -->|"构建完成 → 注册镜像及运行规格"| REG
+    BE -->|"存储镜像 tar.gz"| STORE
+    BE -->|"单机场景：从存储读取并 load tar.gz"| RUNTIME
+    BE -->|"load 成功后注册 tag 及运行规格"| REG
     YUANRONG -->|"查询镜像及 runtime_spec"| REG
-    YUANRONG -->|"拉取镜像"| STORE
+    YUANRONG -->|"按 tag 使用本机已加载镜像"| RUNTIME
     YUANRONG -->|"拉起 Agent 实例"| YUANRONG
 
     style BE fill:#ffedd5,stroke:#ea580c
@@ -79,9 +81,10 @@ flowchart TB
 | **管理面前端** | 管理员操作入口；上传包、触发构建、查看状态 | 用户操作 | 管理面后端 HTTP 请求（JWT） |
 | **管理面后端 / Agent 上架服务** | 接收上传、校验安装包、管理构建任务生命周期，并调用 TongTu 完成镜像注册 | HTTP 请求 + tgz | 状态码 + JSON 响应 |
 | **镜像处理模块（Build Engine）** | 管理面后端内部模块；解压包 → 读取包内 package.json → 叠加基础镜像 → 导出 OCI → 写入分布式存储 | 构建任务指令 | OCI 镜像 + 构建结果 |
-| **分布式存储系统** | 存放基础镜像和构建完成的 Agent 镜像，供构建侧及消费侧访问 | 镜像读写请求 | OCI 镜像 |
-| **TongTu 注册中心** | 管理 Agent 镜像元信息及 YuanRong 拉起所需的运行规格 | 镜像与运行规格 | 注册和查询结果 |
-| **YuanRong** | 消费侧组件；查询 TongTu 获取镜像及运行规格，从分布式存储拉取镜像并拉起 Agent 实例 | 注册中心查询结果 | 运行中的 Agent 实例 |
+| **分布式存储系统** | 存放基础镜像和构建产物 tar.gz；存储完成不代表镜像已可运行 | 镜像文件读写请求 | 镜像 tar.gz |
+| **单机镜像运行时** | 对已存储的 tar.gz 执行 `docker load` 或等价加载操作，使镜像 tag 在本机可用 | 镜像 tar.gz | 本机镜像 tag |
+| **TongTu 注册中心** | 管理 Agent 版本、镜像 tag 及 YuanRong 拉起所需的运行规格 | 镜像 tag 与运行规格 | 注册和查询结果 |
+| **YuanRong** | 消费侧组件；查询 TongTu 获取镜像 tag 和运行规格，使用本机已加载镜像拉起 Agent 实例 | 注册中心查询结果 | 运行中的 Agent 实例 |
 
 ### 2.3 核心流程时序图
 
@@ -94,6 +97,7 @@ sequenceDiagram
     participant BR as 分布式存储(基础镜像)
     participant REG as TongTu 注册中心
     participant STORE as 分布式存储(Agent 镜像)
+    participant RUNTIME as 单机镜像运行时
     participant YR as YuanRong
 
     Admin->>UI: 登录 (JWT)
@@ -116,7 +120,10 @@ sequenceDiagram
     BE->>BR: 拉取基础镜像
     BE->>BE: 解压 tgz → 读取 package.json → 提取元信息
     BE->>BE: 生成 Dockerfile 并执行构建
-    BE->>STORE: 导出并存储 OCI 镜像
+    BE->>STORE: 导出并存储镜像 tar.gz
+    STORE-->>BE: tar.gz 存储成功
+    BE->>RUNTIME: docker load / 等价 load
+    RUNTIME-->>BE: 返回已加载镜像 tag
     BE->>REG: POST /api/images { framework, framework_version, runtime_spec, env_vars, uploaded_by }
     REG-->>BE: 200 OK
     BE->>ADMIN: 回调：构建完成
@@ -124,7 +131,7 @@ sequenceDiagram
     UI-->>Admin: 上架完成
 
     YR->>REG: 查询镜像及 runtime_spec
-    YR->>STORE: 拉取镜像
+    YR->>RUNTIME: 按 tag 使用已加载镜像
     YR->>YR: 拉起 Agent 实例
 ```
 
@@ -382,13 +389,14 @@ Agent 的 MCP 配置文件 (`~/.claude/mcp.json`) 在沙箱启动时由平台侧
 flowchart TD
     S1["1. 接收构建任务<br/>task_id / agent_id / package_path / base_image<br/>（管理面后台服务下发）"]
     S2["2. 执行构建<br/>- docker build / buildah build<br/>- 日志流式输出到日志服务"]
-    S3["3. 导出 OCI 镜像<br/>- 存储到镜像存储<br/>- 命名: agent-{id}:{version}"]
-    S4["4. 注册 & 回调<br/>- 调注册中心 API 刷新注册表<br/>- 回调管理面后台服务: done"]
+    S3["3. 导出并存储<br/>- 产物: {agent_id}-{version}.tar.gz<br/>- 镜像 tag: {agent_id}:{version}"]
+    S4["4. 单机加载<br/>- docker load / 等价 load<br/>- 校验返回的镜像 tag"]
+    S5["5. 注册 & 回调<br/>- load 成功后刷新 TongTu 注册表<br/>- 回调管理面后台服务: done"]
 
-    S1 --> S2 --> S3 --> S4
+    S1 --> S2 --> S3 --> S4 --> S5
 
     style S1 fill:#dbeafe,stroke:#2563eb
-    style S4 fill:#dcfce7,stroke:#16a34a
+    style S5 fill:#dcfce7,stroke:#16a34a
 ```
 
 ### 5.2 二次打包 Dockerfile
@@ -431,7 +439,7 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 |------|------|-----------|
 | `pending` | 任务已创建，等待调度 | 取消 |
 | `building` | 正在执行构建（可查询进度） | 取消 |
-| `done` | 构建成功，镜像已存储并注册 | — |
+| `done` | 构建成功，tar.gz 已存储、镜像已 load 且 TongTu 注册完成 | — |
 | `failed` | 构建失败 | 重试 |
 | `cancelled` | 已被管理员取消 | — |
 
@@ -442,6 +450,7 @@ CMD /bin/bash -c "service ssh restart && ${CMD}"
 | 镜像名称 | `{agent_id}:{version}` |
 | 存储路径 | 由 `output_dir` 参数指定 |
 | 镜像格式 | gzip 压缩 tar 包 (`{agent_id}-{version}.tar.gz`) |
+| 注册标识 | 镜像 tag（如 `claude-code:2.1.89`），不是 tar.gz 存储地址 |
 
 ### 5.5 容器化部署
 
@@ -620,7 +629,7 @@ Authorization: Bearer <JWT>
   "data": {
     "task_id": "build-a1b2c3",
     "status": "done",
-    "image": "registry.example.com/agent-claude-code:2.1.89",
+    "image": "claude-code:2.1.89",
     "image_digest": "sha256:abc...",
     "registered": true,
     "finished_at": "2026-07-08T10:10:00Z",
@@ -664,7 +673,7 @@ Authorization: Bearer <JWT>
         "name": "Claude Code",
         "latest_version": "2.1.89",
         "status": "ready",
-        "image": "registry.example.com/agent-claude-code:2.1.89",
+        "image": "claude-code:2.1.89",
         "created_at": "2026-07-08T10:00:00Z"
       }
     ]
@@ -677,7 +686,14 @@ Authorization: Bearer <JWT>
 
 ### 6.3 注册中心交互协议
 
-镜像处理模块在构建成功后，调用注册中心接口注册新镜像：
+单机场景下，构建成功不等于可以立即注册。镜像处理模块必须按以下顺序执行：
+
+1. 将镜像导出为 tar.gz 并写入持久化存储。
+2. 对该 tar.gz 执行 `docker load`（Buildah 等后端执行语义等价的 load）。
+3. 校验 load 成功，并取得实际加载到本机镜像运行时中的镜像 tag。
+4. 使用该 tag 组装 `runtime_spec.rootfs.imageurl`，再调用 TongTu 注册接口。
+
+任一步失败都不得刷新注册表，构建任务进入 `failed`。注册请求为：
 
 ```
 POST /api/images
@@ -692,7 +708,7 @@ Authorization: Bearer <internal-service-token>
     "runtime": "python3.11",
     "sandbox_type": "docker",
     "rootfs": {
-      "imageurl": "registry.example.com/agent-claude-code:2.1.89",
+      "imageurl": "claude-code:2.1.89",
       "user": "agentos",
       "ports": []
     },
@@ -707,7 +723,10 @@ Authorization: Bearer <internal-service-token>
 
 `runtime_spec` 和 `env_vars` 必填，但本模块只校验其为 JSON 对象，不固化
 内部字段。其内部语义与元戎 inline `POST /api/agent` 请求中的同名字段一致。
-其中镜像地址写入 `runtime_spec.rootfs.imageurl`。
+尽管元戎字段名为 `imageurl`，单机场景下该字段的值是本机镜像
+**tag**（如 `claude-code:2.1.89`），不是 tar.gz 文件路径、HTTP 地址或
+远端镜像仓库地址。TongTu 登记的也是这个 tag；YuanRong 按 tag 使用已经
+load 到本机镜像运行时的镜像。
 
 `image_module_version` 可选；`workspace`、`mounts` 为兼容后续协议保留的可选
 字段，当前不传；`uploaded_by` 记录执行上传和构建的用户身份。注册中心协议
@@ -994,9 +1013,15 @@ $AGENTOS_HOME_BASE/$username/
 
 3. 导出阶段
    - 产物: $AGENTOS_HOME_BASE/$username/images/{agent_id}-{version}.tar.gz
-   - 注册: 回调注册中心 API
+   - 确认 tar.gz 已完整写入持久化存储
 
-4. 清理阶段
+4. 单机加载与注册
+   - 对产物执行 docker load（或当前构建后端的等价 load）
+   - 校验 load 成功并取得镜像 tag: {agent_id}:{version}
+   - 将 tag 写入 runtime_spec.rootfs.imageurl
+   - 调用 TongTu POST /api/images 刷新注册表
+
+5. 清理阶段
    - 删除 $AGENTOS_HOME_BASE/$username/run/{task_id}/
 ```
 
@@ -1017,6 +1042,7 @@ $AGENTOS_HOME_BASE/$username/
 |------|------|
 | 构建过程异常退出 | Build Engine 进程守护，异常退出自动标记 `failed`，支持手动重试 |
 | 基础镜像拉取失败 | 重试 3 次，间隔 10s/30s/60s，仍失败则 `failed` 并上报原因 |
+| 镜像 load 失败 | 不刷新 TongTu 注册表，任务标记 `failed`；保留 tar.gz 供排查或重试 |
 | 注册中心不可达 | 重试 3 次，仍失败则任务标记 `failed`，支持后续补偿注册 |
 | Agent 包存储 | 使用 RAID / 分布式存储，保证包文件不丢失 |
 | 镜像存储 | OCI 镜像存储到指定持久化路径，采用 CRC 校验完整性 |
@@ -1101,12 +1127,14 @@ $AGENTOS_HOME_BASE/$username/
 |:---:|------|------|
 | TC-13 | 构建完成后注册中心可查询到新镜像 | GET /api/images 返回包含 claude-code 2.1.89 |
 | TC-14 | 注册中心不可达时任务失败 | status=failed，error_code="REGISTRY_REFRESH_FAILED" |
+| TC-14A | tar.gz 存储成功但 `docker load` 失败 | status=failed，TongTu 中不新增记录 |
+| TC-14B | 单机 load 成功后注册 | `runtime_spec.rootfs.imageurl` 为镜像 tag，不是 tar.gz 路径或远端地址 |
 
 ### 10.4 运行验证（端到端）
 
 | 编号 | 用例 | 预期 |
 |:---:|------|------|
-| TC-15 | 沙箱成功拉取 Agent 镜像 | `docker pull` / `crictl pull` 成功 |
+| TC-15 | YuanRong 使用已注册 Agent 镜像 | 本机按注册的 tag 找到已 load 镜像并成功拉起 |
 | TC-16 | 容器启动后 Agent 可执行 `--version` | 输出正确版本号，无异常退出 |
 | TC-17 | Agent 启动并完成一轮完整对话 | Claude Code → 发起对话 → 流式回复 → 正常退出 |
 | TC-18 | MCP Server 被 Agent 正确加载 | Agent 启动日志中看到 MCP Server 连接成功 |
