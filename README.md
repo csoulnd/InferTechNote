@@ -10,12 +10,14 @@ Engineering knowledge base for **model inference on Ascend NPU** and **third-par
 Infra/
 ├── inference/          # Model inference — vLLM Ascend, 310P, Qwen3-VL, MTP
 └── codeagent/          # Code Agent — Claude Code, OpenCode, Gateway, Agent OS integration
+    └── agentos-images/ # Agent OS openEuler x86 image build scripts
 ```
 
 | Domain | Entry | Scope |
 |--------|-------|-------|
 | **Inference** | [inference/README.md](inference/README.md) | Ascend 310P adaptation, speculative decoding (MTP), multimodal (Qwen3-VL), CI coverage |
 | **Code Agent** | [codeagent/README.md](codeagent/README.md) | Agent OS design specs, SSH/ACP integration, knowledge base, product insights |
+| **Agent OS images (x86)** | [codeagent/agentos-images/README.md](codeagent/agentos-images/README.md) | openEuler 24 SP matrix build for `agent-base` / `image-process` |
 
 ## Quick start
 
