@@ -16,119 +16,89 @@
 
 ## 2. 架构对比：现状与目标
 
-本节是架构评审的主对照面：先看清当前耦合形态，再看目标拆分形态。详细概念定义见后续章节。
+本节是架构评审的主对照面，只对比**管理面（Control Panel）**与**镜像处理模块（image_process / Image Factory）**的流程与归属差异。详细概念定义见后续章节。
 
 ### 2.1 现状架构（As-Is）
 
-当前已拆出独立 `image_process` 服务，但业务上仍是一条“NPM pack tgz → 固定 Dockerfile → 固定 base → 注册串进构建成功”的专用链路。
+已拆出独立 `image_process`，但主流程仍是一条专用链路：CP 负责解析与注册，工厂只做固定 Dockerfile 构建。
 
 ```mermaid
-flowchart TB
-    subgraph CP["Control Panel（现状）"]
-        API["Admin API<br/>thirdparty_agent"]
-        Pkg["package.py<br/>元数据 + 平台校验"]
-        Svc["ThirdpartyAgentService<br/>上传 / 编排 / 注册"]
-        BT[("BuildTask")]
-        AR[("AgentRegistration")]
-        Dir["users/{owner}/installers|images|run"]
+flowchart LR
+    subgraph CP["管理面 Control Panel"]
+        direction TB
+        U1["1. 上传 .tgz"]
+        U2["2. 元数据解析 + 平台校验<br/>package.py"]
+        U3["3. 落盘用户目录<br/>创建 BuildTask"]
+        U4["5. 轮询构建结果"]
+        U5["6. 注册镜像<br/>成功才标 done"]
+        U1 --> U2 --> U3
+        U4 --> U5
     end
 
-    subgraph Factory["image_process（现状）"]
-        Builds["POST /v1/builds"]
-        FixedDF["固定 agent.Dockerfile"]
-        FixedBase["固定 agent-base:1.0"]
-        Docker["DockerBuilder<br/>build / save / inspect"]
-        Mem["内存任务态"]
+    subgraph IP["镜像处理 image_process"]
+        direction TB
+        F1["4a. 接收绝对路径<br/>POST /v1/builds"]
+        F2["4b. 固定 Dockerfile<br/>+ 固定 agent-base:1.0"]
+        F3["4c. docker build / save<br/>内存任务态"]
+        F1 --> F2 --> F3
     end
 
-    Reg["Agent 注册中心"]
-
-    API --> Pkg --> Svc
-    Svc --> Dir
-    Svc --> BT
-    Svc -->|"绝对路径: installer/output/work"| Builds
-    Builds --> FixedDF --> FixedBase --> Docker
-    Docker --> Mem
-    Svc -->|"轮询进度/结果"| Mem
-    Svc -->|"构建 done 后注册；失败则 BuildTask=failed"| Reg
-    Svc --> AR
+    U3 -->|"installer / output / work 路径"| F1
+    F3 -->|"进度 / image / digest"| U4
 ```
 
-现状要点：
+归属与流程特点：
 
-- 输入形态写死在 CP 解析与工厂 Dockerfile 中，没有 Artifact / Recipe 抽象。
-- 基础镜像写死为 `agent-base:1.0`，不能按版本选择。
-- 注册编排耦合在构建成功路径上；`registered` 由 `BuildTask.status == done` 推导。
-- 工厂只暴露 builds，无 validate / capabilities / 多操作类型。
+- **管理面**：上传、包解析、平台校验、任务账本、轮询、注册（注册失败会让构建任务失败）。
+- **镜像处理**：只执行固定 tgz→镜像构建，不负责制品类型判断与注册。
+- **耦合点**：校验逻辑在管理面，安装假设在 Dockerfile；两边共同写死“NPM pack + 固定 base”。
 
 ### 2.2 目标架构（To-Be）
 
-目标将扩展轴拆为 **Artifact Kind × Recipe × BaseImage**，CP 持有账本与编排，工厂持有 Buildability 与高权限执行。
+目标主流程改为：管理面管账本与编排，镜像工厂按 Recipe 做 Buildability 与执行；注册从构建成功路径中拆出。
 
 ```mermaid
-flowchart TB
-    subgraph CP["Control Panel（目标）"]
-        IAM["IAM / Admin API"]
-        Admission["Admission / Quota"]
-        ArtifactSvc["Artifact Service"]
-        BaseCatalog["BaseImage Catalog"]
-        JobOrch["Image Job Orchestrator"]
-        DeleteOrch["Deletion Orchestrator"]
-        Register["Registration Service"]
-        DB[("PostgreSQL 业务账本")]
-        UserDir["users/{owner}/... 目录"]
+flowchart LR
+    subgraph CP["管理面 Control Panel"]
+        direction TB
+        T1["1. 上传制品"]
+        T2["2. Admission + 轻量 Inspection<br/>建立 Artifact 账本"]
+        T3["3. 选择 Recipe / BaseImage<br/>创建 ImageProcessJob"]
+        T4["6. 投影任务结果<br/>形成 ImageOutput"]
+        T5["7. 独立 Registration<br/>可失败可重试"]
+        T1 --> T2 --> T3
+        T4 --> T5
     end
 
-    subgraph Factory["Image Factory（目标）"]
-        Cap["GET /v1/capabilities"]
-        Validator["POST /v1/validate"]
-        Registry["Recipe Registry"]
-        Executor["Build / Inject / Import"]
-        Runtime["Docker / OCI Runtime"]
-        ExecState["短期执行态"]
+    subgraph IP["镜像工厂 Image Factory"]
+        direction TB
+        G1["4. Validate<br/>按 Recipe 校验可构建性"]
+        G2["5a. Recipe Registry<br/>匹配处理流程"]
+        G3["5b. Build / Inject / Import<br/>Docker/OCI 执行"]
+        G1 --> G2 --> G3
     end
 
-    ExtReg["Agent 注册中心"]
-
-    IAM --> Admission
-    Admission --> ArtifactSvc
-    ArtifactSvc --> DB
-    ArtifactSvc --> UserDir
-    BaseCatalog --> DB
-    JobOrch --> DB
-    JobOrch -->|"artifact + recipe + base snapshot"| Validator
-    Validator --> Registry
-    Registry --> Executor
-    Executor --> Runtime
-    Executor --> ExecState
-    Cap -.-> JobOrch
-    JobOrch -->|"状态与结果投影"| DB
-    JobOrch --> Register
-    Register --> ExtReg
-    DeleteOrch --> DB
-    DeleteOrch --> UserDir
-    DeleteOrch -.->|"按明确资源辅助清理"| Factory
+    T3 -->|"artifact + recipe + base 快照"| G1
+    G3 -->|"状态 / 镜像结果 / runtime"| T4
 ```
 
-目标要点：
+归属与流程特点：
 
-- CP 管理身份、目录、配额、Artifact/Base/Job/Registration 账本。
-- 工厂按 Recipe 做校验与执行，不再内嵌单一 tgz 假设。
-- 构建/导入成功与注册成功使用独立状态，注册失败不反向污染镜像处理成功语义。
-- 同 Artifact 可基于不同 BaseImage、不同 Recipe 产生多个 ImageOutput。
+- **管理面**：身份与目录、制品账本、BaseImage 目录、Job 编排、结果投影、注册（与 Job 状态解耦）。
+- **镜像工厂**：capabilities / validate / jobs；按 Recipe 校验并执行，持有 Docker 等高权限能力。
+- **解耦点**：管理面不再内嵌“如何把某类包做成镜像”；工厂不再假设唯一 tgz 路径。扩展沿 Artifact Kind × Recipe × BaseImage 进行。
 
 ### 2.3 新旧对照
 
 | 维度 | 现状 | 目标 |
 |---|---|---|
-| 输入模型 | 隐含“平台后缀 NPM pack tgz” | 显式 `Artifact` + `kind` |
-| 处理方式 | 固定 Dockerfile / 固定安装假设 | 可注册 `Recipe`（build/inject/import） |
-| 基础镜像 | 代码写死 `agent-base:1.0` | CP `BaseImage` 目录 + 任务快照 digest |
-| 工厂接口 | `/v1/builds` | `/v1/capabilities`、`/v1/validate`、`/v1/jobs` |
-| 预检位置 | 主要在 CP `package.py` | 工厂 Buildability；CP 仅 Admission + 轻量 Inspection |
-| 注册 | 串在构建成功路径，用 `done` 推导 | 独立 `Registration` 状态机，可重试 |
-| 扩展方式 | 改 CP + 工厂 + Dockerfile 联调 | 新增 kind / Recipe / base 版本，尽量少动编排主链 |
-| 第一阶段验收 | 仅 binary 型 NPM tgz | 在新边界下覆盖 ScienceFlow、OpenClaw 上架 |
+| 主流程 | 上传→CP 深校验→固定构建→注册串成功 | 上传→CP 建账→工厂按 Recipe 校验/执行→独立注册 |
+| 管理面职责 | 解析、编排、注册捆在一起 | 账本、编排、注册；不做 Recipe 级 Buildability |
+| 镜像处理职责 | 固定 Dockerfile 构建 | Recipe 校验 + build/inject/import |
+| 预检归属 | 主要在管理面 `package.py` | 工厂 Validate；管理面仅 Admission/轻量 Inspection |
+| 基础镜像 | 工厂内写死 | 管理面选择并快照，工厂校验可用性 |
+| 注册与构建 | 同一成功路径，`done` 即 registered | 两个状态机，注册失败可单独重试 |
+| 扩展方式 | 同时改管理面、工厂、Dockerfile | 新增 kind / Recipe / base，少动编排主链 |
 
 ## 3. 设计目标与非目标
 
