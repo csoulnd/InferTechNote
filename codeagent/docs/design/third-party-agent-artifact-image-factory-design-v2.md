@@ -16,11 +16,13 @@
 
 ## 2. 架构对比：现状与目标
 
-本节是架构评审的主对照面，只对比**管理面（Control Panel）**与**镜像处理模块（image_process / Image Factory）**的流程与归属差异。详细概念定义见后续章节。
+**一句话目标：把「上传 → 校验 → 固定构建 → 注册」这条难扩展的串行专用编排，拆成可独立演进的稳定编排 + 可插拔处理。**
 
-### 2.1 现状架构（As-Is）
+对比范围只看**管理面（Control Panel）**与**镜像处理模块（image_process / Image Factory）**。
 
-已拆出独立 `image_process`，但主流程仍是一条专用链路：CP 负责解析与注册，工厂只做固定 Dockerfile 构建。
+### 2.1 现状：串行专用编排（As-Is）
+
+服务虽已拆分，业务仍是一条写死的串行链路。新增一种包格式或构建方式，往往要同时改管理面解析、工厂 Dockerfile、任务字段和注册假设。
 
 ```mermaid
 flowchart LR
@@ -28,77 +30,78 @@ flowchart LR
         direction TB
         U1["1. 上传 .tgz"]
         U2["2. 元数据解析 + 平台校验<br/>package.py"]
-        U3["3. 落盘用户目录<br/>创建 BuildTask"]
-        U4["5. 轮询构建结果"]
-        U5["6. 注册镜像<br/>成功才标 done"]
+        U3["3. 落盘 + BuildTask"]
+        U4["5. 轮询结果"]
+        U5["6. 注册<br/>成功才标 done"]
         U1 --> U2 --> U3
         U4 --> U5
     end
 
     subgraph IP["镜像处理 image_process"]
         direction TB
-        F1["4a. 接收绝对路径<br/>POST /v1/builds"]
-        F2["4b. 固定 Dockerfile<br/>+ 固定 agent-base:1.0"]
-        F3["4c. docker build / save<br/>内存任务态"]
+        F1["4a. POST /v1/builds"]
+        F2["4b. 固定 Dockerfile<br/>固定 agent-base:1.0"]
+        F3["4c. docker build / save"]
         F1 --> F2 --> F3
     end
 
-    U3 -->|"installer / output / work 路径"| F1
-    F3 -->|"进度 / image / digest"| U4
+    U3 -->|"路径"| F1
+    F3 -->|"进度/镜像"| U4
 ```
 
-归属与流程特点：
+问题不在「有没有独立服务」，而在**编排语义是串行专用的**：
 
-- **管理面**：上传、包解析、平台校验、任务账本、轮询、注册（注册失败会让构建任务失败）。
-- **镜像处理**：只执行固定 tgz→镜像构建，不负责制品类型判断与注册。
-- **耦合点**：校验逻辑在管理面，安装假设在 Dockerfile；两边共同写死“NPM pack + 固定 base”。
+- 步骤顺序和含义绑死：上传就必须按 NPM pack 深校验，构建就必须走固定 Dockerfile，注册必须接在构建成功之后。
+- 扩展点不独立：换输入、换构建法、换 base、换注册策略，都会扯动整条链。
+- 管理面与镜像处理是进程拆分，不是扩展轴拆分。
 
-### 2.2 目标架构（To-Be）
+### 2.2 目标：稳定编排 + 可插拔处理（To-Be）
 
-目标主流程改为：管理面管账本与编排，镜像工厂按 Recipe 做 Buildability 与执行；注册从构建成功路径中拆出。
+目标不是把链路画得更长，而是**让编排主链不再随制品类型变化**：
+
+- 管理面只做稳定步骤：接制品、建账、发起处理任务、投影结果、按需注册。
+- 镜像工厂承接会变化的部分：某类制品如何校验、如何构建/导入/注入。
+- 变化通过 **Artifact Kind × Recipe × BaseImage** 增加，而不是改串行主链。
 
 ```mermaid
 flowchart LR
-    subgraph CP["管理面 Control Panel"]
+    subgraph CP["管理面：稳定编排（不随 kind 改主链）"]
         direction TB
-        T1["1. 上传制品"]
-        T2["2. Admission + 轻量 Inspection<br/>建立 Artifact 账本"]
-        T3["3. 选择 Recipe / BaseImage<br/>创建 ImageProcessJob"]
-        T4["6. 投影任务结果<br/>形成 ImageOutput"]
-        T5["7. 独立 Registration<br/>可失败可重试"]
+        T1["1. 上传"]
+        T2["2. 轻量建账<br/>Artifact"]
+        T3["3. 发起处理任务<br/>选定 Recipe + Base"]
+        T4["5. 投影结果<br/>ImageOutput"]
+        T5["6. 按需注册<br/>独立状态"]
         T1 --> T2 --> T3
         T4 --> T5
     end
 
-    subgraph IP["镜像工厂 Image Factory"]
+    subgraph IP["镜像工厂：可插拔处理（随 Recipe 扩展）"]
         direction TB
-        G1["4. Validate<br/>按 Recipe 校验可构建性"]
-        G2["5a. Recipe Registry<br/>匹配处理流程"]
-        G3["5b. Build / Inject / Import<br/>Docker/OCI 执行"]
+        G1["4a. Validate"]
+        G2["4b. 匹配 Recipe"]
+        G3["4c. 执行<br/>build / import / inject"]
         G1 --> G2 --> G3
     end
 
-    T3 -->|"artifact + recipe + base 快照"| G1
-    G3 -->|"状态 / 镜像结果 / runtime"| T4
+    T3 -->|"artifact + recipe + base"| G1
+    G3 -->|"结果"| T4
 ```
 
-归属与流程特点：
+读图时抓住两点：
 
-- **管理面**：身份与目录、制品账本、BaseImage 目录、Job 编排、结果投影、注册（与 Job 状态解耦）。
-- **镜像工厂**：capabilities / validate / jobs；按 Recipe 校验并执行，持有 Docker 等高权限能力。
-- **解耦点**：管理面不再内嵌“如何把某类包做成镜像”；工厂不再假设唯一 tgz 路径。扩展沿 Artifact Kind × Recipe × BaseImage 进行。
+1. **管理面主链固定**：1→2→3→5→6 对 npm tgz、OCI import、后续 node/wheel 都一样。  
+2. **工厂内部可替换**：第 4 步换 Recipe，不改管理面编排代码。
 
 ### 2.3 新旧对照
 
-| 维度 | 现状 | 目标 |
+| 维度 | 现状（串行专用） | 目标（可扩展编排） |
 |---|---|---|
-| 主流程 | 上传→CP 深校验→固定构建→注册串成功 | 上传→CP 建账→工厂按 Recipe 校验/执行→独立注册 |
-| 管理面职责 | 解析、编排、注册捆在一起 | 账本、编排、注册；不做 Recipe 级 Buildability |
-| 镜像处理职责 | 固定 Dockerfile 构建 | Recipe 校验 + build/inject/import |
-| 预检归属 | 主要在管理面 `package.py` | 工厂 Validate；管理面仅 Admission/轻量 Inspection |
-| 基础镜像 | 工厂内写死 | 管理面选择并快照，工厂校验可用性 |
-| 注册与构建 | 同一成功路径，`done` 即 registered | 两个状态机，注册失败可单独重试 |
-| 扩展方式 | 同时改管理面、工厂、Dockerfile | 新增 kind / Recipe / base，少动编排主链 |
+| 核心问题 | 一条链绑死输入/构建/注册 | 拆开扩展轴，主链稳定 |
+| 管理面 | 深校验 + 编排 + 注册耦在一起 | 只做建账、选 Recipe/Base、投影、注册 |
+| 镜像处理 | 固定一种构建 | 按 Recipe 插拔：校验与执行 |
+| 扩展时改什么 | 整条串行链多处联改 | 新增 kind / Recipe / base，少动主链 |
+| 注册 | 串在构建成功之后 | 从主链成功条件中拆出，可单独重试 |
 
 ## 3. 设计目标与非目标
 
@@ -738,12 +741,17 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 
 ## 15. 总结
 
-本设计将当前“上传 NPM pack `.tgz` 并基于固定基础镜像构建”的单一路径，演进为三个可独立扩展的维度：
+本设计要解决的核心问题是：**现状虽已拆出镜像处理服务，但业务仍是难扩展的串行专用编排。**
+
+目标把「上传 → 校验 → 固定构建 → 注册」拆成：
+
+- 管理面：稳定编排（建账、发起任务、投影、按需注册）；
+- 镜像工厂：可插拔处理（按 Recipe 校验与执行）。
+
+扩展沿三个独立维度进行，而不是改整条串行链：
 
 ```text
 Artifact Kind x Recipe x BaseImage Version
 ```
 
-CP 长期拥有用户、目录、账本、配额、删除、版本选择和注册；Factory 长期拥有 Buildability、Recipe 和高权限镜像执行。新增 Recipe 不应修改 CP 核心编排，新增 Artifact kind 只增加对应 Inspector 和 Recipe，新基础镜像版本只新增目录项和任务快照。
-
-该边界既保留当前已经落地的服务拆分成果，也为 wheel、binary、OCI 直接导入、SDK/SSH 注入、同包多 base 和策略化删除提供统一演进路径。
+新增 Recipe 不应修改 CP 核心编排；新增 Artifact kind 只增加对应 Inspector 和 Recipe；新基础镜像版本只新增目录项和任务快照。该边界保留已有服务拆分成果，并为后续多种上架形态提供统一演进路径。
