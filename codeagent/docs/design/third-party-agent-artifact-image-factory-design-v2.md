@@ -2,15 +2,20 @@
 
 > 文档状态：评审稿，未定稿  
 > 适用范围：AgentOS Control Panel 三方 Agent 管理模块、`image_process` 镜像处理服务  
-> 代码基线：`refactor/image_process`，HEAD `68b395f`  
+> 代码基线：`refactor/image_process`，HEAD `3b9e07f`（含 openclaw online/offline node 构建）  
 > 历史参考：`containerized-build.md`、`third-party-agent-integration-guide.md`  
 > 说明：本文是面向后续扩展的新版本总体设计，不替代或覆盖旧版设计文档。
 
 ## 1. 背景
 
-当前三方 Agent 上架能力围绕单一场景实现：管理员上传符合 NPM `pack` 布局的离线 `.tgz` 包，系统将其中的可执行文件加入固定的 `agent-base:1.0`，生成 Agent 运行镜像并尝试注册。
+当前三方 Agent 上架能力仍围绕 `.tgz` 安装包单一输入形态实现：管理员上传包后，管理面提取元数据并落盘，`image_process` 基于固定 `agent-base:1.0` 构建运行镜像，构建成功后由 Control Panel 调用注册中心完成注册。
 
-这一方案已经打通上传、构建、状态查询、离线镜像保存和注册链路，但输入格式、校验逻辑、构建方式和基础镜像被绑定在同一流程中。继续增加 wheel、binary、OCI 镜像、SDK/SSH 注入、基础镜像升级、同包多基础镜像、制品删除和配额等能力时，容易要求同时修改管理面 API、Service、数据库模型、镜像处理客户端、Dockerfile和注册逻辑，形成霰弹修改。
+现有链路已覆盖两类常见 `.tgz` 形态：
+
+1. **binary 模式**（如 opencode）：NPM `pack` 布局，包名带平台后缀，构建时把 `package/` 下可执行文件拷入镜像；
+2. **node 模式**（如 openclaw）：便携 Node 包或离线 `node_modules` 树；工厂按内容检测 `INSTALL_MODE`，选择离线解压安装或在线 `npm install -g`。
+
+这一方案已经打通上传、构建、状态查询、离线镜像保存和注册链路，但输入仍被绑定为“可解释的 tgz”，校验逻辑、安装方式选择和固定基础镜像仍耦合在同一流程中。继续增加 wheel、独立 binary、OCI 镜像、SDK/SSH 注入、基础镜像升级、同包多基础镜像、制品删除和配额等能力时，容易要求同时修改管理面 API、Service、数据库模型、镜像处理客户端、Dockerfile 和注册逻辑，形成霰弹修改。
 
 本次设计的目标不是一次实现所有格式，而是建立稳定的扩展边界，使后续能力能够沿制品类型、处理 Recipe 和基础镜像三个维度独立演进。
 
@@ -38,41 +43,62 @@
 
 ## 3. 已有功能描述
 
+> 本节按代码基线 `3b9e07f` 盘点现状，作为后续重构的对照基线，不代表目标态。
+
 ### 3.1 管理面已有能力
 
-- 三方 Agent API 使用 `require_admin` 管理员鉴权。
-- 接收 `.tgz` 上传，限制单包大小，并检查目标文件系统剩余空间。
-- 从 `package/package.json` 提取名称、版本、展示名和入口信息。
-- 根据包名后缀校验 OS、CPU 架构和 libc。
-- 按 `{AGENTOS_HOME_BASE}/{uploaded_by}/installers` 保存安装包。
-- 在 PostgreSQL 中保存 `AgentInstaller` 和 `BuildTask`。
-- 以 `agent_name + version` 检查重名。
-- 创建构建任务，并限制全局活动构建数最多为 5。
-- 将安装包、输出目录和工作目录的绝对路径提交给 `image_process`。
-- 查询构建状态时轮询工厂，将进度和结果投影到 PostgreSQL。
-- 构建完成后尝试调用 `AGENT_REGISTER_URL` 注册镜像。
+- 三方 Agent API（`/api/v1/thirdparty_agent`）使用 `require_admin` 管理员鉴权。
+- 接收 `.tgz` 上传，限制单包大小（`THIRDPARTY_AGENT_INSTALLER_MAX_BYTES`），并检查目标文件系统剩余空间（含固定余量）。
+- 安装包元数据提取支持两类布局：
+  - NPM `pack`：`package/package.json`；
+  - 离线安装树：`node_modules/<pkg>/package.json`（含 scoped 包）。
+- 从 `package.json` 提取名称、版本、展示名和入口；并区分 `package_type`：`binary` / `node`。
+- 平台校验：
+  - 带 `-linux|-darwin|-win32-(x64|arm64)[-musl]` 后缀的包按后缀校验 OS/Arch/libc；
+  - 便携 Node 包（如 openclaw，包名无平台后缀）标记为 `platform_agnostic`，跳过平台匹配，默认按 `linux-x64-gnu` 解释。
+- 安装包按 `{AGENTOS_HOME_BASE}/{uploaded_by}/installers/{agent_name}-{version}.tgz` 落盘；上传侧不以独立 `AgentInstaller` 表建账。
+- PostgreSQL 账本现状：
+  - `BuildTask`：构建任务与进度；
+  - `AgentRegistration`：安装包路径到注册中心 `framework` / `framework_version` 的映射。
+- 重名/重复上传：按目标 `installer_path` 是否已存在 `AgentRegistration` 判断，而不是全局 `(agent_name, version)` 主键。
+- 创建构建任务时限制全局活动构建数最多为 5；同一 `installer_path` 已有活动任务时返回已有任务（幂等）。
+- 后台编排 `_run_build`：向 `image_process` 提交绝对路径（安装包、输出目录、工作目录），主动轮询工厂进度并写回 `BuildTask`。
+- 工厂返回 `done` 后，CP 调用 `AGENT_REGISTER_URL` 注册，并写入 `AgentRegistration`；注册成功后再将任务标为 `done`。
+- 列表接口从注册中心查询镜像，再用本地 `AgentRegistration` 补齐展示字段。
+- 状态查询接口直接读本地 `BuildTask`；`registered` 仍由 `status == "done"` 推导。
 
 ### 3.2 镜像处理服务已有能力
 
-- 作为独立 FastAPI 服务部署，并通过共享卷访问用户目录。
-- 持有 Docker socket，执行 `docker build`、`docker save` 和镜像 ID 查询。
-- 使用固定 `agent.Dockerfile` 和固定 `agent-base:1.0`。
-- 使用内存字典保存任务执行状态，完成任务默认保留 24 小时。
-- 提供创建构建任务和查询任务状态接口。
-- 支持相同活动 `task_id` 的基本幂等提交。
+- 作为独立 FastAPI 服务部署，并通过共享卷访问用户目录；持有 Docker socket。
+- 对外接口：`GET /health`、`POST /v1/builds`、`GET /v1/builds/{task_id}`。
+- 构建后端为可替换的 `AbstractBuilder`，当前实现为 `DockerBuilder`（`docker build` / `docker save` / `docker inspect`）。
+- 使用固定 `agent.Dockerfile` 和固定基础镜像 `agent-base:1.0`（`BASE_IMAGE` build-arg，默认值写死）。
+- 构建前通过 `detect_install_mode()` 检查安装包，自动选择 `INSTALL_MODE`：
+  - `node`：存在 `node_modules` 树，或主 `package.json` 判定为 Node 应用；
+  - `binary`：其余情况，按可执行文件拷贝安装。
+- `agent.Dockerfile` 按 `INSTALL_MODE` 分支：
+  - `binary`：从 `package/` 拷贝可执行文件到 `/usr/local/bin`；
+  - `node`：若含离线 `node_modules` 则解压到 `/opt/agent` 并链接 `.bin`；否则对 tgz 执行在线 `npm install -g`（构建期可能访问外网 registry）。
+- 构建结果除镜像名、digest、离线 archive 路径外，还返回：
+  - `base_image`；
+  - 从基础镜像 LABEL `agentos.runtime_spec` 读取并补充 `sandbox_type` 的 `runtime_spec`；
+  - `image_module_version`。
+- 使用内存字典保存任务执行状态，完成任务默认保留 24 小时（`TASK_TTL_SECONDS`）。
+- 支持相同活动 `task_id` 的基本幂等提交；并发上限由 CP 侧控制。
 
 ### 3.3 当前主要限制
 
-- 上传制品只能按 NPM tgz 解释。
-- 产品元数据解析、平台校验和 Dockerfile 隐式假设分散在 CP 与工厂。
-- 没有显式 `artifact_kind`、`recipe_id` 和可选 `base_ref`。
-- 固定基础镜像，不能基于同一制品构建多个基础镜像版本。
-- 不支持 OCI/Docker archive 上传、镜像注入或直接注册。
-- Installer 主键和构建并发限制是全局维度，尚未形成真正的用户级隔离。
-- 缺少删除 API、删除影响分析、级联策略和配额回收流程。
-- 工厂重启会丢失执行态，CP 对远端任务消失缺少收敛机制。
-- 注册失败不会影响构建完成状态，但当前没有独立、可信的注册状态。
-- 工厂接受绝对路径，但尚缺少通用的允许根目录和路径逃逸防护。
+- 上传制品仍只能按“可解释的 Agent `.tgz`”处理；虽已覆盖 binary / node 两种安装子模式，但没有独立的 `artifact_kind`，也无法表达 wheel、纯 binary、OCI archive 等其它输入。
+- 产品元数据解析与安装模式判断在 CP（`package.py`）和工厂（`package_util.py`）两侧存在平行实现，平台校验、Node 判定和 Dockerfile 隐式假设仍然分散。
+- 没有显式 `recipe_id` 和可选 `base_ref`；安装方式选择是工厂内部隐式分支，不是可注册 Recipe。
+- 固定基础镜像 `agent-base:1.0`，不能基于同一制品选择或构建多个基础镜像版本。
+- 不支持 OCI/Docker archive 上传、镜像注入或“已构建镜像直接导入注册”。
+- Node 在线安装路径依赖构建环境网络与外部 npm registry，失败语义与离线 binary 构建混在同一任务模型中。
+- 用户隔离不完整：安装包按用户目录落盘，但活动构建并发限制是全局的；业务唯一性分散在文件路径和 `AgentRegistration(framework, framework_version)`，尚未形成统一的用户级 Artifact 账本。
+- 缺少删除 API、删除影响分析、级联策略和配额回收流程；上传侧也没有独立的数量/容量 reservation。
+- 工厂重启会丢失执行态；CP 后台轮询对远端任务 404/消失缺少明确的超时与终态收敛协议。
+- 注册被串进构建成功路径：注册失败会使 `BuildTask` 变为 `failed`，但数据库仍无独立、可重试的注册状态；查询侧继续用 `done` 推导 `registered`。
+- 工厂接受绝对路径，但尚缺少通用的允许根目录、符号链接解析后再校验，以及解压炸弹/路径穿越防护。
 
 ## 4. 核心概念
 
@@ -485,16 +511,16 @@ reconcile
 
 ### 8.1 新增或重构模型
 
-- 新增通用 `Artifact`，逐步替代 NPM 专用 `AgentInstaller` 作为主账本。
+- 新增通用 `Artifact` 作为主账本；当前上传结果主要落在用户目录文件 + `AgentRegistration`，缺少独立的源制品账本。
 - 新增 `BaseImage` 产品目录。
 - 新增 `ImageOutput`，避免将某次构建结果覆盖写回 Artifact。
 - 将 `BuildTask` 扩展为通用 ImageProcessJob 语义，记录 owner、artifact、recipe、base 和参数快照。
-- 新增 `Registration` 或至少增加独立注册状态字段。
+- 将现有 `AgentRegistration` 演进为独立 `Registration`（或至少增加可重试的注册状态字段），与构建终态解耦。
 - 新增 `DeletionJob` 和必要的配额 reservation 记录。
 
 ### 8.2 唯一性与隔离
 
-当前 `(agent_name, version)` 全局主键不适合用户级制品目录。建议业务唯一性改为：
+当前唯一性分散：安装包按 `{owner}/installers/{agent_name}-{version}.tgz` 路径去重，注册记录主键为 `(framework, framework_version)`，构建并发按全局活动任务计数。该模型不适合用户级多类型制品目录。建议业务唯一性改为：
 
 ```text
 (owner_id, kind, name, version)
@@ -543,7 +569,7 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 ### 阶段 3：引入 Artifact 和用户级 Admission
 
 - 新建 Artifact 等表并双写或执行一次性数据迁移。
-- 将现有 AgentInstaller 记录映射为 `kind=npm_tgz` Artifact。
+- 将现有用户目录安装包与 `AgentRegistration` 映射为 `kind=npm_tgz`（或更细的 binary/node 元数据）Artifact。
 - 列表、上传和构建逐步切换到 Artifact ID。
 - 引入数量/容量 reservation 和删除策略。
 
@@ -565,9 +591,9 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 
 ### 11.1 兼容性
 
-- 原有 NPM tgz 成功和失败场景保持一致。
+- 原有 binary / node 两类 `.tgz` 成功和失败场景保持一致（含 openclaw 在线与离线 node 安装路径）。
 - 旧 API 在兼容期返回相同核心字段。
-- 已有 AgentInstaller 和 BuildTask 数据可迁移和查询。
+- 已有安装包文件、`BuildTask` 和 `AgentRegistration` 数据可迁移和查询。
 
 ### 11.2 扩展性
 
@@ -685,7 +711,7 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 
 ## 14. 总结
 
-本设计将当前“上传 NPM tgz 并基于固定基础镜像构建”的单一路径，演进为三个可独立扩展的维度：
+本设计将当前“上传 Agent `.tgz`（binary/node 子模式）并基于固定基础镜像构建”的单一路径，演进为三个可独立扩展的维度：
 
 ```text
 Artifact Kind x Recipe x BaseImage Version
