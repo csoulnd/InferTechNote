@@ -12,11 +12,127 @@
 
 这一方案已经打通上传、构建、状态查询、离线镜像保存和注册链路，但输入格式、校验逻辑、构建方式和基础镜像被绑定在同一流程中。继续增加 node 包、wheel、独立 binary、OCI 镜像、SDK/SSH 注入、基础镜像升级、同包多基础镜像、制品删除和配额等能力时，容易要求同时修改管理面 API、Service、数据库模型、镜像处理客户端、Dockerfile 和注册逻辑，形成霰弹修改。
 
-本次设计的目标不是一次实现所有格式，而是建立稳定的扩展边界，使后续能力能够沿制品类型、处理 Recipe 和基础镜像三个维度独立演进。
+为了使后续能力能够沿制品类型（处理不同类型的三方制品）、处理 Recipe（根据需求选择不同的构建内容）和基础镜像（三方Agent默认运行底座）三个维度独立演进。初版的验收目标为ScienceFlow和OpenClaw,可以顺利上架至一体机。
 
-## 2. 设计目标与非目标
+## 2. 架构对比：现状与目标
 
-### 2.1 设计目标
+本节是架构评审的主对照面：先看清当前耦合形态，再看目标拆分形态。详细概念定义见后续章节。
+
+### 2.1 现状架构（As-Is）
+
+当前已拆出独立 `image_process` 服务，但业务上仍是一条“NPM pack tgz → 固定 Dockerfile → 固定 base → 注册串进构建成功”的专用链路。
+
+```mermaid
+flowchart TB
+    subgraph CP["Control Panel（现状）"]
+        API["Admin API<br/>thirdparty_agent"]
+        Pkg["package.py<br/>元数据 + 平台校验"]
+        Svc["ThirdpartyAgentService<br/>上传 / 编排 / 注册"]
+        BT[("BuildTask")]
+        AR[("AgentRegistration")]
+        Dir["users/{owner}/installers|images|run"]
+    end
+
+    subgraph Factory["image_process（现状）"]
+        Builds["POST /v1/builds"]
+        FixedDF["固定 agent.Dockerfile"]
+        FixedBase["固定 agent-base:1.0"]
+        Docker["DockerBuilder<br/>build / save / inspect"]
+        Mem["内存任务态"]
+    end
+
+    Reg["Agent 注册中心"]
+
+    API --> Pkg --> Svc
+    Svc --> Dir
+    Svc --> BT
+    Svc -->|"绝对路径: installer/output/work"| Builds
+    Builds --> FixedDF --> FixedBase --> Docker
+    Docker --> Mem
+    Svc -->|"轮询进度/结果"| Mem
+    Svc -->|"构建 done 后注册；失败则 BuildTask=failed"| Reg
+    Svc --> AR
+```
+
+现状要点：
+
+- 输入形态写死在 CP 解析与工厂 Dockerfile 中，没有 Artifact / Recipe 抽象。
+- 基础镜像写死为 `agent-base:1.0`，不能按版本选择。
+- 注册编排耦合在构建成功路径上；`registered` 由 `BuildTask.status == done` 推导。
+- 工厂只暴露 builds，无 validate / capabilities / 多操作类型。
+
+### 2.2 目标架构（To-Be）
+
+目标将扩展轴拆为 **Artifact Kind × Recipe × BaseImage**，CP 持有账本与编排，工厂持有 Buildability 与高权限执行。
+
+```mermaid
+flowchart TB
+    subgraph CP["Control Panel（目标）"]
+        IAM["IAM / Admin API"]
+        Admission["Admission / Quota"]
+        ArtifactSvc["Artifact Service"]
+        BaseCatalog["BaseImage Catalog"]
+        JobOrch["Image Job Orchestrator"]
+        DeleteOrch["Deletion Orchestrator"]
+        Register["Registration Service"]
+        DB[("PostgreSQL 业务账本")]
+        UserDir["users/{owner}/... 目录"]
+    end
+
+    subgraph Factory["Image Factory（目标）"]
+        Cap["GET /v1/capabilities"]
+        Validator["POST /v1/validate"]
+        Registry["Recipe Registry"]
+        Executor["Build / Inject / Import"]
+        Runtime["Docker / OCI Runtime"]
+        ExecState["短期执行态"]
+    end
+
+    ExtReg["Agent 注册中心"]
+
+    IAM --> Admission
+    Admission --> ArtifactSvc
+    ArtifactSvc --> DB
+    ArtifactSvc --> UserDir
+    BaseCatalog --> DB
+    JobOrch --> DB
+    JobOrch -->|"artifact + recipe + base snapshot"| Validator
+    Validator --> Registry
+    Registry --> Executor
+    Executor --> Runtime
+    Executor --> ExecState
+    Cap -.-> JobOrch
+    JobOrch -->|"状态与结果投影"| DB
+    JobOrch --> Register
+    Register --> ExtReg
+    DeleteOrch --> DB
+    DeleteOrch --> UserDir
+    DeleteOrch -.->|"按明确资源辅助清理"| Factory
+```
+
+目标要点：
+
+- CP 管理身份、目录、配额、Artifact/Base/Job/Registration 账本。
+- 工厂按 Recipe 做校验与执行，不再内嵌单一 tgz 假设。
+- 构建/导入成功与注册成功使用独立状态，注册失败不反向污染镜像处理成功语义。
+- 同 Artifact 可基于不同 BaseImage、不同 Recipe 产生多个 ImageOutput。
+
+### 2.3 新旧对照
+
+| 维度 | 现状 | 目标 |
+|---|---|---|
+| 输入模型 | 隐含“平台后缀 NPM pack tgz” | 显式 `Artifact` + `kind` |
+| 处理方式 | 固定 Dockerfile / 固定安装假设 | 可注册 `Recipe`（build/inject/import） |
+| 基础镜像 | 代码写死 `agent-base:1.0` | CP `BaseImage` 目录 + 任务快照 digest |
+| 工厂接口 | `/v1/builds` | `/v1/capabilities`、`/v1/validate`、`/v1/jobs` |
+| 预检位置 | 主要在 CP `package.py` | 工厂 Buildability；CP 仅 Admission + 轻量 Inspection |
+| 注册 | 串在构建成功路径，用 `done` 推导 | 独立 `Registration` 状态机，可重试 |
+| 扩展方式 | 改 CP + 工厂 + Dockerfile 联调 | 新增 kind / Recipe / base 版本，尽量少动编排主链 |
+| 第一阶段验收 | 仅 binary 型 NPM tgz | 在新边界下覆盖 ScienceFlow、OpenClaw 上架 |
+
+## 3. 设计目标与非目标
+
+### 3.1 设计目标
 
 1. 将用户身份、用户目录、配额、产品账本、删除策略和注册编排稳定保留在管理面。
 2. 将“制品能否按某种方式形成可运行镜像”及其执行逻辑收口到镜像工厂。
@@ -27,21 +143,15 @@
 7. 支持按层级、按策略删除源制品、构建输出和注册记录。
 8. 保持已有 NPM tgz 构建能力兼容，并提供可回滚的渐进迁移路径。
 
-### 2.2 非目标
+### 3.2 非目标
 
 1. 不将 IAM、用户目录或用户配额迁入镜像工厂。
 2. 不在镜像工厂建设第二套用户、制品或构建业务数据库。
-3. 不将 Control Panel 收缩为镜像工厂的反向代理。
-4. 第一阶段不支持用户动态上传代码形式的 Recipe。
-5. 第一阶段不解决跨架构模拟构建；是否引入 Buildx/QEMU 单独评审。
-6. 不把模型 API Key、SSH 私钥等凭据固化到镜像层。
+3. 第一阶段不支持用户动态上传代码形式的 Recipe。
 
-## 3. 已有功能描述
+## 4. 已有功能描述
 
-> 本节按代码基线 `86f565d` 盘点现状，作为后续重构的对照基线，不代表目标态。  
-> 说明：其后的 `3b9e07f`（openclaw/node 安装模式）不纳入本节评估。
-
-### 3.1 管理面已有能力
+### 4.1 管理面已有能力
 
 - 三方 Agent API（`/api/v1/thirdparty_agent`）使用 `require_admin` 管理员鉴权。
 - 接收 `.tgz` 上传，限制单包大小（`THIRDPARTY_AGENT_INSTALLER_MAX_BYTES`），并检查目标文件系统剩余空间（含固定余量）。
@@ -59,7 +169,7 @@
 - 列表接口从注册中心查询镜像，再用本地 `AgentRegistration` 补齐展示字段。
 - 状态查询接口直接读本地 `BuildTask`；`registered` 仍由 `status == "done"` 推导。
 
-### 3.2 镜像处理服务已有能力
+### 4.2 镜像处理服务已有能力
 
 - 作为独立 FastAPI 服务部署，并通过共享卷访问用户目录；持有 Docker socket。
 - 对外接口：`GET /health`、`POST /v1/builds`、`GET /v1/builds/{task_id}`。
@@ -73,7 +183,7 @@
 - 使用内存字典保存任务执行状态，完成任务默认保留 24 小时（`TASK_TTL_SECONDS`）。
 - 支持相同活动 `task_id` 的基本幂等提交；并发上限由 CP 侧控制。
 
-### 3.3 当前主要限制
+### 4.3 当前主要限制
 
 - 上传制品只能按带平台后缀的 NPM `pack` `.tgz` 解释；不支持便携 Node 包、离线 `node_modules` 树、wheel、纯 binary、OCI archive 等输入。
 - 产品元数据解析、平台校验和 Dockerfile 隐式假设分散在 CP 与工厂；工厂本身不做包内容预检，直接按可执行文件拷贝路径构建。
@@ -86,9 +196,9 @@
 - 注册被串进构建成功路径：注册失败会使 `BuildTask` 变为 `failed`，但数据库仍无独立、可重试的注册状态；查询侧继续用 `done` 推导 `registered`。
 - 工厂接受绝对路径，但尚缺少通用的允许根目录、符号链接解析后再校验，以及解压炸弹/路径穿越防护。
 
-## 4. 核心概念
+## 5. 核心概念
 
-### 4.1 Artifact
+### 5.1 Artifact
 
 Artifact 表示用户交给 AgentOS 管理、可被检查、构建、转换、导入或注册的一个不可变输入制品。
 
@@ -103,7 +213,7 @@ Artifact 不是构建任务，不是基础镜像，也不等同于最终运行�
 
 Artifact 负责表达制品的归属、存储、类型、摘要、生命周期和可追溯性。一个 Artifact 可以被多个处理任务引用，例如同一个 tgz 分别基于 base 1.0 和 base 2.0 构建。
 
-### 4.2 Artifact Kind 与 Media Type
+### 5.2 Artifact Kind 与 Media Type
 
 `kind` 表示平台理解的逻辑类型，初始建议：
 
@@ -125,13 +235,13 @@ registry_image_ref
 
 `media_type` 表示文件或引用的物理格式。新增 kind 不应要求增加一组充满空值的数据库列；格式专有信息放在带 `schema_version` 的结构化 metadata 中。需要高频查询、唯一约束或索引的字段，再经评审提升为正式列。
 
-### 4.3 BaseImage
+### 5.3 BaseImage
 
 BaseImage 是由 CP 管理版本和可见性的构建基础镜像目录项。CP 管理名称、版本、状态、默认版本和升级策略；工厂负责检查可用性、架构和 Recipe 兼容性，并在任务结果中返回不可变 digest。
 
 BaseImage 与用户上传的 Source Image 必须区分：NPM tgz 通常需要外部 BaseImage；上传的 OCI 镜像自身是 Source Image，不应为了字段统一被强行建模为 BaseImage。
 
-### 4.4 Recipe
+### 5.4 Recipe
 
 Recipe 表示工厂对一种 Artifact 进行校验和处理、最终产生可注册镜像的版本化方法。Recipe 声明：
 
@@ -145,7 +255,7 @@ Recipe 表示工厂对一种 Artifact 进行校验和处理、最终产生可注
 
 第一阶段 Recipe 在工厂代码中注册，不允许用户上传任意构建脚本。
 
-### 4.5 ImageProcessJob 与 ImageOutput
+### 5.5 ImageProcessJob 与 ImageOutput
 
 当前 `BuildTask` 名称只适合狭义构建。目标任务实际可能执行：
 
@@ -160,54 +270,15 @@ validate  仅执行预检
 
 ImageOutput 表示任务产生或导入的可运行镜像，包括 image ref、digest、离线 archive 路径和 runtime profile。
 
-### 4.6 Registration
+### 5.6 Registration
 
 Registration 表示 CP 将一个 ImageOutput 发布到外部 Agent 注册中心的过程。注册属于管理面编排，不属于镜像工厂。构建/导入成功与注册成功必须使用独立状态表示。
 
-## 5. 总体架构
+## 6. 稳定边界
 
-```mermaid
-flowchart TB
-    subgraph CP["Control Panel"]
-        IAM["IAM / Admin API"]
-        Admission["Admission / Quota"]
-        ArtifactSvc["Artifact Service"]
-        BaseCatalog["BaseImage Catalog"]
-        JobOrch["Image Job Orchestrator"]
-        DeleteOrch["Deletion Orchestrator"]
-        Register["Registration Service"]
-        DB[("PostgreSQL 业务账本")]
-        UserDir["users/{owner}/... 目录"]
-    end
+架构总图见 [§2 架构对比](#2-架构对比现状与目标)。本节冻结 CP 与 Factory 的职责归属，作为后续功能设计不得突破的边界。
 
-    subgraph Factory["Image Factory"]
-        Cap["Recipe Capabilities"]
-        Validator["Recipe Validator"]
-        Registry["Recipe Registry"]
-        Executor["Build / Inject / Import"]
-        Runtime["Docker / OCI Runtime"]
-        ExecState["短期执行态"]
-    end
-
-    IAM --> Admission
-    Admission --> ArtifactSvc
-    ArtifactSvc --> DB
-    ArtifactSvc --> UserDir
-    BaseCatalog --> DB
-    JobOrch --> DB
-    JobOrch -->|"artifact ref + recipe + base snapshot"| Validator
-    Validator --> Registry
-    Registry --> Executor
-    Executor --> Runtime
-    Executor --> ExecState
-    JobOrch -->|"状态与结果投影"| DB
-    JobOrch --> Register
-    DeleteOrch --> DB
-    DeleteOrch --> UserDir
-    DeleteOrch -.->|"按明确资源执行辅助清理"| Factory
-```
-
-### 5.1 稳定边界
+### 6.1 职责归属
 
 | 能力 | 所属 | 原因 |
 |---|---|---|
@@ -220,9 +291,9 @@ flowchart TB
 | 短期进度和执行错误 | Factory | 属于任务执行态 |
 | 状态投影、重试和注册 | CP | 属于业务编排与最终一致性 |
 
-## 6. 新增功能设计
+## 7. 新增功能设计
 
-### 6.1 通用 Artifact 管理
+### 7.1 通用 Artifact 管理
 
 建议 Artifact 核心模型：
 
@@ -256,7 +327,7 @@ available -> deleting -> deleted
 
 CP 可以为不同 kind 注册轻量 `ArtifactInspector`，只提取建账和展示所需信息，不判断某个 Recipe 是否可构建。示例：NPM inspector 读取包名和版本；OCI inspector 读取 manifest、tag 和架构；wheel inspector 读取 distribution 和 wheel tags。
 
-### 6.2 Recipe 扩展机制
+### 7.2 Recipe 扩展机制
 
 建议初始 Recipe：
 
@@ -277,7 +348,7 @@ GET /v1/capabilities
 
 返回 Recipe ID、版本、支持的 artifact kind、是否要求 base、参数 schema 和输出能力。CP 和前端不得各自硬编码一份不一致的 Recipe 列表。
 
-### 6.3 Buildability 校验
+### 7.3 Buildability 校验
 
 校验分为三层：
 
@@ -309,7 +380,7 @@ GET  /v1/jobs/{job_id}
 
 错误码至少覆盖无效 archive、缺失目录、缺失入口、平台不匹配、base 不可用、artifact kind 不支持、路径越界和镜像不可 load。
 
-### 6.4 BaseImage 版本管理与同包多 base
+### 7.4 BaseImage 版本管理与同包多 base
 
 建议 BaseImage 模型：
 
@@ -330,7 +401,7 @@ updated_at
 
 基础镜像升级通过新增版本完成，不原地覆盖旧版本。创建 ImageProcessJob 时，CP 固化 `base_image_id`、提交时的 `image_ref` 和工厂解析后的 digest。一个 Artifact 可以创建多个使用不同 BaseImage 的任务和 ImageOutput。
 
-### 6.5 已构建镜像直接导入并注册
+### 7.5 已构建镜像直接导入并注册
 
 必须支持 OCI/Docker archive 不重建直接注册，推荐流程：
 
@@ -358,7 +429,7 @@ unregistered
 
 注册失败不反向将镜像处理任务标记为失败，但应保存错误、支持重试，并禁止使用 `job.status == done` 推导 `registered == true`。
 
-### 6.6 分层删除与策略化接口
+### 7.6 分层删除与策略化接口
 
 删除涉及源 Artifact、任务记录、ImageOutput、本地 Docker image、外部注册记录和工作目录。不能使用一个隐式级联的 DELETE 完成所有动作。
 
@@ -397,7 +468,7 @@ GET    /api/v1/deletion-jobs/{deletion_job_id}
 
 CP 内部使用 `DeletionPolicy.plan()` 与 `DeletionPolicy.execute()`；工厂只接受明确的资源标识执行镜像或产物清理辅助，不决定级联范围和用户策略。
 
-### 6.7 数量与容量限制
+### 7.7 数量与容量限制
 
 配额建议独立为 `ArtifactQuotaService`：
 
@@ -418,7 +489,7 @@ reconcile
 - 活动 ImageProcessJob 数量；
 - 单文件最大大小。
 
-### 6.8 共享路径安全
+### 7.8 共享路径安全
 
 共享卷模型可以保留，目录归属仍由 CP 决定。工厂不识别 `users/{owner}`，但必须实现通用执行安全：
 
@@ -432,9 +503,9 @@ reconcile
 
 这些是工厂的执行安全约束，不属于用户目录业务语义。
 
-## 7. 目标接口契约
+## 8. 目标接口契约
 
-### 7.1 创建处理任务
+### 8.1 创建处理任务
 
 ```json
 {
@@ -465,7 +536,7 @@ reconcile
 
 工厂不接收 username，也不从 artifact ID 或路径解析用户身份。
 
-### 7.2 任务结果
+### 8.2 任务结果
 
 ```json
 {
@@ -493,9 +564,9 @@ reconcile
 }
 ```
 
-## 8. 数据模型修改建议
+## 9. 数据模型修改建议
 
-### 8.1 新增或重构模型
+### 9.1 新增或重构模型
 
 - 新增通用 `Artifact` 作为主账本；当前上传结果主要落在用户目录文件 + `AgentRegistration`，缺少独立的源制品账本。
 - 新增 `BaseImage` 产品目录。
@@ -504,7 +575,7 @@ reconcile
 - 将现有 `AgentRegistration` 演进为独立 `Registration`（或至少增加可重试的注册状态字段），与构建终态解耦。
 - 新增 `DeletionJob` 和必要的配额 reservation 记录。
 
-### 8.2 唯一性与隔离
+### 9.2 唯一性与隔离
 
 当前唯一性分散：安装包按 `{owner}/installers/{agent_name}-{version}.tgz` 路径去重，注册记录主键为 `(framework, framework_version)`，构建并发按全局活动任务计数。该模型不适合用户级多类型制品目录。建议业务唯一性改为：
 
@@ -514,7 +585,7 @@ reconcile
 
 Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 name/version 但不同 digest，需要评审决定。
 
-## 9. 需要进行的代码修改及原因
+## 10. 需要进行的代码修改及原因
 
 | 模块 | 修改 | 原因 |
 |---|---|---|
@@ -532,7 +603,7 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 | 注册逻辑 | 构建状态与注册状态解耦，支持重试和解除注册 | 当前 `done` 不能代表注册成功 |
 | 测试 | 增加契约、Recipe、迁移、配额并发、删除和故障恢复测试 | 保证扩展不会破坏已有链路 |
 
-## 10. 兼容与迁移方案
+## 11. 兼容与迁移方案
 
 ### 阶段 0：设计与契约冻结
 
@@ -573,41 +644,41 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 
 旧接口在迁移期转换为新 Job 请求；在调用方切换并完成数据迁移后再评审废弃时间，不建议一次性删除。
 
-## 11. 测试与验收
+## 12. 测试与验收
 
-### 11.1 兼容性
+### 12.1 兼容性
 
 - 原有 NPM `pack` `.tgz`（平台后缀 + 可执行文件拷贝）成功和失败场景保持一致。
 - 旧 API 在兼容期返回相同核心字段。
 - 已有安装包文件、`BuildTask` 和 `AgentRegistration` 数据可迁移和查询。
 
-### 11.2 扩展性
+### 12.2 扩展性
 
 - 新增测试 Recipe 不修改 CP JobOrchestrator 主流程。
 - 同一 Artifact 可使用两个 BaseImage 创建独立输出。
 - OCI import 不执行 Dockerfile build 即可形成可注册 ImageOutput。
 
-### 11.3 删除与配额
+### 12.3 删除与配额
 
 - 三种删除策略均先返回准确影响范围。
 - 活动任务引用的 Artifact 不会被直接删除。
 - 并发上传不会突破数量或容量上限。
 - 部分删除失败可以重试，账本与实际文件可 reconcile。
 
-### 11.4 故障恢复
+### 12.4 故障恢复
 
 - 工厂重启后 CP 活动任务能够在规定时间内收敛为重试或失败。
 - 重复 job ID 不产生重复输出。
 - 注册失败可以独立重试，不重复构建镜像。
 
-### 11.5 安全
+### 12.5 安全
 
 - 路径穿越、符号链接逃逸、解压炸弹和超量文件被拒绝。
 - 非法 Recipe、artifact kind/Recipe 不匹配被拒绝。
 - 未授权调用方不能直接访问工厂高权限接口。
 - 敏感凭据不进入构建上下文、镜像层、错误详情和日志。
 
-## 12. 评审决策点
+## 13. 评审决策点
 
 以下内容由模块 Owner 提出建议，但需要相关团队共同评审。
 
@@ -685,17 +756,17 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 - 待决策：采用 mTLS、短期签名 token 还是部署平台提供的 workload identity。
 - 影响：安全强度和部署运维复杂度。
 
-## 13. 建议评审顺序
+## 14. 建议评审顺序
 
-1. 先评审 CP 与 Factory 的职责边界。
+1. 先对照 §2 拍板新旧架构差异与 CP / Factory 职责边界（§6）。
 2. 再评审 Artifact、BaseImage、ImageOutput 和 Registration 概念。
-3. 再评审 Recipe、validate/build 契约和错误模型。
-4. 再评审删除、配额和状态恢复。
+3. 再评审 Recipe、validate/jobs 契约和错误模型。
+4. 再评审删除、配额和状态恢复是否进入第一阶段。
 5. 最后评审数据库迁移、旧 API 兼容和实施阶段。
 
-只有前四项达成一致后，才建议进入详细设计和任务拆分，避免实现过程中反复移动职责边界。
+只有前三项达成一致后，才建议进入详细设计和任务拆分，避免实现过程中反复移动职责边界。
 
-## 14. 总结
+## 15. 总结
 
 本设计将当前“上传 NPM pack `.tgz` 并基于固定基础镜像构建”的单一路径，演进为三个可独立扩展的维度：
 
