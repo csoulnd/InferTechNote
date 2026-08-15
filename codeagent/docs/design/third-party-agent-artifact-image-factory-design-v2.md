@@ -125,60 +125,9 @@ flowchart LR
 | 不关注 | 不解包、不读包内清单、不选构建方式或底座 | 不管用户身份、配额展示、卡片目录 |
 | 参考 | OWASP File Upload Cheat Sheet | 按制品类型匹配处理方式 |
 
-## 4. 静态结构
+## 4. 卡片字段
 
-本图说明卡片只属于注册中心；管理面不持有卡片库；工厂只持有 Recipe。
-
-```mermaid
-classDiagram
-    class ControlPanel {
-        +onboard()
-        +listCards()
-        +deleteCard()
-    }
-    class ImageFactory {
-        +buildFromPath(path)
-        +removeLoadedImage()
-    }
-    class RecipeRegistry {
-        +resolve(artifact) Recipe
-    }
-    class Recipe {
-        <<strategy>>
-        +validate()
-        +execute()
-    }
-    class NpmTgzOnBase
-    class OciImport
-    class RegistryCenter {
-        +register(card)
-        +listFrameworks()
-        +listInstances()
-        +deleteCard()
-    }
-    class Card {
-        +framework
-        +version
-        +description
-        +runtimeSpec
-        +imageurl
-        +packagePath
-        +imageArchivePath
-        +uploadedBy
-    }
-
-    ControlPanel --> ImageFactory
-    ControlPanel --> RegistryCenter
-    ImageFactory --> RecipeRegistry
-    RecipeRegistry --> Recipe : 按解析结果取出
-    Recipe <|-- NpmTgzOnBase
-    Recipe <|-- OciImport
-    RegistryCenter --> Card : 唯一账本
-```
-
-**卡片必须来自注册中心，一份数据。** 管理面不为卡片建 `LocalBinding` / `AgentRegistration` 一类本地表。上架时把展示、运行、本机路径一次性写入注册中心；查询只读注册中心；删除按卡片上的路径清文件。
-
-现网注册中心 `/api/images`（jiuwenswarm `ImageEntry`）偏运行目录，不够管卡片。本设计**要求注册中心扩字段**，不以当前实现为上限：
+现网注册中心 `/api/images` 偏运行目录，不够管卡片。本轮要求扩字段，实现类图见后文：
 
 | 字段 | 现网 | 本轮 | 谁用 |
 |---|---|---|---|
@@ -190,9 +139,7 @@ classDiagram
 | `image_archive_path` | 无 | **新增** | 管理员详情、整卡删落盘镜像 |
 | `recipe_id` / `base_ref` | 无 | 建议一并写入 | 本轮不跑升级，留给后续改 |
 
-用户视图由管理面裁掉 `package_path`、`image_archive_path` 等运维字段。文件仍物理落在管理面机器上，**路径记在卡片里**，不在管理面再抄一份。
-
-**Recipe 与 Base 都在工厂内选择。** 管理面不理解包格式，也不选底座。工厂解析路径上的制品后，由 `RecipeRegistry` 匹配策略并选定 Base，再校验、执行。新增包类型或构建方式只改工厂。
+用户视图由管理面裁掉路径类运维字段。文件物理上仍在管理面机器，路径记在卡片上。
 
 ## 5. 主成功路径
 
@@ -246,7 +193,7 @@ flowchart TD
 
 ## 6. 关键交互
 
-把上一节跨进程箭头展开为调用。对象与 §4 类图一致。
+把上一节跨进程箭头展开为调用。参与方与 §3 一致。
 
 ### 6.1 上架
 
