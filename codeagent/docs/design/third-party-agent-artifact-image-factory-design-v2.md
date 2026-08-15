@@ -59,6 +59,100 @@ flowchart LR
 | 镜像处理 | 固定一种 tgz 构建 | 按 Recipe 校验并执行 |
 | 扩展 | 多处联改 | 新增 kind / Recipe / base |
 | 卡片 | 本地状态推导是否已注册 | 以注册中心为准，前端刷新回源 |
+| 管理粒度 | 上传、构建、注册缠在同一对象上 | 只管理已注册卡片；忽略已上传未构建等中间态 |
+
+### 2.1 主流程
+
+上架是一条连续路径：成功则注册中心出现卡片，失败不进入产品目录。
+
+```mermaid
+flowchart TD
+    A[管理员上传制品] --> B[管理面：轻量建账]
+    B --> C[选定 Recipe 与 Base]
+    C --> D[镜像工厂：Validate]
+    D -->|不可构建| X[任务失败，清理残留]
+    D -->|通过| E[Recipe 执行<br/>build / import / inject]
+    E -->|失败| X
+    E -->|成功| F[管理面：按需注册]
+    F -->|失败| X
+    F -->|成功| G[注册中心落下卡片]
+    G --> H[前端刷新：查询框架列表]
+```
+
+删除只针对已有卡片：
+
+```mermaid
+flowchart TD
+    Q[前端刷新 / 选中卡片] --> R[注册中心：查实例]
+    R -->|仍有实例| S[拒绝删除]
+    R -->|无实例| T[管理面按本地索引级联]
+    T --> T1[删源包]
+    T --> T2[删本地镜像文件]
+    T --> T3[卸已 load 镜像]
+    T --> T4[删注册中心卡片]
+    T1 --> U[丢掉本地索引]
+    T2 --> U
+    T3 --> U
+    T4 --> U
+```
+
+### 2.2 类图
+
+工厂侧用注册表工厂取出 Recipe 策略；管理面只编排；卡片属于注册中心。
+
+```mermaid
+classDiagram
+    class ControlPanel {
+        +upload()
+        +startJob()
+        +register()
+        +refreshCards()
+        +deleteCard()
+    }
+    class LocalBinding {
+        +cardId
+        +packagePath
+        +imageArchive
+        +loadedImageRef
+        +recipeId
+        +baseRef
+    }
+    class ImageFactory {
+        +validate()
+        +createJob()
+    }
+    class RecipeRegistry {
+        +get(recipeId) Recipe
+    }
+    class Recipe {
+        <<strategy>>
+        +validate()
+        +execute()
+    }
+    class NpmTgzOnBase
+    class OciImport
+    class RegistryCenter {
+        +listFrameworks()
+        +register()
+        +listInstances()
+        +deleteCard()
+    }
+    class Card {
+        +framework
+        +version
+        +runtimeSpec
+    }
+
+    ControlPanel --> LocalBinding : 本机附属
+    ControlPanel --> ImageFactory : 制品+Recipe+Base
+    ControlPanel --> RegistryCenter : 发布/查询/删卡
+    ImageFactory --> RecipeRegistry
+    RecipeRegistry --> Recipe : 创建/取出
+    Recipe <|-- NpmTgzOnBase
+    Recipe <|-- OciImport
+    RegistryCenter --> Card : 权威目录
+    LocalBinding ..> Card : cardId
+```
 
 ## 3. 核心概念
 
@@ -136,16 +230,18 @@ ImageOutput 表示任务产生或导入的可运行镜像，包括 image ref、d
 
 ### 3.6 卡片与 Registration
 
-产品上的「卡片」来自注册中心框架管理，不是管理面本地造的目录对象。二次构建成功并完成注册后，注册中心落下一张可运行身份；前端展示、搜索、刷新都以这张卡为准。
+产品上的「卡片」来自注册中心框架管理，不是管理面本地造的目录对象。二次构建成功并完成注册后，注册中心落下一张可运行身份；前端展示、搜索、刷新、删除都以这张卡为准。
 
-Registration 表示管理面把一次 ImageOutput **发布**到注册中心的过程，属于编排，不属于镜像工厂。构建/导入成功与注册成功必须使用独立状态：Job 成功只表示本机已有可用镜像，卡片是否出现以注册中心查询结果为准。
+**本阶段忽略中间态。** 已上传未构建、构建中、构建成功但未注册，都不作为产品对象出现在卡片墙，也不单独做列表、配额和删除策略。上传与构建连续完成，成功则出卡；失败只保留短暂任务提示，便于重试或清理残留，不形成「草稿卡片」。
 
-展示与刷新：
+Registration 表示管理面把一次 ImageOutput **发布**到注册中心的过程，属于编排，不属于镜像工厂。卡片是否存在以注册中心查询结果为准，禁止用本地 Job `done` 冒充已上架。
 
-- 三方智能体管理页的卡片列表走注册中心框架查询接口；管理面只做鉴权转发，不以本地表作为列表真相。
-- 前端必须提供显式刷新：用户触发后重新向注册中心查找，而不是只读管理面缓存或本地 `AgentRegistration`。
-- 管理面本地仅保留本机附属索引（源包路径、本地镜像文件、已 load 的 image ref），用于删除级联，不用于充当卡片目录。
-- 删卡前通过注册中心实例查询确认无运行实例，再清本机附属物并删除注册中心卡片。
+展示、刷新与删除：
+
+- 卡片列表走注册中心框架查询接口；管理面只做鉴权转发。
+- 前端提供显式刷新，回源注册中心，不读本地目录当真相。
+- 管理面本地仅保留本机附属索引（源包路径、本地镜像文件、已 load 的 image ref），挂在卡片下，供无实例时整卡拆除。
+- 删卡前通过注册中心实例查询确认无运行实例，再删源包、本地镜像文件、已 load 镜像和注册中心记录。
 
 ## 4. 稳定边界
 
@@ -190,16 +286,9 @@ updated_at
 deleted_at
 ```
 
-建议状态：
+内部可保留过程状态，但**不对用户暴露「已上传未构建」目录**。上传后连续发起处理任务，成功注册才进入卡片管理；失败包作为任务残留清理，不单独做成可管理制品。
 
-```text
-uploading -> inspecting -> available
-                       -> invalid
-available -> deleting -> deleted
-                    -> delete_failed
-```
-
-CP 可以为不同 kind 注册轻量 `ArtifactInspector`，只提取建账和展示所需信息，不判断某个 Recipe 是否可构建。示例：NPM inspector 读取包名和版本；OCI inspector 读取 manifest、tag 和架构；wheel inspector 读取 distribution 和 wheel tags。
+CP 可以为不同 kind 注册轻量 `ArtifactInspector`，只提取建账所需信息，不判断某个 Recipe 是否可构建。示例：NPM inspector 读取包名和版本；OCI inspector 读取 manifest、tag 和架构。
 
 ### 5.2 Recipe 扩展机制
 
@@ -305,9 +394,9 @@ unregistered
 
 ### 5.6 分层删除与策略化接口
 
-删除涉及源 Artifact、任务记录、ImageOutput、本地 Docker image、外部注册记录和工作目录。不能使用一个隐式级联的 DELETE 完成所有动作。
+第一阶段只提供**整卡拆除**：对象是注册中心的卡片，不是未构建的源包。无运行实例时级联删除源包、本地镜像文件、已 load 镜像和注册记录。已上传未构建等中间态不进入删除产品面。
 
-首批策略：
+后续若需要更细回收，再考虑下列策略，本阶段不实现：
 
 | 策略 | 行为 |
 |---|---|
