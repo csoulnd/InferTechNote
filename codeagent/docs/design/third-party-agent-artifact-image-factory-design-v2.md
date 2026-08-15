@@ -24,7 +24,7 @@
 | 2. 新包 / 新构建方式 | 构建侧高内聚低耦合，新增软件包类型或 Recipe 不改管理面主链 | 重构目标是减少不同类型构建方式的适配成本 |
 | 3. 智能体卡片管理 | 同一套卡片，按视图区分能力。权威数据在注册中心。**改（升级）**不在本次承载 | 见下方用户视图 / 管理员视图 |
 
-智能体卡片本质是「软件包 + 机上预置依赖」经 Recipe 得到的镜像文件。升级需要感知源软件包的存储路径，需要注册中心记住源包位置。
+智能体卡片本质是「软件包 + 机上预置依赖」经 Recipe 得到的可运行身份。卡片上的展示字段、运行字段和本机资源路径**全部收拢到注册中心**，管理面不为卡片再建第二份库。升级（改机上依赖）本轮不做流程，但源包路径已落在卡片上，后续可直接用。
 
 卡片管理功能区分两种视图：
 
@@ -94,7 +94,7 @@ flowchart LR
 flowchart LR
     subgraph CP["管理面"]
         direction TB
-        T1[上传 / 轻量建账]
+        T1[落盘用户目录<br/>读取名称/版本]
         T2[选定 Recipe 与 Base<br/>发起任务]
         T3[按需注册]
         T1 --> T2
@@ -115,21 +115,14 @@ flowchart LR
 
 ## 4. 静态结构
 
-本图说明谁拥有卡片、谁拥有构建策略、谁只持有本机路径。
+本图说明卡片只属于注册中心；管理面不持有卡片库；工厂只持有 Recipe。
 
 ```mermaid
 classDiagram
-    class Admin
     class ControlPanel {
         +onboard()
         +listCards()
         +deleteCard()
-    }
-    class LocalBinding {
-        +cardId
-        +packagePath
-        +imageArchive
-        +loadedImageRef
     }
     class ImageFactory {
         +validate()
@@ -157,25 +150,38 @@ classDiagram
         +version
         +description
         +runtimeSpec
+        +imageurl
+        +packagePath
+        +imageArchivePath
+        +uploadedBy
     }
 
-    Admin --> ControlPanel
-    ControlPanel --> LocalBinding : 本机索引
     ControlPanel --> ImageFactory
     ControlPanel --> RegistryCenter
     ImageFactory --> RecipeRegistry
     RecipeRegistry --> Recipe : 工厂方法取出
     Recipe <|-- NpmTgzOnBase
     Recipe <|-- OciImport
-    RegistryCenter --> Card : 拥有
-    LocalBinding ..> Card : cardId
+    RegistryCenter --> Card : 唯一账本
 ```
 
-**卡片必须来自注册中心。** 管理面不得用本地 Job 状态冒充卡片。注册中心框架记录需新增展示字段，至少包括 `description`（上架时由管理面写入）。列表与刷新只查注册中心。
+**卡片必须来自注册中心，一份数据。** 管理面不为卡片建 `LocalBinding` / `AgentRegistration` 一类本地表。上架时把展示、运行、本机路径一次性写入注册中心；查询只读注册中心；删除按卡片上的路径清文件。
 
-**本机索引不是第二份卡片目录。** `LocalBinding` 只存删卡和详情查询需要的路径：软件包落盘路径、本地镜像文件、已 load 的 image ref。本轮**不把这些路径写入注册中心**（那是后续升级的前置，见 §2）。
+现网注册中心 `/api/images`（jiuwenswarm `ImageEntry`）偏运行目录，不够管卡片。本设计**要求注册中心扩字段**，不以当前实现为上限：
 
-**Recipe 用策略 + 工厂。** 新增软件包类型或构建方式：增加 Inspector（可选）和 Recipe 实现并注册，不改管理面编排类。
+| 字段 | 现网 | 本轮 | 谁用 |
+|---|---|---|---|
+| `framework` / `framework_version` | 有 | 保留，卡片主键 | 两种视图 |
+| `runtime_spec` / `imageurl` / 资源字段 | 有 | 保留 | 拉起实例 |
+| `uploaded_by` | 有 | 保留 | 管理员 |
+| `description` | 无 | **新增** | 两种视图展示 |
+| `package_path` | 无 | **新增** | 管理员详情、整卡删源包 |
+| `image_archive_path` | 无 | **新增** | 管理员详情、整卡删落盘镜像 |
+| `recipe_id` / `base_ref` | 无 | 建议一并写入 | 本轮不跑升级，留给后续改 |
+
+用户视图由管理面裁掉 `package_path`、`image_archive_path` 等运维字段。文件仍物理落在管理面机器上，**路径记在卡片里**，不在管理面再抄一份。
+
+**Recipe 用策略 + 工厂。** 新增软件包类型或构建方式只加 Recipe，不改管理面编排。
 
 ## 5. 主成功路径
 
@@ -187,16 +193,15 @@ classDiagram
 
 ```mermaid
 flowchart TD
-    A[管理员上传制品并填写描述] --> B[管理面轻量建账]
+    A[管理员上传制品并填写描述] --> B[管理面：写入用户目录<br/>读取名称/版本]
     B --> C[选定 Recipe 与 Base]
     C --> D[工厂 Validate + 执行]
     D --> E[管理面注册到注册中心]
-    E --> F[注册中心落下卡片<br/>含 description]
-    F --> G[管理面记下 LocalBinding]
-    G --> H[前端刷新：查询注册中心]
+    E --> F[注册中心落下完整卡片]
+    F --> G[前端刷新：查询注册中心]
 ```
 
-权威数据（名称、版本、描述、runtime）在注册中心。管理面只补本机路径索引。
+管理面在上架时：把软件包写到用户目录、读出名称和版本、选 Recipe/Base、调用工厂。成功后把描述、runtime、`package_path`、`image_archive_path` 一并注册。不做「能不能构建」的判断，也不再本地建卡片表。
 
 ### 5.2 查询（查）
 
@@ -207,8 +212,8 @@ flowchart TD
     A[用户或管理员刷新 / 搜索] --> B[管理面转发框架查询]
     B --> C[注册中心返回卡片列表<br/>含 description]
     C --> D{视图}
-    D -->|用户| E[展示卡片，不含本机路径]
-    D -->|管理员| F[附带 packagePath / 镜像路径后展示]
+    D -->|用户| E[展示字段，去掉路径]
+    D -->|管理员| F[原样展示，含包路径和镜像路径]
 ```
 
 ### 5.3 删除（删）
@@ -219,15 +224,11 @@ flowchart TD
 flowchart TD
     A[管理员选中卡片] --> B[注册中心查询实例]
     B -->|有实例| C[拒绝删除]
-    B -->|无实例| D[按 LocalBinding 级联]
-    D --> D1[删软件包]
-    D --> D2[删本地镜像文件]
-    D --> D3[卸已 load 镜像]
-    D --> D4[删注册中心卡片]
-    D1 --> E[丢掉 LocalBinding]
-    D2 --> E
-    D3 --> E
-    D4 --> E
+    B -->|无实例| D[按卡片上的路径级联]
+    D --> D1[管理面删软件包]
+    D --> D2[管理面删落盘镜像文件]
+    D --> D3[工厂卸已 load 镜像]
+    D --> D4[注册中心删卡片]
 ```
 
 「改」即升级，本轮无主成功路径。
@@ -246,14 +247,13 @@ sequenceDiagram
     participant R as 注册中心
 
     Admin->>CP: 上传制品 + description
-    CP->>CP: 轻量建账，选定 Recipe/Base
+    CP->>CP: 落盘、读取名称/版本，选定 Recipe/Base
     CP->>F: validate(制品, Recipe, Base)
     F-->>CP: 通过
     CP->>F: execute(...)
     F-->>CP: imageRef, archivePath, runtime
-    CP->>R: register(framework, version, description, runtime)
+    CP->>R: register(卡片：描述、runtime、package_path、image_archive_path)
     R-->>CP: cardId
-    CP->>CP: 写入 LocalBinding(路径)
     Admin->>CP: 刷新列表
     CP->>R: listFrameworks()
     R-->>Admin: 卡片（含 description）
@@ -271,10 +271,9 @@ sequenceDiagram
     CP->>R: listFrameworks()
     R-->>CP: Card[]
     alt 用户视图
-        CP-->>User: 卡片展示字段
+        CP-->>User: 卡片展示字段（去掉路径）
     else 管理员视图
-        CP->>CP: 按 cardId 附带 packagePath、镜像路径
-        CP-->>User: 卡片 + 本机路径
+        CP-->>User: 完整卡片（含包路径、镜像路径）
     end
 ```
 
@@ -296,10 +295,10 @@ sequenceDiagram
         CP-->>Admin: 拒绝
     else 无实例
         R-->>CP: 空
-        CP->>CP: 删软件包、本地镜像文件
-        CP->>F: removeLoadedImage(imageRef)
+        CP->>R: 取卡片上的 package_path / image_archive_path
+        CP->>CP: 删软件包、落盘镜像文件
+        CP->>F: removeLoadedImage(imageurl)
         CP->>R: deleteCard()
-        CP->>CP: 删除 LocalBinding
         CP-->>Admin: 已拆除
     end
 ```
@@ -327,7 +326,7 @@ flowchart LR
 
 ## 8. 构建扩展（需求 2）
 
-管理面编排固定：上传 → 建账 → 发起任务 → 注册。  
+管理面编排固定：上传落盘并读取名称/版本 → 发起任务 → 注册。  
 工厂用 `RecipeRegistry.get(id)` 取出策略，新增方式只加 Recipe。
 
 | Recipe | 输入 | 作用 |
@@ -341,15 +340,15 @@ flowchart LR
 
 | 做 | 不做 |
 |---|---|
-| 卡片概念；注册中心增加 `description` | 管理面本地卡片墙 |
-| 上架连续完成并落卡 | 已上传未构建作为可管理对象 |
-| 查询回源注册中心；用户视图只看展示字段，管理员详情带本机路径 | 把包路径写入注册中心；用户侧增删卡 |
-| 无实例整卡拆除 | 卡片升级 / 机上依赖升级 |
+| 卡片只存在注册中心；新增 `description`、`package_path`、`image_archive_path` | 管理面再做 LocalBinding / 卡片表 |
+| 上架连续完成并一次写全卡片 | 已上传未构建作为可管理对象 |
+| 查询回源；用户视图裁路径，管理员看全字段 | 用户侧增删卡 |
+| 无实例按卡片路径整卡拆除 | 本轮实现升级流程（字段可先写入） |
 | Recipe 插拔以支持新包和新构建 | 用户自定义 Recipe 脚本 |
 
 ## 10. 总结
 
-- **卡片**是注册中心的已发布身份，必须带来源与 `description`。  
-- **构建**用策略 + 工厂拆开扩展轴，避免再改串行专用链。  
-- **管理**本轮只做增、删、查，且区分用户视图与管理员视图；改（升级）明确后置，因此注册中心暂不承载软件包落盘位置。  
-- 管理面只保留 `LocalBinding`，供管理员查询路径和整卡拆除，不进入用户视图。
+- **卡片**是注册中心上的唯一账本：展示、运行、本机路径都在一张卡上，现网缺的字段由注册中心新增。  
+- **构建**用策略 + 工厂拆开扩展轴。  
+- **管理**本轮做增、删、查，区分用户/管理员视图；改（升级）不做流程。  
+- 管理面不建第二份卡片库；删文件时读卡片上的路径，卸镜像仍交给工厂。
