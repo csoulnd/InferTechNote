@@ -4,6 +4,7 @@
 > 适用范围：AgentOS Control Panel 三方 Agent 管理模块、`image_process` 镜像处理服务  
 > 代码基线：`refactor/image_process`，`86f565d`（不含其后的 openclaw/node 安装模式改动）  
 > 历史参考：`containerized-build.md`、`third-party-agent-integration-guide.md`  
+> 上传门禁参考：OWASP [File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html)（实践清单，非代码依赖）  
 > 说明：本文是面向后续扩展的新版本总体设计，不替代或覆盖旧版设计文档。
 
 ## 1. 背景
@@ -54,13 +55,22 @@ flowchart LR
 |---|---|
 | 普通用户 | 用户视图：刷新、查看已发布卡片 |
 | 管理员 | 管理员视图：上架、查看含路径的详情、发起删卡 |
-| 管理面 | 按角色鉴权；编排上传与构建、注册、按卡片清本机文件；转发查询 |
-| 镜像工厂 | 按 Recipe 校验并执行 build/import/inject；按指示卸本机已 load 镜像 |
+| 管理面 | 按角色鉴权；上传通用门禁与落盘；把路径交给工厂；用结果注册；按卡片路径清本机文件；转发查询 |
+| 镜像工厂 | 解析制品、选择 Recipe 与 Base、校验能否构建并执行；按指示卸本机已 load 镜像 |
 | 注册中心 | **卡片权威**；框架查询、实例查询、落卡与删卡 |
 
-现状是**串行且耦合**：管理面既做上传落盘，又做包格式/平台校验，并判断「能不能构建」；镜像处理模块只按固定 Dockerfile 和固定 base 执行 `docker build`。两边已是两个进程，但构建判断等逻辑仍然留在管理面，镜像处理只是被调用的执行器，属于进程隔离。注册还串在构建成功之后，由管理面调用注册中心。
+上传职责拆成两层，互不替代：
 
-目标把「能不能按某种方式做成镜像」收进工厂的 Recipe；管理面只做编排和注册，卡片以注册中心为准。
+| | 管理面：通用门禁 | 镜像工厂：构建条件 |
+|---|---|---|
+| 问题 | 这是不是一次可接受的上传 | 这个文件能不能、以及如何做成镜像 |
+| 做什么 | 单文件大小、实际字节封顶、磁盘余量；扩展名白名单；文件名去掉路径穿越，落盘名由服务端生成；先写临时文件再改名 | 解析包内容；选择 Recipe 与 Base；判断能否构建；执行 build/import/inject |
+| 不做什么 | 不解包、不读 package.json、不选策略/底座 | 不管用户身份、配额展示、卡片目录 |
+| 参考 | OWASP File Upload Cheat Sheet（实践清单，不是库） | Recipe 策略 + 工厂 |
+
+现状是**串行且耦合**：管理面既做落盘，又做包格式/平台校验和「能不能构建」；镜像处理只按固定 Dockerfile 和固定 base 执行。两个进程只是把执行器隔开，构建知识仍在管理面。注册串在构建成功之后。
+
+目标：管理面只做上表左侧门禁并把路径交出；右侧全部在工厂内完成。管理面再用工厂返回的名称、版本、镜像和 runtime 去注册中心落卡。
 
 **现状**
 
@@ -94,23 +104,25 @@ flowchart LR
 flowchart LR
     subgraph CP["管理面"]
         direction TB
-        T1[落盘用户目录<br/>读取名称/版本]
-        T2[选定 Recipe 与 Base<br/>发起任务]
-        T3[按需注册]
-        T1 --> T2
+        T1[通用校验<br/>大小、命名]
+        T2[写入用户目录]
+        T3[把路径交给工厂]
+        T4[按结果注册]
+        T1 --> T2 --> T3
     end
     subgraph IP["镜像工厂"]
         direction TB
-        U1[Validate<br/>按 Recipe 判断能否构建]
-        U2[匹配并执行 Recipe]
-        U1 --> U2
+        U1[解析制品]
+        U2[选择 Recipe 与 Base]
+        U3[校验并执行]
+        U1 --> U2 --> U3
     end
     subgraph REG["注册中心"]
-        V1[落下卡片<br/>含 description]
+        V1[落下卡片]
     end
-    T2 -->|"制品 + Recipe + Base"| U1
-    U2 -->|"结果"| T3
-    T3 --> V1
+    T3 -->|"路径"| U1
+    U3 -->|"名称/版本/镜像/runtime"| T4
+    T4 --> V1
 ```
 
 ## 4. 静态结构
@@ -125,12 +137,11 @@ classDiagram
         +deleteCard()
     }
     class ImageFactory {
-        +validate()
-        +execute()
+        +buildFromPath(path)
         +removeLoadedImage()
     }
     class RecipeRegistry {
-        +get(recipeId) Recipe
+        +resolve(artifact) Recipe
     }
     class Recipe {
         <<strategy>>
@@ -159,7 +170,7 @@ classDiagram
     ControlPanel --> ImageFactory
     ControlPanel --> RegistryCenter
     ImageFactory --> RecipeRegistry
-    RecipeRegistry --> Recipe : 工厂方法取出
+    RecipeRegistry --> Recipe : 按解析结果取出
     Recipe <|-- NpmTgzOnBase
     Recipe <|-- OciImport
     RegistryCenter --> Card : 唯一账本
@@ -181,7 +192,7 @@ classDiagram
 
 用户视图由管理面裁掉 `package_path`、`image_archive_path` 等运维字段。文件仍物理落在管理面机器上，**路径记在卡片里**，不在管理面再抄一份。
 
-**Recipe 用策略 + 工厂。** 新增软件包类型或构建方式只加 Recipe，不改管理面编排。
+**Recipe 与 Base 都在工厂内选择。** 管理面不理解包格式，也不选底座。工厂解析路径上的制品后，由 `RecipeRegistry` 匹配策略并选定 Base，再校验、执行。新增包类型或构建方式只改工厂。
 
 ## 5. 主成功路径
 
@@ -193,15 +204,15 @@ classDiagram
 
 ```mermaid
 flowchart TD
-    A[管理员上传制品并填写描述] --> B[管理面：写入用户目录<br/>读取名称/版本]
-    B --> C[选定 Recipe 与 Base]
-    C --> D[工厂 Validate + 执行]
-    D --> E[管理面注册到注册中心]
+    A[管理员上传制品并填写描述] --> B[管理面：大小/命名校验并落盘]
+    B --> C[把路径交给工厂]
+    C --> D[工厂：解析、选 Recipe/Base、构建]
+    D --> E[管理面用工厂结果注册]
     E --> F[注册中心落下完整卡片]
     F --> G[前端刷新：查询注册中心]
 ```
 
-管理面在上架时：把软件包写到用户目录、读出名称和版本、选 Recipe/Base、调用工厂。成功后把描述、runtime、`package_path`、`image_archive_path` 一并注册。不做「能不能构建」的判断，也不再本地建卡片表。
+管理面在上架时只做通用校验（大小、安全命名）并落盘，然后把路径交给工厂。名称、版本、用哪条 Recipe、用哪个 Base，都由工厂解析后决定并随构建结果返回。管理面据此注册，不本地建卡片表。
 
 ### 5.2 查询（查）
 
@@ -247,11 +258,10 @@ sequenceDiagram
     participant R as 注册中心
 
     Admin->>CP: 上传制品 + description
-    CP->>CP: 落盘、读取名称/版本，选定 Recipe/Base
-    CP->>F: validate(制品, Recipe, Base)
-    F-->>CP: 通过
-    CP->>F: execute(...)
-    F-->>CP: imageRef, archivePath, runtime
+    CP->>CP: 校验大小/命名并落盘
+    CP->>F: buildFromPath(packagePath)
+    F->>F: 解析、选 Recipe、选 Base、执行
+    F-->>CP: name, version, imageRef, archivePath, runtime, recipe, base
     CP->>R: register(卡片：描述、runtime、package_path、image_archive_path)
     R-->>CP: cardId
     Admin->>CP: 刷新列表
@@ -326,15 +336,15 @@ flowchart LR
 
 ## 8. 构建扩展（需求 2）
 
-管理面编排固定：上传落盘并读取名称/版本 → 发起任务 → 注册。  
-工厂用 `RecipeRegistry.get(id)` 取出策略，新增方式只加 Recipe。
+管理面编排固定：通用校验并落盘 → 把路径交给工厂 → 用结果注册。  
+工厂内部：解析 → `RecipeRegistry.resolve` 选策略与 Base → 校验并执行。新增方式只加 Recipe。
 
 | Recipe | 输入 | 作用 |
 |---|---|---|
 | `npm_tgz_on_base` | npm tgz | 基于预置 Base 构建（现网能力包装） |
 | `oci_import` | OCI/Docker archive | 已构建镜像直接导入 |
 
-后续 node/wheel 等只加新策略。工厂契约保持 `制品 + Recipe + Base`，不接收用户身份。
+后续 node/wheel 等只加新策略。工厂契约是「路径进、构建结果出」，不接收用户身份，也不要求管理面传入 Recipe 或 Base。
 
 ## 9. 范围确认
 
