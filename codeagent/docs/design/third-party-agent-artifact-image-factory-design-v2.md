@@ -58,22 +58,59 @@ flowchart LR
 | 镜像工厂 | 按 Recipe 校验并执行 build/import/inject；按指示卸本机已 load 镜像 |
 | 注册中心 | **卡片权威**；框架查询、实例查询、落卡与删卡 |
 
-现状仍是串行专用链（深校验 + 固定 Dockerfile/base + 注册串成功）。目标是管理面主链固定，变化进 Recipe；卡片以注册中心为准。
+现状是**串行且耦合**：管理面既做上传落盘，又做包格式/平台校验，并判断「能不能构建」；镜像处理模块只按固定 Dockerfile 和固定 base 执行 `docker build`。两边已是两个进程，但构建判断等逻辑仍然留在管理面，镜像处理只是被调用的执行器，属于进程隔离。注册还串在构建成功之后，由管理面调用注册中心。
+
+目标把「能不能按某种方式做成镜像」收进工厂的 Recipe；管理面只做编排和注册，卡片以注册中心为准。
+
+**现状**
 
 ```mermaid
 flowchart LR
-    subgraph 现状
-        direction LR
-        A1[上传 tgz] --> A2[深校验] --> A3[固定构建] --> A4[注册后才成功]
+    subgraph CP["管理面"]
+        direction TB
+        A1[上传 tgz / 落盘]
+        A2[深校验<br/>格式、平台、能否构建]
+        A3[注册<br/>成功才算上架完成]
+        A1 --> A2
     end
+    subgraph IP["镜像处理"]
+        direction TB
+        B1[固定 Dockerfile]
+        B2[固定 agent-base]
+        B3[docker build / save]
+        B1 --> B2 --> B3
+    end
+    subgraph REG["注册中心"]
+        C1[写入框架记录]
+    end
+    A2 -->|"路径"| B1
+    B3 -->|"镜像"| A3
+    A3 --> C1
 ```
 
+**目标**
+
 ```mermaid
 flowchart LR
-    subgraph 目标
-        direction LR
-        B1[上传] --> B2[轻量建账] --> B3[工厂按 Recipe 处理] --> B4[注册出卡]
+    subgraph CP["管理面"]
+        direction TB
+        T1[上传 / 轻量建账]
+        T2[选定 Recipe 与 Base<br/>发起任务]
+        T3[按需注册]
+        T1 --> T2
     end
+    subgraph IP["镜像工厂"]
+        direction TB
+        U1[Validate<br/>按 Recipe 判断能否构建]
+        U2[匹配并执行 Recipe]
+        U1 --> U2
+    end
+    subgraph REG["注册中心"]
+        V1[落下卡片<br/>含 description]
+    end
+    T2 -->|"制品 + Recipe + Base"| U1
+    U2 -->|"结果"| T3
+    T3 --> V1
 ```
 
 ## 4. 静态结构
