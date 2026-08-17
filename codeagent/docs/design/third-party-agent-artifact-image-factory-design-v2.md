@@ -509,6 +509,14 @@ classDiagram
 
 现网 `build()` 固定拷贝 `agent.Dockerfile`、固定 `agent-base:1.0`，且要求调用方传入 `agent_name` / `version`。目标把「能不能构建、如何构建」收进 Recipe；运行时后端仍可插拔。
 
+工厂内部三块分开扩：工厂只负责按路径选出唯一策略并编排；策略封装一种制品的构建方式；运行时是 docker 等执行后端。新包只加 Recipe 并注册，不改工厂入口与管理面后端。
+
+| 块 | 类型 | 职责 |
+|---|---|---|
+| 工厂 | `FactoryService`、`RecipeRegistry` | 编排：`resolve` 选出唯一 Recipe，再 `validate` → `selectBase` → `execute` |
+| 策略 | `Recipe` 及实现 | 一种制品一条构建方式 |
+| 运行时 | `ImageRuntime` 及实现 | 插拔执行后端；本轮 Docker。卸镜像绕过 Recipe，直接打运行时 |
+
 **对外 HTTP**
 
 | 变更 | 现网 | 本轮 |
@@ -533,6 +541,8 @@ classDiagram
 | 删除 | `build()` 里写死 Dockerfile 拷贝与 `_BASE_IMAGE` | 变为 `NpmTgzOnBaseRecipe` 的实现细节 |
 | 删除 | 入参强制 `agent_name` / `version` | 由 Recipe 解析后写入 `BuildResult` |
 
+**工厂编排**
+
 ```mermaid
 classDiagram
     class FactoryService {
@@ -550,17 +560,6 @@ classDiagram
         +validate(path)
         +execute(path, base) BuildResult
     }
-    class NpmTgzOnBaseRecipe
-    class OciImportRecipe
-    class ImageRuntime {
-        <<interface>>
-        +build()
-        +loadArchive()
-        +saveArchive()
-        +remove(imageurl)
-        +inspect()
-    }
-    class DockerRuntime
     class BuildResult {
         <<data>>
         name
@@ -574,25 +573,59 @@ classDiagram
 
     FactoryService --> RecipeRegistry : buildFromPath 时 resolve
     RecipeRegistry o-- Recipe : 已注册策略
-    Recipe <|.. NpmTgzOnBaseRecipe
-    Recipe <|.. OciImportRecipe
-    NpmTgzOnBaseRecipe --> ImageRuntime
-    OciImportRecipe --> ImageRuntime
-    FactoryService --> ImageRuntime : removeLoadedImage
-    ImageRuntime <|.. DockerRuntime
+    FactoryService ..> Recipe : validate / selectBase / execute
     Recipe ..> BuildResult : execute 返回
 ```
 
-`Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。`FactoryService` 构建走 Recipe，卸镜像绕过 Recipe 直接打运行时。`BuildResult` 是返回值，不是工厂持有的实体。
+`FactoryService.buildFromPath`：`RecipeRegistry.resolve` → `validate` → `selectBase` → `execute`。`BuildResult` 是返回值，不是工厂持有的实体。卸镜像不走本图，见运行时。
 
-`FactoryService.buildFromPath`：`RecipeRegistry.resolve` → `validate` → `selectBase` → `execute`。新增包类型只加 Recipe 实现并注册，不改工厂编排入口与管理面后端。
+**构建策略**
+
+```mermaid
+classDiagram
+    class Recipe {
+        <<interface>>
+        +matches(path) bool
+        +selectBase(path) BaseRef
+        +validate(path)
+        +execute(path, base) BuildResult
+    }
+    class NpmTgzOnBaseRecipe
+    class OciImportRecipe
+
+    Recipe <|.. NpmTgzOnBaseRecipe
+    Recipe <|.. OciImportRecipe
+```
 
 | Recipe | 输入 | 作用 |
 |---|---|---|
 | `npm_tgz_on_base` | npm tgz | 基于预置 Base 构建（现网能力包装） |
 | `oci_import` | OCI/Docker archive | 已构建镜像直接导入 |
 
-后续 node/wheel 只加新 `Recipe` 子类。工厂不接收用户身份，也不接收管理面传入的 Recipe 或 Base。
+后续 node/wheel 只加新 `Recipe` 子类并 `register`。工厂不接收用户身份，也不接收管理面传入的 Recipe 或 Base。`Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。
+
+**运行时后端**
+
+```mermaid
+classDiagram
+    class ImageRuntime {
+        <<interface>>
+        +build()
+        +loadArchive()
+        +saveArchive()
+        +remove(imageurl)
+        +inspect()
+    }
+    class DockerRuntime
+    class FactoryService {
+        +removeLoadedImage(imageurl)
+    }
+
+    ImageRuntime <|.. DockerRuntime
+    FactoryService --> ImageRuntime : removeLoadedImage
+```
+
+本轮仅 `DockerRuntime`。具体 Recipe 在 `execute` 时使用运行时，不画进本图。`FactoryService` 构建走 Recipe，卸镜像绕过 Recipe 直接打运行时。
 
 ### 8.4 注册中心
 
