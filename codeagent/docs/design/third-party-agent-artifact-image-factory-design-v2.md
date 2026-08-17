@@ -366,9 +366,9 @@ flowchart LR
 
 因此管理面后端会留 **两个组件间客户端**：`ImageProcessClient`（现网 `image_process_client`）、`AgentRegisterClient`（收拢对 `AGENT_REGISTER_URL` 的调用）。两者都走 **组件间通信**（§8.5），当前实现缺省 HTTP。
 
-### 8.1 组件间通信
+### 8.1 组件间交互
 
-实线是管理面后端进程内委托。虚线是组件间通信。工厂内部的 Recipe、后端内部的本机包表不画在这张图上。
+本图只画**进程之间的调用面**：管理面后端经两个客户端访问镜像工厂、注册中心。不含管理面对前端的 HTTP，也不含已删除的接口。各组件对外增删改见 8.2–8.4。
 
 ```mermaid
 classDiagram
@@ -376,45 +376,45 @@ classDiagram
 
     class ThirdpartyAgentService {
         <<管理面后端>>
-        +publish()
-        +list()
-        +updateDescription()
-        +deleteCard()
-        +retry()
-        +deleteUnregistered()
     }
     class ImageProcessClient {
         <<管理面后端>>
-        +buildFromPath(path)
-        +removeLoadedImage(imageurl)
     }
     class AgentRegisterClient {
         <<管理面后端>>
-        +registerImage()
-        +listImages()
-        +deleteImage()
-        +listInstances()
     }
     class image_process {
         <<镜像工厂>>
-        +buildFromPath(path)
-        +removeLoadedImage(imageurl)
+        +buildFromPath()
+        +getBuild()
+        +removeLoadedImage()
     }
     class AgentRegister {
         <<注册中心>>
         +listImages()
         +registerImage()
-        +deleteImage()
+        +getLaunchSpec()
         +listInstances()
+        +deleteImage()
     }
 
     ThirdpartyAgentService --> ImageProcessClient
     ThirdpartyAgentService --> AgentRegisterClient
-    ImageProcessClient ..> image_process : 组件间通信
-    AgentRegisterClient ..> AgentRegister : 组件间通信
+    ImageProcessClient ..> image_process
+    AgentRegisterClient ..> AgentRegister
 ```
 
-`deleteCard` 在清完本机文件并卸镜像后，经 `AgentRegisterClient.deleteImage` 回写注册中心。
+| 对端 | 调用 | 本轮 |
+|---|---|---|
+| 镜像工厂 | `POST /v1/builds` | **改**：入参只交 `package_path` |
+| 镜像工厂 | `GET /v1/builds/{id}` | 沿用，上架等待进度 |
+| 镜像工厂 | `POST /v1/images/remove` | **新增**，对应 `removeLoadedImage` |
+| 注册中心 | `GET /api/images`、`POST /api/images` | 沿用；POST 为 upsert，扩描述与路径字段 |
+| 注册中心 | `GET /api/images/{framework}/launch-spec` | 沿用 |
+| 注册中心 | `GET /api/instances` | 沿用；计数、删前检查 |
+| 注册中心 | `deleteImage` | **新增**调用；`deleteCard` 清完本机与已 load 镜像后回写，处理逻辑在现有镜像接口上改 |
+
+`deleteCard`：`listInstances` → 清文件 → `removeLoadedImage` → `deleteImage`。
 
 ### 8.2 管理面后端
 
