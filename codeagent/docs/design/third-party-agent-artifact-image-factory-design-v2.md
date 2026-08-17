@@ -368,7 +368,7 @@ flowchart LR
 
 ### 8.1 组件间交互
 
-本图只画**进程之间的调用面**：管理面后端经两个客户端访问镜像工厂、注册中心。不含管理面对前端的 HTTP，也不含已删除的接口。各组件对外增删改见 8.2–8.4。
+本图是组件间调用接口。各组件删除的接口见 8.2–8.4。
 
 ```mermaid
 classDiagram
@@ -376,26 +376,36 @@ classDiagram
 
     class ThirdpartyAgentService {
         <<管理面后端>>
+        publish()
+        list()
+        updateDescription()
+        deleteCard()
+        retry()
+        deleteUnregistered()
     }
     class ImageProcessClient {
         <<管理面后端>>
+        buildFromPath(path)
+        removeLoadedImage(imageurl)
     }
     class AgentRegisterClient {
         <<管理面后端>>
+        registerImage()
+        listImages()
+        deleteImage()
+        listInstances()
     }
     class image_process {
         <<镜像工厂>>
-        +buildFromPath()
-        +getBuild()
-        +removeLoadedImage()
+        buildFromPath(path)
+        removeLoadedImage(imageurl)
     }
     class AgentRegister {
         <<注册中心>>
-        +listImages()
-        +registerImage()
-        +getLaunchSpec()
-        +listInstances()
-        +deleteImage()
+        listImages()
+        registerImage()
+        deleteImage()
+        listInstances()
     }
 
     ThirdpartyAgentService --> ImageProcessClient
@@ -404,17 +414,7 @@ classDiagram
     AgentRegisterClient ..> AgentRegister
 ```
 
-| 对端 | 调用 | 本轮 |
-|---|---|---|
-| 镜像工厂 | `POST /v1/builds` | **改**：入参只交 `package_path` |
-| 镜像工厂 | `GET /v1/builds/{id}` | 沿用，上架等待进度 |
-| 镜像工厂 | `POST /v1/images/remove` | **新增**，对应 `removeLoadedImage` |
-| 注册中心 | `GET /api/images`、`POST /api/images` | 沿用；POST 为 upsert，扩描述与路径字段 |
-| 注册中心 | `GET /api/images/{framework}/launch-spec` | 沿用 |
-| 注册中心 | `GET /api/instances` | 沿用；计数、删前检查 |
-| 注册中心 | `deleteImage` | **新增**调用；`deleteCard` 清完本机与已 load 镜像后回写，处理逻辑在现有镜像接口上改 |
-
-`deleteCard`：`listInstances` → 清文件 → `removeLoadedImage` → `deleteImage`。
+`deleteCard` 在清完本机文件并卸镜像后，经 `AgentRegisterClient.deleteImage` 回写注册中心。
 
 ### 8.2 管理面后端
 
@@ -455,7 +455,7 @@ classDiagram
 classDiagram
     class ThirdpartyAgentService {
         <<现网演进>>
-        +publish(file, description)
+        publish(file, description)
         +list(view)
         +updateDescription(id, text)
         +deleteCard(id)
