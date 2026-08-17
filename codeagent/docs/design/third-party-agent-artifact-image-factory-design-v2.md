@@ -13,7 +13,7 @@
 
 这一方案已经打通上传、构建、状态查询、离线镜像保存和注册链路，但输入格式、校验逻辑、构建方式和基础镜像被绑定在同一流程中。继续增加 node 包、wheel、独立 binary、OCI 镜像、SDK/SSH 注入、基础镜像升级、同包多基础镜像、制品删除和配额等能力时，容易要求同时修改管理面 API、Service、数据库模型、镜像处理客户端、Dockerfile 和注册逻辑，形成霰弹修改。
 
-为了使后续能力能够沿制品类型（处理不同类型的三方制品）、处理 Recipe（根据需求选择不同的构建内容）和基础镜像（三方Agent默认运行底座）三个维度独立演进。初版的验收目标为ScienceFlow和OpenClaw,可以顺利上架至一体机。
+为了使后续能力能够沿制品类型（处理不同类型的三方制品）、处理 Recipe（根据需求选择不同的构建内容）和基础镜像（三方Agent默认运行底座）三个维度独立演进。本轮先落 **npm 二进制**（`npm + ssh + yuanrong SDK`，如 ScienceFlow）上架一体机；OpenClaw（node 型 npm）、OCI、DeepSeek harness 作为后续 Recipe 接入。
 
 ## 2. 本次需求
 
@@ -533,8 +533,10 @@ classDiagram
 | 新增 | `FactoryService` | `buildFromPath`、`removeLoadedImage` |
 | 新增 | `Recipe`（接口） | `matches` / `selectBase` / `validate` / `execute` |
 | 新增 | `RecipeRegistry` | 按路径解析唯一 Recipe |
-| 新增 | `NpmTgzOnBaseRecipe` | 现网 npm tgz + 预置 Base；接收现网 `package.py` 的解析与平台校验 |
-| 新增 | `OciImportRecipe` | 已有 OCI/Docker archive 导入 |
+| 新增 | `NpmTgzOnBaseRecipe` | 本轮。npm 二进制：现网 tgz + 预置 Base，注入 ssh 与 yuanrong SDK |
+| 后续 | `OciImportRecipe` | OCI/Docker archive 导入；注入 yuanrong SDK；是否注入 ssh 取决于该制品是否需要 ssh 连接 |
+| 后续 | `OpenclawNodeNpmRecipe` | 基于 OpenClaw 的 node 型 npm |
+| 后续 | `DeepseekHarnessRecipe` | DeepSeek harness |
 | 保留并改名 | `ImageRuntime` ← 现网 `AbstractBuilder` | `build` / `loadArchive` / `saveArchive` / `remove` / `inspect` |
 | 保留 | `DockerRuntime` ← 现网 `DockerBuilder` | 本机 dockerd |
 | 保留 | 内存 `TaskRecord` | 进行中构建；进程内，非产品目录 |
@@ -590,19 +592,37 @@ classDiagram
         +validate(path)
         +execute(path, base) BuildResult
     }
-    class NpmTgzOnBaseRecipe
-    class OciImportRecipe
+    class NpmTgzOnBaseRecipe {
+        <<本轮>>
+        npm + ssh + yuanrong SDK
+    }
+    class OciImportRecipe {
+        <<后续>>
+        oci + yuanrong SDK；ssh 按需
+    }
+    class OpenclawNodeNpmRecipe {
+        <<后续>>
+        OpenClaw node 型 npm
+    }
+    class DeepseekHarnessRecipe {
+        <<后续>>
+        DeepSeek harness
+    }
 
     Recipe <|.. NpmTgzOnBaseRecipe
     Recipe <|.. OciImportRecipe
+    Recipe <|.. OpenclawNodeNpmRecipe
+    Recipe <|.. DeepseekHarnessRecipe
 ```
 
-| Recipe | 输入 | 作用 |
-|---|---|---|
-| `npm_tgz_on_base` | npm tgz | 基于预置 Base 构建（现网能力包装） |
-| `oci_import` | OCI/Docker archive | 已构建镜像直接导入 |
+| 阶段 | Recipe | 输入 | 作用 |
+|---|---|---|---|
+| 本轮 | `npm_tgz_on_base` | npm 二进制 tgz | 预置 Base 上构建，注入 **ssh + yuanrong SDK**（现网能力包装） |
+| 后续 | `oci_import` | OCI/Docker archive | 导入已有镜像，注入 yuanrong SDK；**是否注入 ssh 取决于该制品要不要 ssh 连接** |
+| 后续 | `openclaw_node_npm` | OpenClaw 的 node 型 npm | node 运行形态，与二进制 npm 不是同一条 Recipe |
+| 后续 | `deepseek_harness` | DeepSeek harness | 新制品类型，只加 Recipe 并注册 |
 
-后续 node/wheel 只加新 `Recipe` 子类并 `register`。工厂不接收用户身份，也不接收管理面传入的 Recipe 或 Base。`Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。
+ssh、yuanrong SDK 不是独立 Recipe，而是某条策略在 `execute` 时的注入内容。后续只加新 `Recipe` 子类并 `register`，不改工厂编排入口与管理面后端。工厂不接收用户身份，也不接收管理面传入的 Recipe 或 Base。`Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。
 
 **运行时后端**
 
@@ -710,13 +730,13 @@ classDiagram
 | 上架连续完成并一次写全镜像记录；失败包可删或重试，不进卡片墙 | 把未注册包做成第二套卡片目录 |
 | 查询回源 `GET /api/images`；用户视图裁路径；管理员看名称/版本/描述、实例计数与路径 | 用户侧增删改卡；把实例计数写入镜像记录或本机库 |
 | 改描述走 `POST /api/images`；整卡拆除末步 `deleteImage` 回写注册中心 | 本轮实现升级流程（字段可先写入） |
-| Recipe 插拔以支持新包和新构建 | 用户自定义 Recipe 脚本 |
+| 本轮 Recipe：`npm + ssh + yuanrong SDK`；后续以加 Recipe 接入 OCI / OpenClaw / DeepSeek harness | 用户自定义 Recipe 脚本 |
 | 组件间通信抽象为接口，本轮只落明文 HTTP | 本轮实现 TLS/mTLS；应用内签发证书 |
 
 ## 10. 总结
 
 - **卡片**对应注册中心 `/api/images` 记录；管理面编排增删查与改描述。  
-- **构建**用策略 + 工厂拆开扩展轴。  
+- **构建**用策略 + 工厂拆开扩展轴。本轮 Recipe 为 npm 二进制（ssh + yuanrong SDK）；OCI（ssh 按需）、OpenClaw node 型 npm、DeepSeek harness 后续只加策略。  
 - **管理**区分用户/管理员视图。管理员卡片展示名称、版本，以及实例管理接口给出的已创建 / 已注册实例数。改（升级）不做流程。  
 - 已注册包按卡片管；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
 - 同一内容摘要加锁防并发；未持锁才可删或重试，重试再加锁。不同包不互斥。  
