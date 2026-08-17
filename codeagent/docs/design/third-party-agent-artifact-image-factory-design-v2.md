@@ -366,7 +366,7 @@ flowchart LR
 classDiagram
     direction LR
 
-    class AgentCardService {
+    class ThirdpartyAgentService {
         <<管理后端>>
         +publish()
         +list()
@@ -405,14 +405,14 @@ classDiagram
         +listByFramework()
     }
 
-    AgentCardService --> FactoryGateway
-    AgentCardService --> RegistryGateway
-    FactoryGateway ..> FactoryService : HTTP
-    RegistryGateway ..> AgentCardStore : HTTP 卡片
-    RegistryGateway ..> InstanceStore : HTTP 实例
+    ThirdpartyAgentService --> FactoryGateway
+    ThirdpartyAgentService --> RegistryGateway
+    FactoryGateway ..> FactoryService : HTTP 或 TLS
+    RegistryGateway ..> AgentCardStore : HTTP 或 TLS
+    RegistryGateway ..> InstanceStore : HTTP 或 TLS
 ```
 
-管理后端**不**直接依赖工厂或注册中心的实现类。实例计数和删前检查都走 `RegistryGateway.listInstances()`，不把 `InstanceStore` 画进管理后端。卡片账本和实例账本在注册中心是两个库，彼此没有调用关系。
+管理后端**不**直接依赖工厂或注册中心的实现类。实例计数和删前检查都走 `RegistryGateway.listInstances()`，不把 `InstanceStore` 画进管理后端。卡片账本和实例账本在注册中心是两个库，彼此没有调用关系。虚线是内部调用，缺省明文 HTTP；证书路径配齐后由 §8.5 的传输层自动改为 TLS，Gateway 业务方法不变。
 
 ### 8.2 管理后端
 
@@ -435,22 +435,24 @@ classDiagram
 
 | | 类型 | 职责 |
 |---|---|---|
-| 新增 | `UploadGate` | 大小、扩展名、安全命名、临时文件再改名；不解包 |
+| 演进 | `ThirdpartyAgentService` | 现网上传/构建/列表/注册的编排入口；本轮改为上架、查、改描述、删卡、未注册包重试/删除。不是新服务 |
+| 新增 | `UploadGate` | 从现网 `upload` 里拆出的通用门禁：大小、扩展名、安全命名、临时文件再改名；不解包 |
 | 新增 | `LocalPackageRecord` / `LocalPackageStore` | 一张本机包表：摘要、路径、锁、失败原因 |
-| 新增 | `AgentCardService` | 上架、查、改描述、删卡、未注册包重试/删除 |
 | 新增 | `CardViewProjector` | 按角色裁字段；管理员再填两计数 |
-| 新增 | `FactoryGateway` | 替换现网 `image_process_client.submit_build` 的入参形态 |
-| 新增 | `RegistryGateway` | 类型化封装注册中心卡片与实例查询 |
+| 演进 | `FactoryGateway` | 现网 `image_process_client` 改入参：只交路径，不再传 name/version/output_dir |
+| 演进 | `RegistryGateway` | 现网对 `/api/images` 的 HTTP 调用收成客户端；补 PATCH/DELETE 与实例查询 |
+| 新增 | `InternalHttpTransport` | 内部调用传输：缺省 HTTP；配齐证书路径后同一套 Gateway 自动走 TLS，见 §8.5 |
 | 新增 | `LocalFileCleaner` | 按路径删源包和镜像文件 |
 | 保留 | 鉴权（`require_admin` / 用户角色） | 视图裁剪的输入 |
 | 保留 | 既有实例查询客户端 | 由 `RegistryGateway.listInstances` 复用，不在卡片模块再画一套 |
 | 删除 | `BuildTask`、`AgentRegistration` | 被本机包表 + 注册中心卡片替代 |
 | 删除 | `package.extract_package_meta` 及平台校验 | 迁到工厂 Recipe |
-| 删除 | `ThirdpartyAgentService.create_build_task` / `get_build_task` / `list_installers` 补本地注册 | 不再有安装包墙和 Job 墙 |
+| 删除 | 该类上的 `create_build_task` / `get_build_task` / `list_installers` 补本地注册 | 不再有安装包墙和 Job 墙；上架收进 `publish` |
 
 ```mermaid
 classDiagram
-    class AgentCardService {
+    class ThirdpartyAgentService {
+        <<现网演进>>
         +publish(file, description)
         +list(view)
         +updateDescription(id, text)
@@ -491,21 +493,27 @@ classDiagram
         +delete(id)
         +listInstances(card)
     }
+    class InternalHttpTransport {
+        <<传输>>
+        +client()
+    }
     class LocalFileCleaner {
         +removePackage(path)
         +removeArchive(path)
     }
 
-    AgentCardService --> UploadGate : publish 落盘
-    AgentCardService --> LocalPackageStore : 锁 / 未注册包
-    AgentCardService --> CardViewProjector : list 裁字段
-    AgentCardService --> FactoryGateway : 构建 / 卸镜像
-    AgentCardService --> RegistryGateway : 卡片与实例
-    AgentCardService --> LocalFileCleaner : 删源包和 archive
+    ThirdpartyAgentService --> UploadGate : publish 落盘
+    ThirdpartyAgentService --> LocalPackageStore : 锁 / 未注册包
+    ThirdpartyAgentService --> CardViewProjector : list 裁字段
+    ThirdpartyAgentService --> FactoryGateway : 构建 / 卸镜像
+    ThirdpartyAgentService --> RegistryGateway : 卡片与实例
+    ThirdpartyAgentService --> LocalFileCleaner : 删源包和 archive
+    FactoryGateway --> InternalHttpTransport
+    RegistryGateway --> InternalHttpTransport
     LocalPackageStore *-- LocalPackageRecord
 ```
 
-本图只含管理后端进程内对象。`FactoryGateway` / `RegistryGateway` 停在 HTTP 边界，对端类见 8.1。`publish` 顺序：门禁落盘 → 摘要加锁 → `buildFromPath` → `register` → 解锁。管理后端不出现 `Recipe`、`Base`、`Dockerfile`。
+本图只含管理后端进程内对象。`FactoryGateway` / `RegistryGateway` 停在 HTTP 边界，对端类见 8.1；是否 TLS 由 `InternalHttpTransport` 在启动时看证书路径决定，见 §8.5。`publish` 顺序：门禁落盘 → 摘要加锁 → `buildFromPath` → `register` → 解锁。管理后端不出现 `Recipe`、`Base`、`Dockerfile`。
 
 ### 8.3 镜像工厂
 
@@ -643,6 +651,57 @@ classDiagram
 
 `AgentCardStore` 与 `InstanceStore` 同在注册中心、互不调用。删前有没有实例，由管理后端先查实例再决定是否调 `AgentCardStore.delete`。注册中心不调用工厂，也不持有本机文件。路径字段只是账本；真正 `unlink` 和 `docker rmi` 在管理后端与工厂。
 
+### 8.5 内部通信 TLS
+
+范围只覆盖三个进程之间的调用：管理后端 → 镜像工厂、管理后端 → 注册中心。浏览器到管理面、NFS、docker.sock 不在本条。业务接口（`buildFromPath`、`register`、`listInstances` 等）不感知 TLS。
+
+**缺省**：证书路径全空，内部仍是明文 HTTP，与现网 `IMAGE_PROCESS_URL` / `AGENT_REGISTER_URL` 的 `http://` 一致，单机和开发不强制证书。
+
+**配置后自动生效**：不另设 `TLS_ENABLED` 开关。进程启动时读下列路径——变量为空则 HTTP；变量有值且文件可读则该进程以 TLS 监听或作为 TLS 客户端。证书由运维签发并挂进容器，应用不生成、不内置 CA。
+
+建议缺省路径（未放置文件即不启用）：
+
+| 变量 | 建议路径 | 谁用 |
+|---|---|---|
+| `INTERNAL_TLS_CA_FILE` | `/etc/agentos/tls/ca.crt` | 客户端校验对端（管理后端必配才能当 TLS 客户端） |
+| `INTERNAL_TLS_CERT_FILE` | `/etc/agentos/tls/server.crt` | 服务端出示（工厂、注册中心） |
+| `INTERNAL_TLS_KEY_FILE` | `/etc/agentos/tls/server.key` | 服务端私钥 |
+
+可选：管理后端同时配 `CERT`+`KEY`，则客户端带证书，形成双向 TLS。未配则单向 TLS（服务端认证）。
+
+```mermaid
+classDiagram
+    class InternalTlsConfig {
+        caFile
+        certFile
+        keyFile
+        +mode() http 或 tls
+    }
+    class InternalHttpTransport {
+        +client()
+        +serverTls()
+    }
+    class FactoryGateway
+    class RegistryGateway
+    class FactoryService
+    class AgentCardStore
+
+    InternalHttpTransport --> InternalTlsConfig
+    FactoryGateway --> InternalHttpTransport : 客户端
+    RegistryGateway --> InternalHttpTransport : 客户端
+    FactoryService ..> InternalHttpTransport : 服务端监听
+    AgentCardStore ..> InternalHttpTransport : 服务端监听
+```
+
+| 启动时配置 | 行为 |
+|---|---|
+| 变量未配（空字符串） | HTTP，与现网相同 |
+| 服务端 `CERT`+`KEY` 文件可读 | 该进程 TLS 监听；工厂 / 注册中心 |
+| 客户端 `CA` 文件可读 | Gateway 校验对端证书；`IMAGE_PROCESS_URL` / `AGENT_REGISTER_URL` 由运维写成 `https://` |
+| 变量已配但文件缺失、或只配了一半（有 CA 而 URL 仍是 `http://`，或服务端只给了证书没有私钥） | **拒绝启动**，不静默回退明文 |
+
+运维发放 PEM、挂载到上述路径、把内部 URL 改为 `https://` 后重启即加密。业务类、Recipe、卡片字段都不改。
+
 ## 9. 范围确认
 
 | 做 | 不做 |
@@ -652,6 +711,7 @@ classDiagram
 | 查询回源；用户视图裁路径；管理员看名称/版本/描述、实例计数与路径 | 用户侧增删改卡；把实例计数写入卡片或本机库 |
 | 管理员改描述写回注册中心；无实例按卡片路径整卡拆除 | 本轮实现升级流程（字段可先写入） |
 | Recipe 插拔以支持新包和新构建 | 用户自定义 Recipe 脚本 |
+| 内部调用缺省 HTTP；配齐运维证书路径后自动 TLS | 应用内签发证书、内置 CA；把 TLS 写进业务接口 |
 
 ## 10. 总结
 
@@ -661,3 +721,4 @@ classDiagram
 - 已注册包按卡片管；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
 - 同一内容摘要加锁防并发；未持锁才可删或重试，重试再加锁。不同包不互斥。  
 - **结构**见 §8：管理后端只留编排与本机包表；工厂用 `Recipe` 继承扩展；注册中心扩 `ImageEntry` 为卡片并补 PATCH/DELETE。现网 Job、本地注册副本、管理面解包校验删除。  
+- **内部通信**缺省 HTTP；运维把证书挂到约定路径并改 `https://` 后，传输层自动 TLS，业务接口不变。  
