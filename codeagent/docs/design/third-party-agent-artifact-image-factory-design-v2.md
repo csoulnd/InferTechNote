@@ -127,7 +127,17 @@ flowchart LR
 
 ## 4. 卡片字段
 
-现网注册中心 `/api/images` 偏运行目录，不够管卡片。本轮要求扩字段，类设计见 §8：
+**卡片是管理面的产品对象。** 注册中心不理解卡片，仍是镜像 / 框架记录。管理面把展示与路径记在现网 `GET/POST /api/images` 的记录上，**不新增注册中心接口**；字段与更新/删除的处理逻辑由注册中心在现有接口上改。
+
+| 字段 | 现网 | 本轮 | 谁用 |
+|---|---|---|---|
+| `framework` / `framework_version` | 有 | 保留，管理面卡片主键 | 两种视图 |
+| `runtime_spec` / `imageurl` / 资源字段 | 有 | 保留 | 拉起实例 |
+| `uploaded_by` | 有 | 保留 | 管理员 |
+| `description` | 无 | **现有 POST/GET 扩字段**；管理员可改，再走 POST | 两种视图展示；仅管理员编辑 |
+| `package_path` | 无 | **现有 POST/GET 扩字段** | 管理员详情、整卡删源包 |
+| `image_archive_path` | 无 | **现有 POST/GET 扩字段** | 管理员详情、整卡删落盘镜像 |
+| `recipe_id` / `base_ref` | 无 | 建议一并写入 | 本轮不跑升级，留给后续改 |
 
 | 字段 | 现网 | 本轮 | 谁用 |
 |---|---|---|---|
@@ -168,7 +178,7 @@ flowchart TD
     B --> C[把路径交给工厂]
     C --> D[工厂：解析、选 Recipe/Base、构建]
     D --> E[管理面用工厂结果注册]
-    E --> F[注册中心落下完整卡片]
+    E --> F[注册中心写入镜像记录]
     F --> G[前端刷新：查询注册中心]
 ```
 
@@ -235,11 +245,11 @@ sequenceDiagram
     CP->>F: buildFromPath(packagePath)
     F->>F: 解析、选 Recipe、选 Base、执行
     F-->>CP: name, version, imageRef, archivePath, runtime, recipe, base
-    CP->>R: register(卡片：描述、runtime、package_path、image_archive_path)
-    R-->>CP: cardId
+    CP->>R: POST /api/images（现网注册，体中带描述与路径字段）
+    R-->>CP: registered / updated
     Admin->>CP: 刷新列表
-    CP->>R: listFrameworks()
-    R-->>Admin: 卡片（含 description）
+    CP->>R: GET /api/images
+    R-->>Admin: 镜像记录（管理面展示为卡片）
 ```
 
 ### 6.2 查询
@@ -251,12 +261,12 @@ sequenceDiagram
     participant R as 注册中心
 
     User->>CP: 刷新 / 查询卡片
-    CP->>R: listFrameworks()
-    R-->>CP: Card[]（名称、版本、description、路径等）
+    CP->>R: GET /api/images
+    R-->>CP: ImageEntry[]
     alt 用户视图
         CP-->>User: 名称、版本、描述（去掉路径）
     else 管理员视图
-        CP->>R: 按卡查询实例管理接口
+        CP->>R: GET /api/instances（按框架汇总）
         R-->>CP: 已创建实例数、已注册实例数
         CP-->>User: 名称、版本、描述、两计数；详情含路径
     end
@@ -283,7 +293,7 @@ sequenceDiagram
         CP->>R: 取卡片上的 package_path / image_archive_path
         CP->>CP: 删软件包、落盘镜像文件
         CP->>F: removeLoadedImage(imageurl)
-        CP->>R: deleteCard()
+        CP->>R: 现有镜像接口删除该记录
         CP-->>Admin: 已拆除
     end
 ```
@@ -297,12 +307,12 @@ sequenceDiagram
     participant R as 注册中心
 
     Admin->>CP: 更新卡片 description
-    CP->>R: updateCard(description)
-    R-->>CP: 已更新
+    CP->>R: POST /api/images（现网已有 upsert）
+    R-->>CP: registered / updated
     CP-->>Admin: 成功
 ```
 
-只改注册中心上的描述字段。不经过镜像工厂，不改本机包表。
+改描述走现网注册接口，不新开 PATCH。不经过镜像工厂，不改本机包表。
 
 ## 7. 异常
 
@@ -390,10 +400,8 @@ classDiagram
     }
     class AgentRegisterClient {
         <<管理面后端>>
-        +register(card)
-        +list()
-        +updateDescription()
-        +delete()
+        +registerImage()
+        +listImages()
         +listInstances()
     }
     class image_process {
@@ -403,8 +411,9 @@ classDiagram
     }
     class AgentRegister {
         <<注册中心>>
-        +卡片接口()
-        +实例接口()
+        +listImages()
+        +registerImage()
+        +listInstances()
     }
 
     ThirdpartyAgentService --> ImageProcessClient
@@ -413,7 +422,7 @@ classDiagram
     AgentRegisterClient ..> AgentRegister : 组件间通信
 ```
 
-`ThirdpartyAgentService` 不直接依赖镜像工厂或注册中心的实现类。卡片列表、改描述、删卡、实例计数和删前检查都经 `AgentRegisterClient` 打到注册中心（卡片接口与实例接口），不是两个注册中心组件。
+`ThirdpartyAgentService` 不直接依赖镜像工厂或注册中心的实现类。卡片是管理面概念：列表、改描述、删卡都经 `AgentRegisterClient` 打现网 `/api/images` 与 `/api/instances`，注册中心不出现「卡片」资源。
 
 ### 8.2 管理面后端
 
@@ -441,7 +450,7 @@ classDiagram
 | 新增 | `LocalPackageRecord` / `LocalPackageStore` | 一张本机包表：摘要、路径、锁、失败原因 |
 | 新增 | `CardViewProjector` | 按角色裁字段；管理员再填两计数 |
 | 演进 | `ImageProcessClient` | 现网模块 `image_process_client`；改入参为只交路径 |
-| 演进 | `AgentRegisterClient` | 现网对 `AGENT_REGISTER_URL` 的散落 HTTP 收成客户端；补 PATCH/DELETE 与实例查询 |
+| 演进 | `AgentRegisterClient` | 现网对 `AGENT_REGISTER_URL` 的散落调用收拢；仍只走 `GET/POST /api/images` 与实例查询 |
 | 新增 | 组件间通信接口 | 两个客户端共用；本轮缺省 HTTP，TLS 预留，见 §8.5 |
 | 新增 | `LocalFileCleaner` | 按路径删源包和镜像文件 |
 | 保留 | 鉴权（`require_admin` / 用户角色） | 视图裁剪的输入 |
@@ -488,11 +497,9 @@ classDiagram
     }
     class AgentRegisterClient {
         <<AGENT_REGISTER_URL>>
-        +register(card)
-        +list() Card[]
-        +updateDescription(id, text)
-        +delete(id)
-        +listInstances(card)
+        +registerImage()
+        +listImages()
+        +listInstances()
     }
     class LocalFileCleaner {
         +removePackage(path)
@@ -601,24 +608,21 @@ classDiagram
 
 ### 8.4 注册中心
 
-现网 `/api/images` 是运行目录（`ImageEntry`）。本轮在同一资源上扩成卡片账本，不另起卡片服务。实例接口保持，供管理面后端汇总计数和删前检查。
+注册中心**不理解卡片**。对外仍是现网镜像接口与实例接口。管理面把卡片展示成「一张卡」，读写的是 `/api/images` 上的框架记录。扩字段、改描述、删记录都在**现有接口的处理逻辑**里改，本轮不新增 PATCH/DELETE 或卡片资源。
 
-**对外 HTTP**
+**对外 HTTP（沿用）**
 
-| | 现网 | 本轮 |
-|---|---|---|
-| 保留 | `GET /api/images`、`POST /api/images` | 列表与注册；POST 体补齐卡片字段，一次写全 |
-| 保留 | `GET /api/images/{framework}/launch-spec` | 拉起实例仍用 |
-| 保留 | `GET /api/instances` 及实例注册/心跳 | 管理面后端计数、删前检查；不在本模块重做 |
-| 新增 | — | `PATCH /api/images/{framework}/{version}` 只允许改 `description` |
-| 新增 | — | `DELETE /api/images/{framework}/{version}` |
-| 删除 | — | 不删现网运行字段；管理面后端不再靠本地 `AgentRegistration` 补 `agent_name` / `display_name` |
+| 现网 | 本轮 |
+|---|---|
+| `GET /api/images`、`POST /api/images` | 沿用。POST 已是 upsert（`registered` / `updated`）。扩 `description` 等字段、以及删除所需的处理，由注册中心改现有逻辑 |
+| `GET /api/images/{framework}/launch-spec` | 沿用，拉起实例 |
+| `GET /api/instances` 及实例注册/心跳 | 沿用；管理面后端计数、删前检查 |
 
-`AgentCard` 即扩字段后的 `ImageEntry`。新增字段见 §4。已创建 / 已注册实例数不是卡片属性：管理面后端经 `AgentRegisterClient` 查 `InstanceStore`，按名称、版本自行汇总。
+不新增注册中心 URL。管理面后端的 `PATCH /cards`、`DELETE /cards` 是管理面自己的产品接口，对内仍转成上述现网调用。
 
 ```mermaid
 classDiagram
-    class AgentCard {
+    class ImageEntry {
         framework
         framework_version
         imageurl
@@ -630,21 +634,18 @@ classDiagram
         recipe_id
         base_ref
     }
-    class AgentCardStore {
-        +list() AgentCard[]
-        +get(id) AgentCard
-        +register(card)
-        +updateDescription(id, text)
-        +delete(id)
+    class ImageStore {
+        +list()
+        +register()
     }
     class InstanceStore {
         +listByFramework(name, version)
     }
 
-    AgentCardStore *-- AgentCard
+    ImageStore *-- ImageEntry
 ```
 
-`AgentCardStore` 与 `InstanceStore` 同在注册中心、互不调用。删前有没有实例，由管理面后端先查实例再决定是否调 `AgentCardStore.delete`。注册中心不调用工厂，也不持有本机文件。路径字段只是账本；真正 `unlink` 和 `docker rmi` 在管理面后端与工厂。
+`ImageStore` 与 `InstanceStore` 同在注册中心、互不调用。删前有没有实例，由管理面后端先查实例再决定是否调现有镜像接口做删除。注册中心不调用工厂，也不持有本机文件。路径只是记录上的字段；真正 `unlink` 和 `docker rmi` 在管理面后端与工厂。
 
 ### 8.5 组件间通信（预留 TLS）
 
@@ -686,19 +687,19 @@ classDiagram
 
 | 做 | 不做 |
 |---|---|
-| 卡片只存在注册中心；管理面只留一张本机包表（摘要、路径、锁、失败原因） | 继续保留 `build_tasks` + `agent_registrations`，或再做卡片表 |
-| 上架连续完成并一次写全卡片；失败包可删或重试，不进卡片墙 | 把未注册包做成第二套卡片目录 |
-| 查询回源；用户视图裁路径；管理员看名称/版本/描述、实例计数与路径 | 用户侧增删改卡；把实例计数写入卡片或本机库 |
-| 管理员改描述写回注册中心；无实例按卡片路径整卡拆除 | 本轮实现升级流程（字段可先写入） |
+| 卡片是管理面产品对象；数据落在注册中心现网镜像记录上。管理面只留一张本机包表 | 继续保留 `build_tasks` + `agent_registrations`，或在注册中心做卡片资源 |
+| 上架连续完成并一次写全镜像记录；失败包可删或重试，不进卡片墙 | 把未注册包做成第二套卡片目录 |
+| 查询回源 `GET /api/images`；用户视图裁路径；管理员看名称/版本/描述、实例计数与路径 | 用户侧增删改卡；把实例计数写入镜像记录或本机库 |
+| 管理员改描述、整卡拆除：管理面产品接口对内转现网 `/api/images` 与实例查询 | 注册中心新增卡片专用 API；本轮实现升级流程（字段可先写入） |
 | Recipe 插拔以支持新包和新构建 | 用户自定义 Recipe 脚本 |
 | 组件间通信抽象为接口，本轮只落明文 HTTP | 本轮实现 TLS/mTLS；应用内签发证书；把通信写进业务接口 |
 
 ## 10. 总结
 
-- **卡片**是注册中心上的唯一账本：展示、运行、本机路径都在一张卡上，现网缺的字段由注册中心新增。  
+- **卡片**是管理面的产品对象；注册中心不理解卡片，仍用现网 `/api/images`。扩字段与删改处理逻辑由注册中心改现有接口，不新开 PATCH/DELETE。  
 - **构建**用策略 + 工厂拆开扩展轴。  
 - **管理**本轮做增、删、查，以及管理员改描述；区分用户/管理员视图。管理员卡片展示名称、版本，以及实例管理接口给出的已创建 / 已注册实例数。改（升级）不做流程。  
-- 已注册包按卡片管；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
+- 已注册包按卡片管（数据在镜像记录上）；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
 - 同一内容摘要加锁防并发；未持锁才可删或重试，重试再加锁。不同包不互斥。  
-- **结构**见 §8：管理面后端只留编排与本机包表；工厂用 `Recipe` 继承扩展；注册中心扩 `ImageEntry` 为卡片并补 PATCH/DELETE。现网 Job、本地注册副本、管理面解包校验删除。  
+- **结构**见 §8：管理面后端只留编排与本机包表；工厂用 `Recipe` 继承扩展；注册中心沿用 `ImageEntry` 与现网接口。现网 Job、本地注册副本、管理面解包校验删除。  
 - **组件间通信**：管理面后端用 `ImageProcessClient`、`AgentRegisterClient` 访问另外两个组件；本轮 HTTP，TLS 预留在通信接口上。  
