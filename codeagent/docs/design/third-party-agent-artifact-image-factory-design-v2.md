@@ -280,9 +280,9 @@ sequenceDiagram
         CP-->>Admin: 拒绝
     else 无实例
         R-->>CP: 空
-        CP->>R: 取卡片上的 package_path / image_archive_path
-        CP->>CP: 删软件包、落盘镜像文件
-        CP->>F: removeLoadedImage(imageurl)
+        CP->>R: 取卡片上的 tag、package_path、image_archive_path
+        CP->>CP: 按路径删软件包、落盘镜像文件
+        CP->>F: removeLoadedImage(tag)
         CP->>R: deleteImage()
         CP-->>Admin: 已拆除
     end
@@ -386,7 +386,7 @@ classDiagram
     class ImageProcessClient {
         <<管理面后端>>
         buildFromPath(path)
-        removeLoadedImage(imageurl)
+        removeLoadedImage(tag)
     }
     class AgentRegisterClient {
         <<管理面后端>>
@@ -398,7 +398,7 @@ classDiagram
     class image_process {
         <<镜像工厂>>
         buildFromPath(path)
-        removeLoadedImage(imageurl)
+        removeLoadedImage(tag)
     }
     class AgentRegister {
         <<注册中心>>
@@ -425,7 +425,7 @@ classDiagram
 | 方法 | 做什么 | 调用 |
 |---|---|---|
 | `updateDescription` | 改描述 | 注册中心 `registerImage`（POST upsert） |
-| `deleteCard` | 整卡拆除 | 注册中心 `listInstances` → 本机清文件 → 工厂 `removeLoadedImage` → 注册中心 `deleteImage` |
+| `deleteCard` | 整卡拆除 | 注册中心 `listInstances` → 本机按路径清文件 → 工厂按注册中心 tag `removeLoadedImage` → 注册中心 `deleteImage` |
 | `retry` | 未注册包按原路径重试 | 工厂 `buildFromPath` → 注册中心 `registerImage` |
 | `deleteUnregistered` | 删除未注册包 | 只看本机包表：没有未注册行则结束；有行且未持锁才清文件。不调注册中心 |
 
@@ -503,7 +503,7 @@ classDiagram
     LocalPackageStore *-- LocalPackageRecord
 ```
 
-本图只含管理面后端进程内对象。`publish`：门禁落盘 → 摘要加锁 → `buildFromPath` → `registerImage` → 解锁。`deleteCard`：查实例 → 清文件 → `removeLoadedImage` → `deleteImage`。
+本图只含管理面后端进程内对象。`publish`：门禁落盘 → 摘要加锁 → `buildFromPath` → `registerImage` → 解锁。`deleteCard`：查实例 → 按路径清文件 → 按注册中心 tag `removeLoadedImage` → `deleteImage`。
 
 ### 8.3 镜像工厂
 
@@ -515,7 +515,7 @@ classDiagram
 |---|---|---|
 | 工厂 | `FactoryService`、`RecipeRegistry` | 编排：`resolve` 选出唯一 Recipe，再 `validate` → `selectBase` → `execute` |
 | 策略 | `Recipe` 及实现 | 一种制品一条构建方式 |
-| 运行时 | `ImageRuntime` 及实现 | 插拔执行后端；本轮 Docker。卸镜像绕过 Recipe，直接打运行时 |
+| 运行时 | `ImageRuntime` 及实现 | 插拔执行后端；本轮 Docker。卸镜像按注册中心 tag 做 `docker rmi`，绕过 Recipe |
 
 **对外 HTTP**
 
@@ -523,14 +523,14 @@ classDiagram
 |---|---|---|
 | 改 | `POST /v1/builds` 必填 `task_id, agent_name, version, installer_path, output_dir` | `POST /v1/builds` 入参只需 `package_path`（可选请求 id） |
 | 保留 | `GET /v1/builds/{id}` | 仅供上架等待进度；工厂内存任务，不落库 |
-| 新增 | — | `POST /v1/images/remove`（或等价）按 `imageurl` 卸本机已 load 镜像 |
+| 新增 | — | `POST /v1/images/remove`（或等价）按 **tag** 做本机 `docker rmi`；tag 由管理面从注册中心卡片读取，不是文件路径 |
 | 删除 | 调用方指定 `output_dir` / `work_dir` 作为权威产物路径 | 产物路径由工厂写入约定目录后在 `BuildResult` 返回 |
 
 **类：新增 / 保留 / 删除**
 
 | 变更 | 类型 | 职责 |
 |---|---|---|
-| 新增 | `FactoryService` | `buildFromPath`、`removeLoadedImage` |
+| 新增 | `FactoryService` | `buildFromPath`、`removeLoadedImage(tag)` |
 | 新增 | `Recipe`（接口） | `matches` / `selectBase` / `validate` / `execute` |
 | 新增 | `RecipeRegistry` | 按路径解析唯一 Recipe |
 | 新增 | `NpmTgzOnBaseRecipe` | 本轮。npm 二进制：现网 tgz + 预置 Base，注入 ssh 与 yuanrong SDK |
@@ -549,7 +549,6 @@ classDiagram
 classDiagram
     class FactoryService {
         +buildFromPath(packagePath) BuildResult
-        +removeLoadedImage(imageurl)
     }
     class RecipeRegistry {
         +register(recipe)
@@ -633,19 +632,19 @@ classDiagram
         +build()
         +loadArchive()
         +saveArchive()
-        +remove(imageurl)
+        +remove(tag)
         +inspect()
     }
     class DockerRuntime
     class FactoryService {
-        +removeLoadedImage(imageurl)
+        +removeLoadedImage(tag)
     }
 
     ImageRuntime <|.. DockerRuntime
-    FactoryService --> ImageRuntime : removeLoadedImage
+    FactoryService --> ImageRuntime : removeLoadedImage(tag)
 ```
 
-本轮仅 `DockerRuntime`。具体 Recipe 在 `execute` 时使用运行时，不画进本图。`FactoryService` 构建走 Recipe，卸镜像绕过 Recipe 直接打运行时。
+本轮仅 `DockerRuntime`。具体 Recipe 在 `execute` 时使用运行时，不画进本图。卸镜像：管理面从注册中心卡片取 **tag**，工厂按 tag 做 `docker rmi`；`package_path` / `image_archive_path` 只用于删文件，不传给 rmi。
 
 ### 8.4 注册中心
 
@@ -684,7 +683,7 @@ classDiagram
     ImageStore *-- ImageEntry
 ```
 
-路径记在 `ImageEntry` 上。`unlink` 与 `docker rmi` 在管理面后端与工厂；注册中心只删记录。
+路径记在 `ImageEntry` 上，供删文件。`docker rmi` 用的是卡片上的 **tag**（现网字段 `imageurl`，实际是镜像 tag），由管理面读出后交给工厂；注册中心只删记录。
 
 ### 8.5 组件间通信（预留 TLS）
 
