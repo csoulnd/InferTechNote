@@ -127,7 +127,7 @@ flowchart LR
 
 ## 4. 卡片字段
 
-现网注册中心 `/api/images` 偏运行目录，不够管卡片。本轮要求扩字段，实现类图见后文：
+现网注册中心 `/api/images` 偏运行目录，不够管卡片。本轮要求扩字段，类设计见 §8：
 
 | 字段 | 现网 | 本轮 | 谁用 |
 |---|---|---|---|
@@ -354,17 +354,261 @@ flowchart LR
     D1[查实例非空] --> D2[整卡保留]
 ```
 
-## 8. 构建扩展（需求 2）
+## 8. 静态结构（代码设计）
 
-管理面编排固定：通用校验并落盘 → 把路径交给工厂 → 用结果注册。  
-工厂内部：解析 → `RecipeRegistry.resolve` 选策略与 Base → 校验并执行。新增方式只加 Recipe。
+按三个进程拆类。进程之间只通过网关接口调用，不共享 ORM、不共享 Recipe。类名是实现对象；HTTP 是进程边界。现网已有、本轮不再使用的类型在各小节标明删除，不画进目标类图。
+
+### 8.1 组件协作
+
+管理后端编排；工厂只构建和卸本机已 load 镜像；注册中心只记账卡片和实例。实例计数复用注册中心既有实例查询，不在卡片类上加字段。
+
+```mermaid
+classDiagram
+    direction LR
+
+    class AgentCardService
+    class FactoryGateway
+    class RegistryGateway
+    class LocalPackageStore
+    class FactoryService
+    class RecipeRegistry
+    class AgentCardStore
+    class InstanceStore
+
+    AgentCardService --> FactoryGateway : buildFromPath\nremoveLoadedImage
+    AgentCardService --> RegistryGateway : register / list\nupdateDescription / delete
+    AgentCardService --> LocalPackageStore : 摘要锁、未注册包
+    AgentCardService --> InstanceStore : 已创建/已注册计数\n删前是否有实例
+    FactoryGateway --> FactoryService
+    FactoryService --> RecipeRegistry
+    RegistryGateway --> AgentCardStore
+    RegistryGateway --> InstanceStore
+```
+
+`InstanceStore` 在注册中心。管理后端经 `RegistryGateway` 调既有实例接口，本轮不新开一套实例资源。
+
+### 8.2 管理后端
+
+现网把上传、深校验、异步 Job、本地注册副本揉在 `ThirdpartyAgentService`。目标拆成门禁、本机包、卡片编排三块；卡片目录不再落本库。
+
+**对外 HTTP（`/api/v1/thirdparty_agent`）**
+
+| | 现网 | 本轮 |
+|---|---|---|
+| 删 | `GET/POST /installers` | 不再做安装包目录 |
+| 删 | `POST/GET /build_tasks` | 上架一次完成，不把 Job 当产品 |
+| 新增 | — | `POST /cards` 上传+描述，连续构建并注册 |
+| 新增 | — | `GET /cards` 回源注册中心；用户裁路径，管理员附实例计数与路径 |
+| 新增 | — | `PATCH /cards/{framework}/{version}` 只改 `description` |
+| 新增 | — | `DELETE /cards/{framework}/{version}` 无实例才整卡拆除 |
+| 新增 | — | `GET /packages`、`POST /packages/{digest}/retry`、`DELETE /packages/{digest}` 未注册包 |
+| 保留 | `GET /api/v1/agent/instances` | 实例管理仍走这条，卡片列表只汇总计数 |
+
+**类：新增 / 保留 / 删除**
+
+| | 类型 | 职责 |
+|---|---|---|
+| 新增 | `UploadGate` | 大小、扩展名、安全命名、临时文件再改名；不解包 |
+| 新增 | `LocalPackageRecord` / `LocalPackageStore` | 一张本机包表：摘要、路径、锁、失败原因 |
+| 新增 | `AgentCardService` | 上架、查、改描述、删卡、未注册包重试/删除 |
+| 新增 | `CardViewProjector` | 按角色裁字段；管理员再填两计数 |
+| 新增 | `FactoryGateway` | 替换现网 `image_process_client.submit_build` 的入参形态 |
+| 新增 | `RegistryGateway` | 类型化封装注册中心卡片与实例查询 |
+| 新增 | `LocalFileCleaner` | 按路径删源包和镜像文件 |
+| 保留 | 鉴权（`require_admin` / 用户角色） | 视图裁剪的输入 |
+| 保留 | 实例快照查询 | 只用于计数和删前检查 |
+| 删除 | `BuildTask`、`AgentRegistration` | 被本机包表 + 注册中心卡片替代 |
+| 删除 | `package.extract_package_meta` 及平台校验 | 迁到工厂 Recipe |
+| 删除 | `ThirdpartyAgentService.create_build_task` / `get_build_task` / `list_installers` 补本地注册 | 不再有安装包墙和 Job 墙 |
+
+```mermaid
+classDiagram
+    class AgentCardService {
+        +publish(file, description)
+        +list(view)
+        +updateDescription(id, text)
+        +deleteCard(id)
+        +retry(digest)
+        +deleteUnregistered(digest)
+    }
+    class UploadGate {
+        +accept(file) PackagePath
+    }
+    class LocalPackageStore {
+        +tryLock(digest)
+        +unlock(digest)
+        +save(record)
+        +get(digest)
+        +delete(digest)
+    }
+    class LocalPackageRecord {
+        content_digest
+        package_path
+        locked_until
+        last_error
+    }
+    class CardViewProjector {
+        +forUser(card) CardDto
+        +forAdmin(card, counts) AdminCardDto
+    }
+    class FactoryGateway {
+        +buildFromPath(path) BuildResult
+        +removeLoadedImage(imageurl)
+    }
+    class RegistryGateway {
+        +register(card)
+        +list() Card[]
+        +updateDescription(id, text)
+        +delete(id)
+        +listInstances(card)
+    }
+    class LocalFileCleaner {
+        +removePackage(path)
+        +removeArchive(path)
+    }
+
+    AgentCardService --> UploadGate
+    AgentCardService --> LocalPackageStore
+    AgentCardService --> CardViewProjector
+    AgentCardService --> FactoryGateway
+    AgentCardService --> RegistryGateway
+    AgentCardService --> LocalFileCleaner
+    LocalPackageStore *-- LocalPackageRecord
+```
+
+`publish` 内部顺序固定：门禁落盘 → 摘要加锁 → `buildFromPath` → `register` → 解锁。管理后端不出现 `Recipe`、`Base`、`Dockerfile`。
+
+### 8.3 镜像工厂
+
+现网 `build()` 固定拷贝 `agent.Dockerfile`、固定 `agent-base:1.0`，且要求调用方传入 `agent_name` / `version`。目标把「能不能构建、如何构建」收进 Recipe；运行时后端仍可插拔。
+
+**对外 HTTP**
+
+| | 现网 | 本轮 |
+|---|---|---|
+| 改 | `POST /v1/builds` 必填 `task_id, agent_name, version, installer_path, output_dir` | `POST /v1/builds` 入参只需 `package_path`（可选请求 id） |
+| 保留 | `GET /v1/builds/{id}` | 仅供上架等待进度；工厂内存任务，不落库 |
+| 新增 | — | `POST /v1/images/remove`（或等价）按 `imageurl` 卸本机已 load 镜像 |
+| 删除 | 调用方指定 `output_dir` / `work_dir` 作为权威产物路径 | 产物路径由工厂写入约定目录后在 `BuildResult` 返回 |
+
+**类：新增 / 保留 / 删除**
+
+| | 类型 | 职责 |
+|---|---|---|
+| 新增 | `FactoryService` | `buildFromPath`、`removeLoadedImage` |
+| 新增 | `Recipe`（接口） | `matches` / `selectBase` / `validate` / `execute` |
+| 新增 | `RecipeRegistry` | 按路径解析唯一 Recipe |
+| 新增 | `NpmTgzOnBaseRecipe` | 现网 npm tgz + 预置 Base；接收现网 `package.py` 的解析与平台校验 |
+| 新增 | `OciImportRecipe` | 已有 OCI/Docker archive 导入 |
+| 保留并改名 | `ImageRuntime` ← 现网 `AbstractBuilder` | `build` / `loadArchive` / `saveArchive` / `remove` / `inspect` |
+| 保留 | `DockerRuntime` ← 现网 `DockerBuilder` | 本机 dockerd |
+| 保留 | 内存 `TaskRecord` | 进行中构建；进程内，非产品目录 |
+| 删除 | `build()` 里写死 Dockerfile 拷贝与 `_BASE_IMAGE` | 变为 `NpmTgzOnBaseRecipe` 的实现细节 |
+| 删除 | 入参强制 `agent_name` / `version` | 由 Recipe 解析后写入 `BuildResult` |
+
+```mermaid
+classDiagram
+    class FactoryService {
+        +buildFromPath(packagePath) BuildResult
+        +removeLoadedImage(imageurl)
+    }
+    class RecipeRegistry {
+        +resolve(path) Recipe
+    }
+    class Recipe {
+        <<interface>>
+        +matches(path) bool
+        +selectBase(path) BaseRef
+        +validate(path)
+        +execute(path, base) BuildResult
+    }
+    class NpmTgzOnBaseRecipe
+    class OciImportRecipe
+    class ImageRuntime {
+        <<interface>>
+        +build()
+        +loadArchive()
+        +saveArchive()
+        +remove(imageurl)
+        +inspect()
+    }
+    class DockerRuntime
+    class BuildResult {
+        name
+        version
+        imageRef
+        archivePath
+        runtimeSpec
+        recipe_id
+        base_ref
+    }
+
+    FactoryService --> RecipeRegistry : resolve
+    RecipeRegistry --> Recipe
+    Recipe <|-- NpmTgzOnBaseRecipe
+    Recipe <|-- OciImportRecipe
+    Recipe --> ImageRuntime : execute 时使用
+    ImageRuntime <|-- DockerRuntime
+    FactoryService --> BuildResult
+    FactoryService --> ImageRuntime : removeLoadedImage
+```
+
+`FactoryService.buildFromPath`：`RecipeRegistry.resolve` → `validate` → `selectBase` → `execute`。新增包类型只加 Recipe 实现并注册，不改 `FactoryService` 与管理后端。
 
 | Recipe | 输入 | 作用 |
 |---|---|---|
 | `npm_tgz_on_base` | npm tgz | 基于预置 Base 构建（现网能力包装） |
 | `oci_import` | OCI/Docker archive | 已构建镜像直接导入 |
 
-后续 node/wheel 等只加新策略。工厂契约是「路径进、构建结果出」，不接收用户身份，也不要求管理面传入 Recipe 或 Base。
+后续 node/wheel 只加新 `Recipe` 子类。工厂不接收用户身份，也不接收管理面传入的 Recipe 或 Base。
+
+### 8.4 注册中心
+
+现网 `/api/images` 是运行目录（`ImageEntry`）。本轮在同一资源上扩成卡片账本，不另起卡片服务。实例接口保持，供管理后端汇总计数和删前检查。
+
+**对外 HTTP**
+
+| | 现网 | 本轮 |
+|---|---|---|
+| 保留 | `GET /api/images`、`POST /api/images` | 列表与注册；POST 体补齐卡片字段，一次写全 |
+| 保留 | `GET /api/images/{framework}/launch-spec` | 拉起实例仍用 |
+| 保留 | `GET /api/instances` 及实例注册/心跳 | 管理后端计数、删前检查；不在本模块重做 |
+| 新增 | — | `PATCH /api/images/{framework}/{version}` 只允许改 `description` |
+| 新增 | — | `DELETE /api/images/{framework}/{version}` |
+| 删除 | — | 不删现网运行字段；管理后端不再靠本地 `AgentRegistration` 补 `agent_name` / `display_name` |
+
+`AgentCard` 即扩字段后的 `ImageEntry`。新增字段见 §4。`countCreated` / `countRegistered` 不是卡片属性，由管理后端对 `InstanceStore` 的查询结果按名称、版本汇总。
+
+```mermaid
+classDiagram
+    class AgentCard {
+        framework
+        framework_version
+        imageurl
+        runtime_spec
+        uploaded_by
+        description
+        package_path
+        image_archive_path
+        recipe_id
+        base_ref
+    }
+    class AgentCardStore {
+        +list() AgentCard[]
+        +get(id) AgentCard
+        +register(card)
+        +updateDescription(id, text)
+        +delete(id)
+    }
+    class InstanceStore {
+        +listByFramework(name, version)
+    }
+
+    AgentCardStore *-- AgentCard
+    AgentCardStore ..> InstanceStore : 不持有计数\n删卡由管理后端先查实例
+```
+
+注册中心不调用工厂，也不持有本机文件。路径字段只是账本；真正 `unlink` 和 `docker rmi` 在管理后端与工厂。
 
 ## 9. 范围确认
 
@@ -383,4 +627,4 @@ flowchart LR
 - **管理**本轮做增、删、查，以及管理员改描述；区分用户/管理员视图。管理员卡片展示名称、版本，以及实例管理接口给出的已创建 / 已注册实例数。改（升级）不做流程。  
 - 已注册包按卡片管；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
 - 同一内容摘要加锁防并发；未持锁才可删或重试，重试再加锁。不同包不互斥。  
-- 整卡拆除时读卡片上的路径；卸已 load 镜像仍交给工厂。
+- **结构**见 §8：管理后端只留编排与本机包表；工厂用 `Recipe` 继承扩展；注册中心扩 `ImageEntry` 为卡片并补 PATCH/DELETE。现网 Job、本地注册副本、管理面解包校验删除。  
