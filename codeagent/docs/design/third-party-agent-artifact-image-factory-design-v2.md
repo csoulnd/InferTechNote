@@ -507,48 +507,262 @@ classDiagram
 
 ### 8.3 镜像工厂
 
-现网 `build()` 固定拷贝 `agent.Dockerfile`、固定 `agent-base:1.0`，且要求调用方传入 `agent_name` / `version`。目标把「能不能构建、如何构建」收进 Recipe；运行时后端仍可插拔。
+现网 `build()` 固定拷贝 `agent.Dockerfile`、固定 `agent-base:1.0`，且要求调用方传入 `agent_name` / `version`。管理面现网还在 `package.py` 里解包、读 `package.json`、校验平台。本轮把「这是什么包、能不能构建、如何构建」全部收进工厂；管理面只交路径。
 
-工厂内部三块分开扩：工厂只负责按路径选出唯一策略并编排；策略封装一种制品的构建方式；运行时是 docker 等执行后端。新包只加 Recipe 并注册，不改工厂入口与管理面后端。
+工厂内部三块：抽象接口如下，实现类后文列出。
 
-| 块 | 类型 | 职责 |
+| 块 | 抽象类型 | 职责 |
 |---|---|---|
-| 工厂 | `FactoryService`、`RecipeRegistry` | 编排：`resolve` 选出唯一 Recipe，再 `validate` → `selectBase` → `execute` |
-| 策略 | `Recipe` 及实现 | 一种制品一条构建方式 |
-| 运行时 | `ImageRuntime` 及实现 | 插拔执行后端；本轮 Docker。卸镜像按注册中心 tag 做 `docker rmi`，绕过 Recipe |
+| 工厂 | `FactoryService`、`RecipeRegistry` | 对外入口；选出唯一 Recipe 并按固定顺序调用 |
+| 策略 | `Recipe` | 一份构建方案：解析制品、选底座、注入、装配 |
+| 运行时 | `ImageRuntime` | docker 执行器。`Recipe` 接口不依赖它 |
 
-**对外 HTTP**
+#### 8.3.1 抽象类型与方法
+
+**`Recipe`（接口）**
+
+一份构建方案。不是库表，不是管理面入参。实现类自带方案常量（`recipe_id`、注入开关、assemble）。工厂只依赖本接口。
+
+| 方法 | 入参 | 返回 | 做什么 | 失败 |
+|---|---|---|---|---|
+| `matches` | 本机 `package_path` | `bool` | **制品识别**：这份文件是不是我能处理的形态。只做形态判断，不因平台不匹配而返回 false | 读文件失败视为 false，不抛 |
+| `validate` | 本机 `package_path` | `ArtifactManifest` | **制品解析 + 能否构建**：解包/读清单、取出名称版本、校验本机能否构建 | 抛错，构建失败 |
+| `selectBase` | `package_path`（及 validate 得到的清单） | `BaseRef` | 选预置底座 | 底座不存在则抛错 |
+| `execute` | `package_path`、`BaseRef` | `BuildResult` | 按方案注入与装配，打 tag，写出 archive | 抛错，构建失败 |
+
+方案常量（实现类填死，不是调用方传入）：
+
+| 字段 | 含义 |
+|---|---|
+| `recipe_id` | 策略名，写入 `BuildResult` 再落到卡片 |
+| `artifact_kind` | 输入形态：`npm_binary` / `oci` / `node_npm` / `harness` |
+| `inject_ssh` | 是否注入 ssh |
+| `inject_yuanrong_sdk` | 是否注入 yuanrong SDK |
+| `assemble` | 制品进镜像：`copy_binary` / `docker_load` / `node_install` / `harness_layout` |
+
+`matches` 与 `validate` 的分工：`matches` 回答「是不是这种包」；`validate` 回答「这种包在这台机器上能不能做成镜像」。例如 npm 二进制平台后缀对不上，`matches` 仍为 true（这就是 npm 二进制），`validate` 失败。
+
+**`RecipeRegistry`**
+
+| 方法 | 入参 | 返回 | 做什么 |
+|---|---|---|---|
+| `register` | `Recipe` 实例 | void | 进程启动时登记。本轮登记 `NpmTgzOnBaseRecipe` |
+| `resolve` | `package_path` | `Recipe` | 对已登记 Recipe 依次 `matches`，**必须恰好一个为 true** |
+
+`resolve` 结果：0 个匹配 → 无法识别制品；2 个及以上 → 注册表配置错误（开发期不允许 Recipe 形态重叠）。
+
+**`FactoryService`**
+
+| 方法 | 入参 | 返回 | 做什么 |
+|---|---|---|---|
+| `buildFromPath` | `package_path`（可选请求 id） | `BuildResult` | `resolve` → `validate` → `selectBase` → `execute`。不接收 name/version/Recipe/Base/用户身份 |
+| `removeLoadedImage` | `tag` | void | 绕过 Recipe，直接 `ImageRuntime.remove(tag)`。tag 由管理面从注册中心卡片读取 |
+
+**`ImageRuntime`（接口，现网 `AbstractBuilder` 改名）**
+
+| 方法 | 入参 | 做什么 |
+|---|---|---|
+| `build` | 工作目录、tag、build args | `docker build` |
+| `loadArchive` | archive 路径 | `docker load` |
+| `saveArchive` | tag | 写出约定目录下的 tar |
+| `remove` | tag | `docker rmi` |
+| `inspect` | tag 或底座 | 读 label / digest / `runtime_spec` |
+
+本轮实现 `DockerRuntime`（现网 `DockerBuilder`）。
+
+**数据对象（不是实体库表）**
+
+`ArtifactManifest`：某条 Recipe `validate` 解析出来的清单，供选底座和 `execute` 使用。本轮 npm 二进制字段与现网 `package.py` 的 `PackageMeta` 对齐，整体迁到工厂：
+
+| 字段 | 来源 | 用途 |
+|---|---|---|
+| `name` | `package.json` 的 `name` 去掉 scope 和平台后缀 | docker tag 名、注册 `framework` |
+| `version` | `package.json` 的 `version` | docker tag、注册 `framework_version` |
+| `display_name` | `displayName` 或 `name` | 可写入描述默认值，本轮非必须 |
+| `entrypoint` | `bin` 字段；没有则扫 ELF 可执行文件名 | 运行入口 |
+| `os` / `arch` / `libc` | 包名平台后缀 `-(linux\|darwin\|win32)-(x64\|arm64)(-musl)?` | `validate` 与本机比对 |
+
+`BaseRef`：底座标识，本轮即 `agent-base:1.0`。
+
+`BuildResult`：`execute` 返回值，不是工厂持有的实体。
+
+| 字段 | 含义 |
+|---|---|
+| `name` / `version` | 来自清单 |
+| `imageRef` | 本机 docker **tag**（`name:version`），不是文件路径 |
+| `archivePath` | 工厂写入约定目录后的落盘包路径 |
+| `runtimeSpec` | 从底座 inspect 得到，带 `sandbox_type` |
+| `recipe_id` / `base_ref` | 所用方案与底座，随卡片写入注册中心 |
+| `image_digest` / `image_module_version` | 现网已有，沿用 |
+
+#### 8.3.2 制品解析
+
+解析发生在工厂，不在管理面。管理面现网 `extract_package_meta` / `validate_platform` 删除，迁到本轮 `NpmTgzOnBaseRecipe`。
+
+**选出谁来解析**
+
+```text
+buildFromPath(path)
+  → RecipeRegistry.resolve(path)
+       对每个已登记 Recipe 调 matches(path)
+       恰好一个 true → 该 Recipe
+       0 个 → 失败：无法识别制品
+       ≥2 个 → 失败：Recipe 形态重叠（开发期缺陷）
+  → recipe.validate(path)     // 真正解包、出清单
+  → recipe.selectBase(...)
+  → recipe.execute(...)
+```
+
+后续加 OCI / OpenClaw / harness，只加实现并 `register`。新形态的识别规则写在该 Recipe 的 `matches` 里，不改 `resolve`。
+
+**本轮 `NpmTgzOnBaseRecipe.matches`（形态识别，不抛错）**
+
+同时满足才为 true，否则 false，把机会让给其他 Recipe：
+
+1. `package_path` 存在且可读。  
+2. 能按 gzip tar 打开（现网 `tarfile.open(..., "r:gz")`）。  
+3. 归档内存在成员路径以 `package/package.json` 结尾。  
+4. JSON 含非空 `name`、`version`。  
+5. `name` 去掉 `@scope/` 后，能匹配平台后缀 `-(linux|darwin|win32)-(x64|arm64)(-musl)?`。  
+
+不在 `matches` 里做的事：不解出全部文件到磁盘；不比对本机 os/arch；不要求调用方传入 name/version。
+
+**本轮 `NpmTgzOnBaseRecipe.validate`（解析 + 能否构建）**
+
+在 `matches` 已成立的前提下：
+
+1. 再读 `package/package.json`，去掉 scope 和平台后缀得到 `name`；`version` 取 JSON；`display_name` 取 `displayName` 或 `name`。  
+2. `entrypoint`：优先 `bin`（对象取第一个键，字符串则用之）；否则在 tar 里找第一个 ELF 魔数 `\x7fELF` 的文件 basename；仍没有则失败。  
+3. 从包名后缀得到 `os` / `arch` / `libc`（无 `-musl` 则为 `gnu`）。  
+4. 与本机比对：`sys.platform`、`platform.machine()`、`platform.libc_ver()` 映射规则与现网 `PackageMeta.validate_platform` 相同；不一致则失败（平台不匹配）。  
+5. `name`、`version` 须满足现网 docker tag 安全字符：`^[a-zA-Z0-9][-a-zA-Z0-9_.]*$`（与现网 `_SAFE_NAME_RE` 一致）。  
+
+成功则返回 `ArtifactManifest`。失败原因写回管理面本机包表 `last_error`，不进注册中心。
+
+**后续形态的解析（本轮不实现，只定扩展点）**
+
+| Recipe | `matches` 认什么 | `validate` 要解析什么 |
+|---|---|---|
+| `oci_import` | 可 `docker load` 的 OCI/Docker archive | 镜像内名称/tag、能否注入 SDK；ssh 按该制品要不要 ssh 连接 |
+| `openclaw_node_npm` | OpenClaw 的 node 型 npm（无平台二进制后缀，或为 node 布局） | node 清单与安装前置条件 |
+| `deepseek_harness` | harness 包布局 | 由该 Recipe 定义 |
+
+两条约束：不同 Recipe 的 `matches` 不得同时为 true；解析失败只失败本次构建，不改工厂入口。
+
+#### 8.3.3 构建流程
+
+```mermaid
+sequenceDiagram
+    participant CP as 管理面
+    participant F as FactoryService
+    participant Reg as RecipeRegistry
+    participant R as Recipe
+    participant RT as ImageRuntime
+
+    CP->>F: buildFromPath(package_path)
+    F->>Reg: resolve(package_path)
+    Reg->>R: matches(package_path)
+    R-->>Reg: true（唯一）
+    Reg-->>F: Recipe
+    F->>R: validate(package_path)
+    R-->>F: ArtifactManifest
+    F->>R: selectBase(...)
+    R-->>F: BaseRef
+    F->>R: execute(path, base)
+    R->>RT: build / saveArchive
+    RT-->>R: tag、archivePath、runtimeSpec
+    R-->>F: BuildResult
+    F-->>CP: BuildResult
+```
+
+本轮 `NpmTgzOnBaseRecipe` 方案常量：`inject_ssh=true`，`inject_yuanrong_sdk=true`，`assemble=copy_binary`。ssh 与 SDK 已在预置 `agent-base:1.0` 中，`execute` 不再单独安装它们。
+
+本轮 `execute`：
+
+1. `selectBase` 返回 `agent-base:1.0`（底座不存在则失败）。  
+2. 工作目录由工厂约定，调用方不传 `output_dir` / `work_dir`。  
+3. 拷贝源 tgz；拷贝现网 `agent.Dockerfile`（`FROM` 该 Base，把 `package/` 下可执行文件拷进 `/usr/local/bin`）。  
+4. `ImageRuntime.build`，tag 为 `name:version`。  
+5. `ImageRuntime.saveArchive`，路径由工厂写入约定目录，填入 `BuildResult.archivePath`。  
+6. inspect 底座得到 `runtimeSpec`；填 `recipe_id=npm_tgz_on_base`、`base_ref`。  
+
+卸镜像不走 Recipe：管理面从注册中心取 tag，调 `removeLoadedImage(tag)` → `ImageRuntime.remove(tag)`。
+
+#### 8.3.4 本轮与后续方案
+
+```mermaid
+classDiagram
+    class Recipe {
+        <<interface>>
+        recipe_id
+        artifact_kind
+        inject_ssh
+        inject_yuanrong_sdk
+        assemble
+        matches(path) bool
+        validate(path) ArtifactManifest
+        selectBase() BaseRef
+        execute(path, base) BuildResult
+    }
+    class NpmTgzOnBaseRecipe {
+        <<本轮>>
+    }
+    class OciImportRecipe {
+        <<后续>>
+    }
+    class OpenclawNodeNpmRecipe {
+        <<后续>>
+    }
+    class DeepseekHarnessRecipe {
+        <<后续>>
+    }
+
+    Recipe <|.. NpmTgzOnBaseRecipe
+    Recipe <|.. OciImportRecipe
+    Recipe <|.. OpenclawNodeNpmRecipe
+    Recipe <|.. DeepseekHarnessRecipe
+```
+
+| 阶段 | recipe_id | artifact_kind | inject_ssh | inject_yuanrong_sdk | assemble |
+|---|---|---|---|---|---|
+| 本轮 | `npm_tgz_on_base` | npm 二进制 tgz | 是（在 Base 内） | 是（在 Base 内） | 拷进预置 Base |
+| 后续 | `oci_import` | OCI/Docker archive | 按是否需要 ssh 连接 | 是 | `docker load` 后再注入 |
+| 后续 | `openclaw_node_npm` | OpenClaw node 型 npm | 按该形态 | 按该形态 | node 安装 |
+| 后续 | `deepseek_harness` | DeepSeek harness | 按该形态 | 按该形态 | harness 布局 |
+
+ssh、yuanrong SDK 不是独立 Recipe。后续只加实现并 `register`。
+
+#### 8.3.5 对外 HTTP
 
 | 变更 | 现网 | 本轮 |
 |---|---|---|
-| 改 | `POST /v1/builds` 必填 `task_id, agent_name, version, installer_path, output_dir` | `POST /v1/builds` 入参只需 `package_path`（可选请求 id） |
-| 保留 | `GET /v1/builds/{id}` | 仅供上架等待进度；工厂内存任务，不落库 |
-| 新增 | — | `POST /v1/images/remove`（或等价）按 **tag** 做本机 `docker rmi`；tag 由管理面从注册中心卡片读取，不是文件路径 |
-| 删除 | 调用方指定 `output_dir` / `work_dir` 作为权威产物路径 | 产物路径由工厂写入约定目录后在 `BuildResult` 返回 |
+| 改 | `POST /v1/builds` 必填 `task_id, agent_name, version, installer_path, output_dir` | 入参只需 `package_path`（可选请求 id） |
+| 保留 | `GET /v1/builds/{id}` | 上架等待进度；工厂内存任务，不落库 |
+| 新增 | — | `POST /v1/images/remove` 按 **tag** 做 `docker rmi` |
+| 删除 | 调用方指定 `output_dir` / `work_dir` | 产物路径由工厂写入约定目录后在 `BuildResult` 返回 |
 
-**类：新增 / 保留 / 删除**
+#### 8.3.6 类：新增 / 保留 / 删除
 
 | 变更 | 类型 | 职责 |
 |---|---|---|
 | 新增 | `FactoryService` | `buildFromPath`、`removeLoadedImage(tag)` |
-| 新增 | `Recipe`（接口） | `matches` / `selectBase` / `validate` / `execute` |
-| 新增 | `RecipeRegistry` | 按路径解析唯一 Recipe |
-| 新增 | `NpmTgzOnBaseRecipe` | 本轮。npm 二进制：现网 tgz + 预置 Base，注入 ssh 与 yuanrong SDK |
-| 后续 | `OciImportRecipe` | OCI/Docker archive 导入；注入 yuanrong SDK；是否注入 ssh 取决于该制品是否需要 ssh 连接 |
-| 后续 | `OpenclawNodeNpmRecipe` | 基于 OpenClaw 的 node 型 npm |
-| 后续 | `DeepseekHarnessRecipe` | DeepSeek harness |
-| 保留并改名 | `ImageRuntime` ← 现网 `AbstractBuilder` | `build` / `loadArchive` / `saveArchive` / `remove` / `inspect` |
-| 保留 | `DockerRuntime` ← 现网 `DockerBuilder` | 本机 dockerd |
-| 保留 | 内存 `TaskRecord` | 进行中构建；进程内，非产品目录 |
-| 删除 | `build()` 里写死 Dockerfile 拷贝与 `_BASE_IMAGE` | 变为 `NpmTgzOnBaseRecipe` 的实现细节 |
-| 删除 | 入参强制 `agent_name` / `version` | 由 Recipe 解析后写入 `BuildResult` |
-
-**工厂编排**
+| 新增 | `Recipe`（接口） | `matches` / `validate` / `selectBase` / `execute` |
+| 新增 | `RecipeRegistry` | `register` / `resolve` |
+| 新增 | `ArtifactManifest` | 解析清单；本轮对齐现网 `PackageMeta` |
+| 新增 | `NpmTgzOnBaseRecipe` | 本轮。接收现网 `package.py` 与固定 Dockerfile |
+| 后续 | `OciImportRecipe` / `OpenclawNodeNpmRecipe` / `DeepseekHarnessRecipe` | 只加实现 |
+| 保留并改名 | `ImageRuntime` ← `AbstractBuilder` | `build` / `loadArchive` / `saveArchive` / `remove` / `inspect` |
+| 保留 | `DockerRuntime` ← `DockerBuilder` | 本机 dockerd |
+| 保留 | 内存 `TaskRecord` | 进行中构建；非产品目录 |
+| 删除 | 管理面 `extract_package_meta` / `validate_platform` | 迁到 `NpmTgzOnBaseRecipe` |
+| 删除 | `build()` 写死 Dockerfile 拷贝与 `_BASE_IMAGE` | 变为本轮 Recipe 的 `execute` / `selectBase` |
+| 删除 | 入参强制 `agent_name` / `version` | 由 `validate` 写入 `BuildResult` |
 
 ```mermaid
 classDiagram
     class FactoryService {
         +buildFromPath(packagePath) BuildResult
+        +removeLoadedImage(tag)
     }
     class RecipeRegistry {
         +register(recipe)
@@ -557,10 +771,19 @@ classDiagram
     class Recipe {
         <<interface>>
         +matches(path) bool
-        +selectBase(path) BaseRef
-        +validate(path)
+        +validate(path) ArtifactManifest
+        +selectBase() BaseRef
         +execute(path, base) BuildResult
     }
+    class ImageRuntime {
+        <<interface>>
+        +build()
+        +loadArchive()
+        +saveArchive()
+        +remove(tag)
+        +inspect()
+    }
+    class DockerRuntime
     class BuildResult {
         <<data>>
         name
@@ -572,106 +795,15 @@ classDiagram
         base_ref
     }
 
-    FactoryService --> RecipeRegistry : buildFromPath 时 resolve
-    RecipeRegistry o-- Recipe : 已注册策略
+    FactoryService --> RecipeRegistry : resolve
+    RecipeRegistry o-- Recipe
     FactoryService ..> Recipe : validate / selectBase / execute
-    Recipe ..> BuildResult : execute 返回
-```
-
-`FactoryService.buildFromPath`：`RecipeRegistry.resolve` → `validate` → `selectBase` → `execute`。`BuildResult` 是返回值，不是工厂持有的实体。卸镜像不走本图，见运行时。
-
-**构建策略**
-
-Recipe 不是管理面库表，也不是管理面传入的参数。它是工厂里的**一份构建方案**：这份包用哪类输入、从哪块底座长、往镜像里注入什么、制品怎么进镜像。工厂按路径 `resolve` 出唯一一份，执行后把 `recipe_id` / `base_ref` 写进 `BuildResult`，随卡片落到注册中心。
-
-```text
-recipe_id              策略标识（如 npm_tgz_on_base）
-artifact_kind          输入形态：npm_binary / oci / node_npm / harness
-base_ref               底座镜像，由 selectBase 决定
-inject_ssh             是否注入 ssh（要不要 ssh 连接）
-inject_yuanrong_sdk    是否注入 yuanrong SDK
-assemble               制品进镜像的方式：copy_binary / docker_load / node_install / harness_layout
-```
-
-接口方法是在跑这份方案：`matches` 认不认这个文件 → `validate` 能不能构建 → `selectBase` 选底座 → `execute` 按注入项和 assemble 做出镜像。
-
-```mermaid
-classDiagram
-    class Recipe {
-        <<构建方案>>
-        recipe_id
-        artifact_kind
-        inject_ssh
-        inject_yuanrong_sdk
-        assemble
-        matches(path) bool
-        selectBase(path) BaseRef
-        validate(path)
-        execute(path, base) BuildResult
-    }
-    class NpmTgzOnBaseRecipe {
-        <<本轮>>
-        recipe_id = npm_tgz_on_base
-        artifact_kind = npm_binary
-        inject_ssh = true
-        inject_yuanrong_sdk = true
-        assemble = copy_binary
-    }
-    class OciImportRecipe {
-        <<后续>>
-        artifact_kind = oci
-        inject_yuanrong_sdk = true
-        inject_ssh = 按需
-        assemble = docker_load
-    }
-    class OpenclawNodeNpmRecipe {
-        <<后续>>
-        artifact_kind = node_npm
-        assemble = node_install
-    }
-    class DeepseekHarnessRecipe {
-        <<后续>>
-        artifact_kind = harness
-        assemble = harness_layout
-    }
-
-    Recipe <|.. NpmTgzOnBaseRecipe
-    Recipe <|.. OciImportRecipe
-    Recipe <|.. OpenclawNodeNpmRecipe
-    Recipe <|.. DeepseekHarnessRecipe
-```
-
-| 阶段 | recipe_id | artifact_kind | inject_ssh | inject_yuanrong_sdk | assemble |
-|---|---|---|---|---|---|
-| 本轮 | `npm_tgz_on_base` | npm 二进制 tgz | 是 | 是 | 拷进预置 Base（现网能力包装） |
-| 后续 | `oci_import` | OCI/Docker archive | 按是否需要 ssh 连接 | 是 | `docker load` 后再注入 |
-| 后续 | `openclaw_node_npm` | OpenClaw 的 node 型 npm | 按该形态需要 | 按该形态需要 | node 安装，与二进制 npm 不同条 |
-| 后续 | `deepseek_harness` | DeepSeek harness | 按该形态需要 | 按该形态需要 | harness 布局 |
-
-本轮 `execute` 可见步骤：认 npm 二进制 tgz → 选预置 Base → 注入 ssh → 注入 yuanrong SDK → 拷可执行文件 → `docker build` → 打 tag。ssh、yuanrong SDK 不是独立 Recipe，只是方案上的注入开关。后续只加新 `Recipe` 子类并 `register`，不改工厂编排入口与管理面后端。工厂不接收用户身份，也不接收管理面传入的 Recipe 或 Base。`Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。
-
-**运行时后端**
-
-```mermaid
-classDiagram
-    class ImageRuntime {
-        <<interface>>
-        +build()
-        +loadArchive()
-        +saveArchive()
-        +remove(tag)
-        +inspect()
-    }
-    class DockerRuntime
-    class FactoryService {
-        +removeLoadedImage(tag)
-    }
-
-    ImageRuntime <|.. DockerRuntime
+    Recipe ..> BuildResult
     FactoryService --> ImageRuntime : removeLoadedImage(tag)
+    ImageRuntime <|.. DockerRuntime
 ```
 
-本轮仅 `DockerRuntime`。具体 Recipe 在 `execute` 时使用运行时，不画进本图。卸镜像：管理面从注册中心卡片取 **tag**，工厂按 tag 做 `docker rmi`；`package_path` / `image_archive_path` 只用于删文件，不传给 rmi。
+`Recipe` 接口不依赖 `ImageRuntime`；只有具体实现的 `execute` 使用运行时。卸镜像：管理面从注册中心取 tag，不是文件路径。
 
 ### 8.4 注册中心
 
