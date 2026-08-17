@@ -127,17 +127,7 @@ flowchart LR
 
 ## 4. 卡片字段
 
-**卡片是管理面的产品对象。** 注册中心不理解卡片，仍是镜像 / 框架记录。管理面把展示与路径记在现网 `GET/POST /api/images` 的记录上，**不新增注册中心接口**；字段与更新/删除的处理逻辑由注册中心在现有接口上改。
-
-| 字段 | 现网 | 本轮 | 谁用 |
-|---|---|---|---|
-| `framework` / `framework_version` | 有 | 保留，管理面卡片主键 | 两种视图 |
-| `runtime_spec` / `imageurl` / 资源字段 | 有 | 保留 | 拉起实例 |
-| `uploaded_by` | 有 | 保留 | 管理员 |
-| `description` | 无 | **现有 POST/GET 扩字段**；管理员可改，再走 POST | 两种视图展示；仅管理员编辑 |
-| `package_path` | 无 | **现有 POST/GET 扩字段** | 管理员详情、整卡删源包 |
-| `image_archive_path` | 无 | **现有 POST/GET 扩字段** | 管理员详情、整卡删落盘镜像 |
-| `recipe_id` / `base_ref` | 无 | 建议一并写入 | 本轮不跑升级，留给后续改 |
+管理面卡片对应注册中心 `GET/POST /api/images` 的框架记录，本轮在该记录上增加下列字段。
 
 | 字段 | 现网 | 本轮 | 谁用 |
 |---|---|---|---|
@@ -293,7 +283,7 @@ sequenceDiagram
         CP->>R: 取卡片上的 package_path / image_archive_path
         CP->>CP: 删软件包、落盘镜像文件
         CP->>F: removeLoadedImage(imageurl)
-        CP->>R: 现有镜像接口删除该记录
+        CP->>R: deleteImage()
         CP-->>Admin: 已拆除
     end
 ```
@@ -307,12 +297,12 @@ sequenceDiagram
     participant R as 注册中心
 
     Admin->>CP: 更新卡片 description
-    CP->>R: POST /api/images（现网已有 upsert）
+    CP->>R: POST /api/images
     R-->>CP: registered / updated
     CP-->>Admin: 成功
 ```
 
-改描述走现网注册接口，不新开 PATCH。不经过镜像工厂，不改本机包表。
+改描述走 `POST /api/images`。不经过镜像工厂，不改本机包表。
 
 ## 7. 异常
 
@@ -366,7 +356,7 @@ flowchart LR
 
 ## 8. 静态结构（代码设计）
 
-整体涉及三个组件。**仓库**和**进程**不是一回事：镜像工厂源码在管理面仓库的 `image_process/`，部署仍是独立进程，管理面后端不能 `import` 工厂实现。注册中心是另一组件。
+整体涉及三个组件。
 
 | 组件 | 仓库与进程 | 管理面后端如何访问 |
 |---|---|---|
@@ -374,7 +364,7 @@ flowchart LR
 | 镜像工厂 | 同仓库 `control-panel/image_process`，独立进程 | 现网已有 `image_process_client`，配置 `IMAGE_PROCESS_URL` |
 | 注册中心 | 独立组件，配置 `AGENT_REGISTER_URL` | 现网写在 Service 里的 HTTP 调用，本轮收拢为 `AgentRegisterClient` |
 
-因此管理面后端会留 **两个组件间客户端**：`ImageProcessClient`（现网 `image_process_client`）、`AgentRegisterClient`（收拢对 `AGENT_REGISTER_URL` 的调用）。两者都走 **组件间通信**（§8.5），本轮缺省 HTTP。
+因此管理面后端会留 **两个组件间客户端**：`ImageProcessClient`（现网 `image_process_client`）、`AgentRegisterClient`（收拢对 `AGENT_REGISTER_URL` 的调用）。两者都走 **组件间通信**（§8.5），当前实现缺省 HTTP。
 
 ### 8.1 组件间通信
 
@@ -402,6 +392,7 @@ classDiagram
         <<管理面后端>>
         +registerImage()
         +listImages()
+        +deleteImage()
         +listInstances()
     }
     class image_process {
@@ -413,6 +404,7 @@ classDiagram
         <<注册中心>>
         +listImages()
         +registerImage()
+        +deleteImage()
         +listInstances()
     }
 
@@ -422,7 +414,7 @@ classDiagram
     AgentRegisterClient ..> AgentRegister : 组件间通信
 ```
 
-`ThirdpartyAgentService` 不直接依赖镜像工厂或注册中心的实现类。卡片是管理面概念：列表、改描述、删卡都经 `AgentRegisterClient` 打现网 `/api/images` 与 `/api/instances`，注册中心不出现「卡片」资源。
+`deleteCard` 在清完本机文件并卸镜像后，经 `AgentRegisterClient.deleteImage` 回写注册中心。
 
 ### 8.2 管理面后端
 
@@ -445,19 +437,19 @@ classDiagram
 
 | | 类型 | 职责 |
 |---|---|---|
-| 演进 | `ThirdpartyAgentService` | 现网上传/构建/列表/注册的编排入口；本轮改为上架、查、改描述、删卡、未注册包重试/删除。不是新服务 |
+| 演进 | `ThirdpartyAgentService` | 现网上传/构建/列表/注册的编排入口；本轮改为上架、查、改描述、删卡、未注册包重试/删除 |
 | 新增 | `UploadGate` | 从现网 `upload` 里拆出的通用门禁：大小、扩展名、安全命名、临时文件再改名；不解包 |
 | 新增 | `LocalPackageRecord` / `LocalPackageStore` | 一张本机包表：摘要、路径、锁、失败原因 |
 | 新增 | `CardViewProjector` | 按角色裁字段；管理员再填两计数 |
 | 演进 | `ImageProcessClient` | 现网模块 `image_process_client`；改入参为只交路径 |
-| 演进 | `AgentRegisterClient` | 现网对 `AGENT_REGISTER_URL` 的散落调用收拢；仍只走 `GET/POST /api/images` 与实例查询 |
+| 演进 | `AgentRegisterClient` | 收拢对 `AGENT_REGISTER_URL` 的调用：`listImages`、`registerImage`、`deleteImage`、`listInstances` |
 | 新增 | 组件间通信接口 | 两个客户端共用；本轮缺省 HTTP，TLS 预留，见 §8.5 |
 | 新增 | `LocalFileCleaner` | 按路径删源包和镜像文件 |
 | 保留 | 鉴权（`require_admin` / 用户角色） | 视图裁剪的输入 |
-| 保留 | 既有实例查询客户端 | 由 `AgentRegisterClient.listInstances` 复用，不在卡片模块再画一套 |
-| 删除 | `BuildTask`、`AgentRegistration` | 被本机包表 + 注册中心卡片替代 |
+| 保留 | 既有实例查询 | `AgentRegisterClient.listInstances` |
+| 删除 | `BuildTask`、`AgentRegistration` | 被本机包表 + 注册中心镜像记录替代 |
 | 删除 | `package.extract_package_meta` 及平台校验 | 迁到工厂 Recipe |
-| 删除 | 该类上的 `create_build_task` / `get_build_task` / `list_installers` 补本地注册 | 不再有安装包墙和 Job 墙；上架收进 `publish` |
+| 删除 | `create_build_task` / `get_build_task` / `list_installers` | 上架收进 `publish` |
 
 ```mermaid
 classDiagram
@@ -499,6 +491,7 @@ classDiagram
         <<AGENT_REGISTER_URL>>
         +registerImage()
         +listImages()
+        +deleteImage()
         +listInstances()
     }
     class LocalFileCleaner {
@@ -510,12 +503,12 @@ classDiagram
     ThirdpartyAgentService --> LocalPackageStore : 锁 / 未注册包
     ThirdpartyAgentService --> CardViewProjector : list 裁字段
     ThirdpartyAgentService --> ImageProcessClient : 构建 / 卸镜像
-    ThirdpartyAgentService --> AgentRegisterClient : 卡片与实例
+    ThirdpartyAgentService --> AgentRegisterClient : 注册 / 查询 / 删除
     ThirdpartyAgentService --> LocalFileCleaner : 删源包和 archive
     LocalPackageStore *-- LocalPackageRecord
 ```
 
-本图只含管理面后端进程内对象。两个客户端经组件间通信访问对端（§8.1 / §8.5），本轮是明文 HTTP。`publish` 顺序：门禁落盘 → 摘要加锁 → `buildFromPath` → `register` → 解锁。管理面后端不出现 `Recipe`、`Base`、`Dockerfile`。
+本图只含管理面后端进程内对象。`publish`：门禁落盘 → 摘要加锁 → `buildFromPath` → `registerImage` → 解锁。`deleteCard`：查实例 → 清文件 → `removeLoadedImage` → `deleteImage`。
 
 ### 8.3 镜像工厂
 
@@ -608,17 +601,14 @@ classDiagram
 
 ### 8.4 注册中心
 
-注册中心**不理解卡片**。对外仍是现网镜像接口与实例接口。管理面把卡片展示成「一张卡」，读写的是 `/api/images` 上的框架记录。扩字段、改描述、删记录都在**现有接口的处理逻辑**里改，本轮不新增 PATCH/DELETE 或卡片资源。
-
-**对外 HTTP（沿用）**
+对外仍是镜像接口与实例接口。管理面卡片读写 `/api/images` 上的框架记录；删除由 `deleteImage` 回写。
 
 | 现网 | 本轮 |
 |---|---|
-| `GET /api/images`、`POST /api/images` | 沿用。POST 已是 upsert（`registered` / `updated`）。扩 `description` 等字段、以及删除所需的处理，由注册中心改现有逻辑 |
-| `GET /api/images/{framework}/launch-spec` | 沿用，拉起实例 |
-| `GET /api/instances` 及实例注册/心跳 | 沿用；管理面后端计数、删前检查 |
-
-不新增注册中心 URL。管理面后端的 `PATCH /cards`、`DELETE /cards` 是管理面自己的产品接口，对内仍转成上述现网调用。
+| `GET /api/images`、`POST /api/images` | 沿用。POST 为 upsert。扩 `description` 等字段 |
+| `GET /api/images/{framework}/launch-spec` | 沿用 |
+| `GET /api/instances` 及实例注册/心跳 | 沿用；计数、删前检查 |
+| 镜像删除 | `deleteImage`：`deleteCard` 清完本机与已 load 镜像后调用；处理逻辑在现有镜像接口上改 |
 
 ```mermaid
 classDiagram
@@ -637,6 +627,7 @@ classDiagram
     class ImageStore {
         +list()
         +register()
+        +delete()
     }
     class InstanceStore {
         +listByFramework(name, version)
@@ -645,13 +636,13 @@ classDiagram
     ImageStore *-- ImageEntry
 ```
 
-`ImageStore` 与 `InstanceStore` 同在注册中心、互不调用。删前有没有实例，由管理面后端先查实例再决定是否调现有镜像接口做删除。注册中心不调用工厂，也不持有本机文件。路径只是记录上的字段；真正 `unlink` 和 `docker rmi` 在管理面后端与工厂。
+路径记在 `ImageEntry` 上。`unlink` 与 `docker rmi` 在管理面后端与工厂；注册中心只删记录。
 
 ### 8.5 组件间通信（预留 TLS）
 
 范围：管理面后端 → 镜像工厂、管理面后端 → 注册中心。浏览器到管理面、NFS、docker.sock 不在本条。
 
-两个客户端发出的请求都走同一套 **组件间通信** 抽象，不在 `ImageProcessClient` / `AgentRegisterClient` 里写死 `httpx`。本轮只落缺省 HTTP（与现网一致）。TLS 是后续实现：运维发放证书、配上预留路径后切换，不改业务方法。
+两个客户端共用组件间通信抽象。本轮缺省 HTTP；TLS 为后续实现，配上运维证书路径后切换。
 
 ```mermaid
 classDiagram
@@ -687,19 +678,19 @@ classDiagram
 
 | 做 | 不做 |
 |---|---|
-| 卡片是管理面产品对象；数据落在注册中心现网镜像记录上。管理面只留一张本机包表 | 继续保留 `build_tasks` + `agent_registrations`，或在注册中心做卡片资源 |
+| 卡片数据落在注册中心镜像记录；管理面只留一张本机包表 | 继续保留 `build_tasks` + `agent_registrations` |
 | 上架连续完成并一次写全镜像记录；失败包可删或重试，不进卡片墙 | 把未注册包做成第二套卡片目录 |
 | 查询回源 `GET /api/images`；用户视图裁路径；管理员看名称/版本/描述、实例计数与路径 | 用户侧增删改卡；把实例计数写入镜像记录或本机库 |
-| 管理员改描述、整卡拆除：管理面产品接口对内转现网 `/api/images` 与实例查询 | 注册中心新增卡片专用 API；本轮实现升级流程（字段可先写入） |
+| 改描述走 `POST /api/images`；整卡拆除末步 `deleteImage` 回写注册中心 | 本轮实现升级流程（字段可先写入） |
 | Recipe 插拔以支持新包和新构建 | 用户自定义 Recipe 脚本 |
-| 组件间通信抽象为接口，本轮只落明文 HTTP | 本轮实现 TLS/mTLS；应用内签发证书；把通信写进业务接口 |
+| 组件间通信抽象为接口，本轮只落明文 HTTP | 本轮实现 TLS/mTLS；应用内签发证书 |
 
 ## 10. 总结
 
-- **卡片**是管理面的产品对象；注册中心不理解卡片，仍用现网 `/api/images`。扩字段与删改处理逻辑由注册中心改现有接口，不新开 PATCH/DELETE。  
+- **卡片**对应注册中心 `/api/images` 记录；管理面编排增删查与改描述。  
 - **构建**用策略 + 工厂拆开扩展轴。  
-- **管理**本轮做增、删、查，以及管理员改描述；区分用户/管理员视图。管理员卡片展示名称、版本，以及实例管理接口给出的已创建 / 已注册实例数。改（升级）不做流程。  
-- 已注册包按卡片管（数据在镜像记录上）；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
+- **管理**区分用户/管理员视图。管理员卡片展示名称、版本，以及实例管理接口给出的已创建 / 已注册实例数。改（升级）不做流程。  
+- 已注册包按卡片管；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
 - 同一内容摘要加锁防并发；未持锁才可删或重试，重试再加锁。不同包不互斥。  
-- **结构**见 §8：管理面后端只留编排与本机包表；工厂用 `Recipe` 继承扩展；注册中心沿用 `ImageEntry` 与现网接口。现网 Job、本地注册副本、管理面解包校验删除。  
-- **组件间通信**：管理面后端用 `ImageProcessClient`、`AgentRegisterClient` 访问另外两个组件；本轮 HTTP，TLS 预留在通信接口上。  
+- **结构**见 §8：管理面后端编排；`deleteCard` 末步经 `AgentRegisterClient.deleteImage` 回写注册中心。  
+- **组件间通信**：`ImageProcessClient`、`AgentRegisterClient`；本轮 HTTP，TLS 预留。  
