@@ -29,7 +29,7 @@
 
 卡片管理功能区分两种视图：
 
-| | 用户视图 | 管理员视图 |
+| 操作 | 用户视图 | 管理员视图 |
 |---|---|---|
 | 查 | 注册中心卡片列表/详情（名称、版本、描述等展示字段） | 卡片展示：智能体名称、版本、描述；以及按该卡从**实例管理接口**汇总的**已创建实例数**、**已注册实例数**。详情另可见本机软件包路径、镜像路径 |
 | 增 | 无 | 上架并构建，写入注册中心 |
@@ -118,7 +118,7 @@ flowchart LR
 
 对应目标图，上传职责拆成两层，互不替代：
 
-| | 管理面：通用门禁 | 镜像工厂：构建条件 |
+| 分层 | 管理面：通用门禁 | 镜像工厂：构建条件 |
 |---|---|---|
 | 校验核心 | 这是不是一次可接受的上传 | 这个文件能不能、以及如何做成镜像 |
 | 重点关注 | 单文件大小、实际字节封顶、磁盘余量；扩展名白名单；文件名去掉路径穿越，落盘名由服务端生成；先写临时文件再改名 | 解析包内容；选择构建方式和基础镜像；判断能否构建；执行构建、导入或注入 |
@@ -427,11 +427,11 @@ classDiagram
 | `updateDescription` | 改描述 | 注册中心 `registerImage`（POST upsert） |
 | `deleteCard` | 整卡拆除 | 注册中心 `listInstances` → 本机清文件 → 工厂 `removeLoadedImage` → 注册中心 `deleteImage` |
 | `retry` | 未注册包按原路径重试 | 工厂 `buildFromPath` → 注册中心 `registerImage` |
-| `deleteUnregistered` | 删除未注册包 | 只清本机，不调注册中心 |
+| `deleteUnregistered` | 删除未注册包 | 只看本机包表：没有未注册行则结束；有行且未持锁才清文件。不调注册中心 |
 
 **现网接口收拢**
 
-| | 现网 | 本轮 |
+| 变更 | 现网 | 本轮 |
 |---|---|---|
 | 删 | `GET/POST /installers` | 列表回源注册中心；上传并入上架 |
 | 删 | `POST/GET /build_tasks` | 上架连续完成，不把 Job 当产品 |
@@ -439,11 +439,11 @@ classDiagram
 
 **类：新增 / 保留 / 删除**
 
-| | 类型 | 职责 |
+| 变更 | 类型 | 职责 |
 |---|---|---|
 | 演进 | `ThirdpartyAgentService` | 现网上传/构建/列表/注册的编排入口；本轮新增 `updateDescription`、`deleteCard`、`retry`、`deleteUnregistered` |
-| 新增 | `UploadGate` | 从现网 `upload` 里拆出的通用门禁：大小、扩展名、安全命名、临时文件再改名；不解包 |
-| 新增 | `LocalPackageRecord` / `LocalPackageStore` | 一张本机包表：摘要、路径、锁、失败原因 |
+| 新增 | `UploadGate` | 参考前文通用门禁（OWASP File Upload Cheat Sheet）做校验 |
+| 新增 | `LocalPackageRecord` / `LocalPackageStore` | 管理面数据中心 |
 | 新增 | `CardViewProjector` | 按角色裁字段；管理员再填两计数 |
 | 演进 | `ImageProcessClient` | 现网模块 `image_process_client`；改入参为只交路径 |
 | 演进 | `AgentRegisterClient` | 收拢对 `AGENT_REGISTER_URL` 的调用 |
@@ -511,7 +511,7 @@ classDiagram
 
 **对外 HTTP**
 
-| | 现网 | 本轮 |
+| 变更 | 现网 | 本轮 |
 |---|---|---|
 | 改 | `POST /v1/builds` 必填 `task_id, agent_name, version, installer_path, output_dir` | `POST /v1/builds` 入参只需 `package_path`（可选请求 id） |
 | 保留 | `GET /v1/builds/{id}` | 仅供上架等待进度；工厂内存任务，不落库 |
@@ -520,7 +520,7 @@ classDiagram
 
 **类：新增 / 保留 / 删除**
 
-| | 类型 | 职责 |
+| 变更 | 类型 | 职责 |
 |---|---|---|
 | 新增 | `FactoryService` | `buildFromPath`、`removeLoadedImage` |
 | 新增 | `Recipe`（接口） | `matches` / `selectBase` / `validate` / `execute` |
@@ -660,7 +660,7 @@ classDiagram
     AgentRegisterClient --> 组件间通信
 ```
 
-| | 本轮 | 后续 |
+| 项 | 本轮 | 后续 |
 |---|---|---|
 | 实现 | `HttpComm`：现网明文 HTTP | `TlsComm`：校验证书、HTTPS |
 | 选择 | 固定走缺省实现 | 读到证书路径则切 `TlsComm`，两个客户端都不用改 |
