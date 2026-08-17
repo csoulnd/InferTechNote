@@ -356,18 +356,26 @@ flowchart LR
 
 ## 8. 静态结构（代码设计）
 
-按三个进程拆类。进程之间只通过网关接口调用，不共享 ORM、不共享 Recipe。类名是实现对象；HTTP 是进程边界。现网已有、本轮不再使用的类型在各小节标明删除，不画进目标类图。
+整体涉及三个组件。**仓库**和**进程**不是一回事：镜像工厂源码在管理面仓库的 `image_process/`，部署仍是独立进程，管理面后端不能 `import` 工厂实现。注册中心是另一组件。
 
-### 8.1 组件协作
+| 组件 | 仓库与进程 | 管理面后端如何访问 |
+|---|---|---|
+| 管理面后端 | `control-panel/backend`，独立进程 | — |
+| 镜像工厂 | 同仓库 `control-panel/image_process`，独立进程 | 现网已有 `image_process_client`，配置 `IMAGE_PROCESS_URL` |
+| 注册中心 | 独立组件，配置 `AGENT_REGISTER_URL` | 现网写在 Service 里的 HTTP 调用，本轮收拢为 `AgentRegisterClient` |
 
-三个进程。管理后端里的 Gateway 是本进程客户端；对端服务类在另外两个进程。实线是进程内委托，虚线是 `InternalTransport`。`RecipeRegistry`、`LocalPackageStore` 是进程内部细节，见 8.2 / 8.3，不画在这张协作图上。
+因此管理面后端会留 **两个组件间客户端**：`ImageProcessClient`（现网 `image_process_client`）、`AgentRegisterClient`（收拢对 `AGENT_REGISTER_URL` 的调用）。两者都走 **组件间通信**（§8.5），本轮缺省 HTTP。
+
+### 8.1 组件间通信
+
+实线是管理面后端进程内委托。虚线是组件间通信。工厂内部的 Recipe、后端内部的本机包表不画在这张图上。
 
 ```mermaid
 classDiagram
     direction LR
 
     class ThirdpartyAgentService {
-        <<管理后端>>
+        <<管理面后端>>
         +publish()
         +list()
         +updateDescription()
@@ -375,46 +383,39 @@ classDiagram
         +retry()
         +deleteUnregistered()
     }
-    class FactoryGateway {
-        <<管理后端>>
+    class ImageProcessClient {
+        <<管理面后端>>
         +buildFromPath(path)
         +removeLoadedImage(imageurl)
     }
-    class RegistryGateway {
-        <<管理后端>>
+    class AgentRegisterClient {
+        <<管理面后端>>
         +register(card)
         +list()
         +updateDescription()
         +delete()
         +listInstances()
     }
-    class FactoryService {
+    class image_process {
         <<镜像工厂>>
         +buildFromPath(path)
         +removeLoadedImage(imageurl)
     }
-    class AgentCardStore {
+    class AgentRegister {
         <<注册中心>>
-        +register()
-        +list()
-        +updateDescription()
-        +delete()
-    }
-    class InstanceStore {
-        <<注册中心>>
-        +listByFramework()
+        +卡片接口()
+        +实例接口()
     }
 
-    ThirdpartyAgentService --> FactoryGateway
-    ThirdpartyAgentService --> RegistryGateway
-    FactoryGateway ..> FactoryService : InternalTransport
-    RegistryGateway ..> AgentCardStore : InternalTransport
-    RegistryGateway ..> InstanceStore : InternalTransport
+    ThirdpartyAgentService --> ImageProcessClient
+    ThirdpartyAgentService --> AgentRegisterClient
+    ImageProcessClient ..> image_process : 组件间通信
+    AgentRegisterClient ..> AgentRegister : 组件间通信
 ```
 
-管理后端**不**直接依赖工厂或注册中心的实现类。实例计数和删前检查都走 `RegistryGateway.listInstances()`，不把 `InstanceStore` 画进管理后端。卡片账本和实例账本在注册中心是两个库，彼此没有调用关系。虚线走 `InternalTransport`（§8.5）：本轮缺省明文 HTTP，TLS 是同一接口的后续实现，Gateway 业务方法不变。
+`ThirdpartyAgentService` 不直接依赖镜像工厂或注册中心的实现类。卡片列表、改描述、删卡、实例计数和删前检查都经 `AgentRegisterClient` 打到注册中心（卡片接口与实例接口），不是两个注册中心组件。
 
-### 8.2 管理后端
+### 8.2 管理面后端
 
 现网把上传、深校验、异步 Job、本地注册副本揉在 `ThirdpartyAgentService`。目标拆成门禁、本机包、卡片编排三块；卡片目录不再落本库。
 
@@ -439,12 +440,12 @@ classDiagram
 | 新增 | `UploadGate` | 从现网 `upload` 里拆出的通用门禁：大小、扩展名、安全命名、临时文件再改名；不解包 |
 | 新增 | `LocalPackageRecord` / `LocalPackageStore` | 一张本机包表：摘要、路径、锁、失败原因 |
 | 新增 | `CardViewProjector` | 按角色裁字段；管理员再填两计数 |
-| 演进 | `FactoryGateway` | 现网 `image_process_client` 改入参：只交路径，不再传 name/version/output_dir |
-| 演进 | `RegistryGateway` | 现网对 `/api/images` 的 HTTP 调用收成客户端；补 PATCH/DELETE 与实例查询 |
-| 新增 | `InternalTransport` | 内部调用抽象；Gateway 只依赖接口。本轮缺省 `PlainHttpTransport`，TLS 实现预留，见 §8.5 |
+| 演进 | `ImageProcessClient` | 现网模块 `image_process_client`；改入参为只交路径 |
+| 演进 | `AgentRegisterClient` | 现网对 `AGENT_REGISTER_URL` 的散落 HTTP 收成客户端；补 PATCH/DELETE 与实例查询 |
+| 新增 | 组件间通信接口 | 两个客户端共用；本轮缺省 HTTP，TLS 预留，见 §8.5 |
 | 新增 | `LocalFileCleaner` | 按路径删源包和镜像文件 |
 | 保留 | 鉴权（`require_admin` / 用户角色） | 视图裁剪的输入 |
-| 保留 | 既有实例查询客户端 | 由 `RegistryGateway.listInstances` 复用，不在卡片模块再画一套 |
+| 保留 | 既有实例查询客户端 | 由 `AgentRegisterClient.listInstances` 复用，不在卡片模块再画一套 |
 | 删除 | `BuildTask`、`AgentRegistration` | 被本机包表 + 注册中心卡片替代 |
 | 删除 | `package.extract_package_meta` 及平台校验 | 迁到工厂 Recipe |
 | 删除 | 该类上的 `create_build_task` / `get_build_task` / `list_installers` 补本地注册 | 不再有安装包墙和 Job 墙；上架收进 `publish` |
@@ -480,22 +481,18 @@ classDiagram
         +forUser(card) CardDto
         +forAdmin(card, counts) AdminCardDto
     }
-    class FactoryGateway {
-        <<client>>
+    class ImageProcessClient {
+        <<image_process_client>>
         +buildFromPath(path) BuildResult
         +removeLoadedImage(imageurl)
     }
-    class RegistryGateway {
-        <<client>>
+    class AgentRegisterClient {
+        <<AGENT_REGISTER_URL>>
         +register(card)
         +list() Card[]
         +updateDescription(id, text)
         +delete(id)
         +listInstances(card)
-    }
-    class InternalTransport {
-        <<interface>>
-        +request()
     }
     class LocalFileCleaner {
         +removePackage(path)
@@ -505,15 +502,13 @@ classDiagram
     ThirdpartyAgentService --> UploadGate : publish 落盘
     ThirdpartyAgentService --> LocalPackageStore : 锁 / 未注册包
     ThirdpartyAgentService --> CardViewProjector : list 裁字段
-    ThirdpartyAgentService --> FactoryGateway : 构建 / 卸镜像
-    ThirdpartyAgentService --> RegistryGateway : 卡片与实例
+    ThirdpartyAgentService --> ImageProcessClient : 构建 / 卸镜像
+    ThirdpartyAgentService --> AgentRegisterClient : 卡片与实例
     ThirdpartyAgentService --> LocalFileCleaner : 删源包和 archive
-    FactoryGateway --> InternalTransport
-    RegistryGateway --> InternalTransport
     LocalPackageStore *-- LocalPackageRecord
 ```
 
-本图只含管理后端进程内对象。`FactoryGateway` / `RegistryGateway` 停在传输边界，对端类见 8.1；本轮 `InternalTransport` 的缺省实现是明文 HTTP，见 §8.5。`publish` 顺序：门禁落盘 → 摘要加锁 → `buildFromPath` → `register` → 解锁。管理后端不出现 `Recipe`、`Base`、`Dockerfile`。
+本图只含管理面后端进程内对象。两个客户端经组件间通信访问对端（§8.1 / §8.5），本轮是明文 HTTP。`publish` 顺序：门禁落盘 → 摘要加锁 → `buildFromPath` → `register` → 解锁。管理面后端不出现 `Recipe`、`Base`、`Dockerfile`。
 
 ### 8.3 镜像工厂
 
@@ -595,7 +590,7 @@ classDiagram
 
 `Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。`FactoryService` 构建走 Recipe，卸镜像绕过 Recipe 直接打运行时。`BuildResult` 是返回值，不是工厂持有的实体。
 
-`FactoryService.buildFromPath`：`RecipeRegistry.resolve` → `validate` → `selectBase` → `execute`。新增包类型只加 Recipe 实现并注册，不改 `FactoryService` 与管理后端。
+`FactoryService.buildFromPath`：`RecipeRegistry.resolve` → `validate` → `selectBase` → `execute`。新增包类型只加 Recipe 实现并注册，不改工厂编排入口与管理面后端。
 
 | Recipe | 输入 | 作用 |
 |---|---|---|
@@ -606,7 +601,7 @@ classDiagram
 
 ### 8.4 注册中心
 
-现网 `/api/images` 是运行目录（`ImageEntry`）。本轮在同一资源上扩成卡片账本，不另起卡片服务。实例接口保持，供管理后端汇总计数和删前检查。
+现网 `/api/images` 是运行目录（`ImageEntry`）。本轮在同一资源上扩成卡片账本，不另起卡片服务。实例接口保持，供管理面后端汇总计数和删前检查。
 
 **对外 HTTP**
 
@@ -614,12 +609,12 @@ classDiagram
 |---|---|---|
 | 保留 | `GET /api/images`、`POST /api/images` | 列表与注册；POST 体补齐卡片字段，一次写全 |
 | 保留 | `GET /api/images/{framework}/launch-spec` | 拉起实例仍用 |
-| 保留 | `GET /api/instances` 及实例注册/心跳 | 管理后端计数、删前检查；不在本模块重做 |
+| 保留 | `GET /api/instances` 及实例注册/心跳 | 管理面后端计数、删前检查；不在本模块重做 |
 | 新增 | — | `PATCH /api/images/{framework}/{version}` 只允许改 `description` |
 | 新增 | — | `DELETE /api/images/{framework}/{version}` |
-| 删除 | — | 不删现网运行字段；管理后端不再靠本地 `AgentRegistration` 补 `agent_name` / `display_name` |
+| 删除 | — | 不删现网运行字段；管理面后端不再靠本地 `AgentRegistration` 补 `agent_name` / `display_name` |
 
-`AgentCard` 即扩字段后的 `ImageEntry`。新增字段见 §4。已创建 / 已注册实例数不是卡片属性：管理后端经 `RegistryGateway` 查 `InstanceStore`，按名称、版本自行汇总。
+`AgentCard` 即扩字段后的 `ImageEntry`。新增字段见 §4。已创建 / 已注册实例数不是卡片属性：管理面后端经 `AgentRegisterClient` 查 `InstanceStore`，按名称、版本自行汇总。
 
 ```mermaid
 classDiagram
@@ -649,47 +644,43 @@ classDiagram
     AgentCardStore *-- AgentCard
 ```
 
-`AgentCardStore` 与 `InstanceStore` 同在注册中心、互不调用。删前有没有实例，由管理后端先查实例再决定是否调 `AgentCardStore.delete`。注册中心不调用工厂，也不持有本机文件。路径字段只是账本；真正 `unlink` 和 `docker rmi` 在管理后端与工厂。
+`AgentCardStore` 与 `InstanceStore` 同在注册中心、互不调用。删前有没有实例，由管理面后端先查实例再决定是否调 `AgentCardStore.delete`。注册中心不调用工厂，也不持有本机文件。路径字段只是账本；真正 `unlink` 和 `docker rmi` 在管理面后端与工厂。
 
-### 8.5 内部传输（预留 TLS）
+### 8.5 组件间通信（预留 TLS）
 
-范围：管理后端 → 镜像工厂、管理后端 → 注册中心。浏览器到管理面、NFS、docker.sock 不在本条。
+范围：管理面后端 → 镜像工厂、管理面后端 → 注册中心。浏览器到管理面、NFS、docker.sock 不在本条。
 
-本轮**不实现 TLS**。要预留的是传输接口：Gateway 和工厂/注册中心的监听都不直接绑死 `httpx` / 明文端口。后续加密只加实现、改配置，不改 `buildFromPath`、`register`、`listInstances`。
+两个客户端发出的请求都走同一套 **组件间通信** 抽象，不在 `ImageProcessClient` / `AgentRegisterClient` 里写死 `httpx`。本轮只落缺省 HTTP（与现网一致）。TLS 是后续实现：运维发放证书、配上预留路径后切换，不改业务方法。
 
 ```mermaid
 classDiagram
-    class InternalTransport {
+    class 组件间通信 {
         <<interface>>
         +request()
     }
-    class PlainHttpTransport {
+    class HttpComm {
         <<本轮缺省>>
     }
-    class TlsTransport {
+    class TlsComm {
         <<预留>>
     }
-    class TransportResolver {
-        +resolve() InternalTransport
-    }
-    class FactoryGateway
-    class RegistryGateway
+    class ImageProcessClient
+    class AgentRegisterClient
 
-    InternalTransport <|.. PlainHttpTransport
-    InternalTransport <|.. TlsTransport
-    TransportResolver --> InternalTransport
-    FactoryGateway --> InternalTransport
-    RegistryGateway --> InternalTransport
+    组件间通信 <|.. HttpComm
+    组件间通信 <|.. TlsComm
+    ImageProcessClient --> 组件间通信
+    AgentRegisterClient --> 组件间通信
 ```
 
 | | 本轮 | 后续 |
 |---|---|---|
-| 实现 | `PlainHttpTransport`：现网明文 HTTP | `TlsTransport`：校验证书、HTTPS |
-| 选择 | `TransportResolver` 固定返回缺省实现 | 读到证书路径则返回 `TlsTransport`，无需改 Gateway |
+| 实现 | `HttpComm`：现网明文 HTTP | `TlsComm`：校验证书、HTTPS |
+| 选择 | 固定走缺省实现 | 读到证书路径则切 `TlsComm`，两个客户端都不用改 |
 | 证书 | 不涉及 | 运维发放并挂到约定路径，应用不签发、不内置 CA |
-| 配置点（预留，本轮可空） | `INTERNAL_TLS_CA_FILE` / `CERT_FILE` / `KEY_FILE`，建议 `/etc/agentos/tls/` | 配齐后 resolver 自动切 TLS；只配一半则拒绝启动 |
+| 配置点（预留，本轮可空） | `INTERNAL_TLS_CA_FILE` / `CERT_FILE` / `KEY_FILE`，建议 `/etc/agentos/tls/` | 配齐后自动切 TLS |
 
-服务端同样预留绑定接口（明文 listen / TLS listen），工厂与注册中心本轮只落明文。双向 TLS 若需要，作为 `TlsTransport` 的选项，不单开业务接口。
+镜像工厂与注册中心本轮仍明文监听。双向 TLS 若需要，作为 `TlsComm` 的选项。
 
 ## 9. 范围确认
 
@@ -700,7 +691,7 @@ classDiagram
 | 查询回源；用户视图裁路径；管理员看名称/版本/描述、实例计数与路径 | 用户侧增删改卡；把实例计数写入卡片或本机库 |
 | 管理员改描述写回注册中心；无实例按卡片路径整卡拆除 | 本轮实现升级流程（字段可先写入） |
 | Recipe 插拔以支持新包和新构建 | 用户自定义 Recipe 脚本 |
-| 内部调用抽象为 `InternalTransport`，本轮只落明文 HTTP | 本轮实现 TLS/mTLS；应用内签发证书、内置 CA；把传输写进业务接口 |
+| 组件间通信抽象为接口，本轮只落明文 HTTP | 本轮实现 TLS/mTLS；应用内签发证书；把通信写进业务接口 |
 
 ## 10. 总结
 
@@ -709,5 +700,5 @@ classDiagram
 - **管理**本轮做增、删、查，以及管理员改描述；区分用户/管理员视图。管理员卡片展示名称、版本，以及实例管理接口给出的已创建 / 已注册实例数。改（升级）不做流程。  
 - 已注册包按卡片管；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
 - 同一内容摘要加锁防并发；未持锁才可删或重试，重试再加锁。不同包不互斥。  
-- **结构**见 §8：管理后端只留编排与本机包表；工厂用 `Recipe` 继承扩展；注册中心扩 `ImageEntry` 为卡片并补 PATCH/DELETE。现网 Job、本地注册副本、管理面解包校验删除。  
-- **内部通信**抽象为 `InternalTransport`：本轮只落明文 HTTP；TLS 是后续实现，配上运维证书后由 resolver 接入，不改业务接口。  
+- **结构**见 §8：管理面后端只留编排与本机包表；工厂用 `Recipe` 继承扩展；注册中心扩 `ImageEntry` 为卡片并补 PATCH/DELETE。现网 Job、本地注册副本、管理面解包校验删除。  
+- **组件间通信**：管理面后端用 `ImageProcessClient`、`AgentRegisterClient` 访问另外两个组件；本轮 HTTP，TLS 预留在通信接口上。  
