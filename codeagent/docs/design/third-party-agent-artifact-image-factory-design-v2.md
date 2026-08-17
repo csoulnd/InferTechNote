@@ -368,16 +368,14 @@ flowchart LR
 
 ### 8.1 组件间交互
 
-本图是组件间调用接口。各组件删除的接口见 8.2–8.4。
+管理面后端在现有 `ThirdpartyAgentService` 上新增方法。调用接口在镜像工厂与注册中心。各组件删除的接口见 8.2–8.4。
 
 ```mermaid
 classDiagram
     direction LR
 
     class ThirdpartyAgentService {
-        <<管理面后端>>
-        publish()
-        list()
+        <<管理面后端 新增方法>>
         updateDescription()
         deleteCard()
         retry()
@@ -385,27 +383,23 @@ classDiagram
     }
     class ImageProcessClient {
         <<管理面后端>>
-        buildFromPath(path)
-        removeLoadedImage(imageurl)
     }
     class AgentRegisterClient {
         <<管理面后端>>
-        registerImage()
-        listImages()
-        deleteImage()
-        listInstances()
     }
     class image_process {
         <<镜像工厂>>
         buildFromPath(path)
+        getBuild(id)
         removeLoadedImage(imageurl)
     }
     class AgentRegister {
         <<注册中心>>
         listImages()
         registerImage()
-        deleteImage()
+        getLaunchSpec()
         listInstances()
+        deleteImage()
     }
 
     ThirdpartyAgentService --> ImageProcessClient
@@ -414,63 +408,64 @@ classDiagram
     AgentRegisterClient ..> AgentRegister
 ```
 
-`deleteCard` 在清完本机文件并卸镜像后，经 `AgentRegisterClient.deleteImage` 回写注册中心。
+`deleteCard` 在清完本机文件并卸镜像后，经 `deleteImage` 回写注册中心。
 
 ### 8.2 管理面后端
 
-现网把上传、深校验、异步 Job、本地注册副本揉在 `ThirdpartyAgentService`。目标拆成门禁、本机包、卡片编排三块；卡片目录不再落本库。
+现网编排入口仍是 `ThirdpartyAgentService`。本轮在其上新增方法，跨组件调用走镜像工厂与注册中心。列表、上架仍用现网查询/注册，实现改为回源注册中心、路径交给工厂。
 
-**对外 HTTP（`/api/v1/thirdparty_agent`）**
+**新增方法**
+
+| 方法 | 做什么 | 调用 |
+|---|---|---|
+| `updateDescription` | 改描述 | 注册中心 `registerImage`（POST upsert） |
+| `deleteCard` | 整卡拆除 | 注册中心 `listInstances` → 本机清文件 → 工厂 `removeLoadedImage` → 注册中心 `deleteImage` |
+| `retry` | 未注册包按原路径重试 | 工厂 `buildFromPath` → 注册中心 `registerImage` |
+| `deleteUnregistered` | 删除未注册包 | 只清本机，不调注册中心 |
+
+**现网接口收拢**
 
 | | 现网 | 本轮 |
 |---|---|---|
-| 删 | `GET/POST /installers` | 不再做安装包目录 |
-| 删 | `POST/GET /build_tasks` | 上架一次完成，不把 Job 当产品 |
-| 新增 | — | `POST /cards` 上传+描述，连续构建并注册 |
-| 新增 | — | `GET /cards` 回源注册中心；用户裁路径，管理员附实例计数与路径 |
-| 新增 | — | `PATCH /cards/{framework}/{version}` 只改 `description` |
-| 新增 | — | `DELETE /cards/{framework}/{version}` 无实例才整卡拆除 |
-| 新增 | — | `GET /packages`、`POST /packages/{digest}/retry`、`DELETE /packages/{digest}` 未注册包 |
-| 保留 | `GET /api/v1/agent/instances` | 实例管理仍走这条，卡片列表只汇总计数 |
+| 删 | `GET/POST /installers` | 列表回源注册中心；上传并入上架 |
+| 删 | `POST/GET /build_tasks` | 上架连续完成，不把 Job 当产品 |
+| 保留 | `GET /api/v1/agent/instances` | 实例管理；卡片上的两计数也走注册中心实例查询 |
 
 **类：新增 / 保留 / 删除**
 
 | | 类型 | 职责 |
 |---|---|---|
-| 演进 | `ThirdpartyAgentService` | 现网上传/构建/列表/注册的编排入口；本轮改为上架、查、改描述、删卡、未注册包重试/删除 |
+| 演进 | `ThirdpartyAgentService` | 现网编排入口；本轮新增 `updateDescription`、`deleteCard`、`retry`、`deleteUnregistered` |
 | 新增 | `UploadGate` | 从现网 `upload` 里拆出的通用门禁：大小、扩展名、安全命名、临时文件再改名；不解包 |
 | 新增 | `LocalPackageRecord` / `LocalPackageStore` | 一张本机包表：摘要、路径、锁、失败原因 |
 | 新增 | `CardViewProjector` | 按角色裁字段；管理员再填两计数 |
-| 演进 | `ImageProcessClient` | 现网模块 `image_process_client`；改入参为只交路径 |
-| 演进 | `AgentRegisterClient` | 收拢对 `AGENT_REGISTER_URL` 的调用：`listImages`、`registerImage`、`deleteImage`、`listInstances` |
+| 演进 | `ImageProcessClient` | 现网 `image_process_client` |
+| 演进 | `AgentRegisterClient` | 收拢对 `AGENT_REGISTER_URL` 的调用 |
 | 新增 | 组件间通信接口 | 两个客户端共用；本轮缺省 HTTP，TLS 预留，见 §8.5 |
 | 新增 | `LocalFileCleaner` | 按路径删源包和镜像文件 |
 | 保留 | 鉴权（`require_admin` / 用户角色） | 视图裁剪的输入 |
-| 保留 | 既有实例查询 | `AgentRegisterClient.listInstances` |
 | 删除 | `BuildTask`、`AgentRegistration` | 被本机包表 + 注册中心镜像记录替代 |
 | 删除 | `package.extract_package_meta` 及平台校验 | 迁到工厂 Recipe |
-| 删除 | `create_build_task` / `get_build_task` / `list_installers` | 上架收进 `publish` |
+| 删除 | `create_build_task` / `get_build_task` / `list_installers` | 上架与列表走工厂、注册中心 |
 
 ```mermaid
 classDiagram
     class ThirdpartyAgentService {
-        <<现网演进>>
-        publish(file, description)
-        +list(view)
-        +updateDescription(id, text)
-        +deleteCard(id)
-        +retry(digest)
-        +deleteUnregistered(digest)
+        <<新增方法>>
+        updateDescription(id, text)
+        deleteCard(id)
+        retry(digest)
+        deleteUnregistered(digest)
     }
     class UploadGate {
-        +accept(file) PackagePath
+        accept(file) PackagePath
     }
     class LocalPackageStore {
-        +tryLock(digest)
-        +unlock(digest)
-        +save(record)
-        +get(digest)
-        +delete(digest)
+        tryLock(digest)
+        unlock(digest)
+        save(record)
+        get(digest)
+        delete(digest)
     }
     class LocalPackageRecord {
         content_digest
@@ -479,36 +474,30 @@ classDiagram
         last_error
     }
     class CardViewProjector {
-        +forUser(card) CardDto
-        +forAdmin(card, counts) AdminCardDto
+        forUser(card) CardDto
+        forAdmin(card, counts) AdminCardDto
     }
     class ImageProcessClient {
         <<image_process_client>>
-        +buildFromPath(path) BuildResult
-        +removeLoadedImage(imageurl)
     }
     class AgentRegisterClient {
         <<AGENT_REGISTER_URL>>
-        +registerImage()
-        +listImages()
-        +deleteImage()
-        +listInstances()
     }
     class LocalFileCleaner {
-        +removePackage(path)
-        +removeArchive(path)
+        removePackage(path)
+        removeArchive(path)
     }
 
-    ThirdpartyAgentService --> UploadGate : publish 落盘
+    ThirdpartyAgentService --> UploadGate : 上架落盘
     ThirdpartyAgentService --> LocalPackageStore : 锁 / 未注册包
-    ThirdpartyAgentService --> CardViewProjector : list 裁字段
+    ThirdpartyAgentService --> CardViewProjector : 查询裁字段
     ThirdpartyAgentService --> ImageProcessClient : 构建 / 卸镜像
     ThirdpartyAgentService --> AgentRegisterClient : 注册 / 查询 / 删除
     ThirdpartyAgentService --> LocalFileCleaner : 删源包和 archive
     LocalPackageStore *-- LocalPackageRecord
 ```
 
-本图只含管理面后端进程内对象。`publish`：门禁落盘 → 摘要加锁 → `buildFromPath` → `registerImage` → 解锁。`deleteCard`：查实例 → 清文件 → `removeLoadedImage` → `deleteImage`。
+上架：门禁落盘 → 加锁 → 工厂 `buildFromPath` → 注册中心 `registerImage`。`deleteCard`：`listInstances` → 清文件 → `removeLoadedImage` → `deleteImage`。
 
 ### 8.3 镜像工厂
 
@@ -527,7 +516,7 @@ classDiagram
 
 | | 类型 | 职责 |
 |---|---|---|
-| 新增 | `FactoryService` | `buildFromPath`、`removeLoadedImage` |
+| 新增 | `FactoryService` | `buildFromPath`、`getBuild`、`removeLoadedImage` |
 | 新增 | `Recipe`（接口） | `matches` / `selectBase` / `validate` / `execute` |
 | 新增 | `RecipeRegistry` | 按路径解析唯一 Recipe |
 | 新增 | `NpmTgzOnBaseRecipe` | 现网 npm tgz + 预置 Base；接收现网 `package.py` 的解析与平台校验 |
@@ -541,29 +530,31 @@ classDiagram
 ```mermaid
 classDiagram
     class FactoryService {
-        +buildFromPath(packagePath) BuildResult
-        +removeLoadedImage(imageurl)
+        <<对外接口>>
+        buildFromPath(packagePath) BuildResult
+        getBuild(id)
+        removeLoadedImage(imageurl)
     }
     class RecipeRegistry {
-        +register(recipe)
-        +resolve(path) Recipe
+        register(recipe)
+        resolve(path) Recipe
     }
     class Recipe {
         <<interface>>
-        +matches(path) bool
-        +selectBase(path) BaseRef
-        +validate(path)
-        +execute(path, base) BuildResult
+        matches(path) bool
+        selectBase(path) BaseRef
+        validate(path)
+        execute(path, base) BuildResult
     }
     class NpmTgzOnBaseRecipe
     class OciImportRecipe
     class ImageRuntime {
         <<interface>>
-        +build()
-        +loadArchive()
-        +saveArchive()
-        +remove(imageurl)
-        +inspect()
+        build()
+        loadArchive()
+        saveArchive()
+        remove(imageurl)
+        inspect()
     }
     class DockerRuntime
     class BuildResult {
@@ -612,6 +603,14 @@ classDiagram
 
 ```mermaid
 classDiagram
+    class AgentRegister {
+        <<对外接口>>
+        listImages()
+        registerImage()
+        getLaunchSpec()
+        listInstances()
+        deleteImage()
+    }
     class ImageEntry {
         framework
         framework_version
@@ -625,18 +624,20 @@ classDiagram
         base_ref
     }
     class ImageStore {
-        +list()
-        +register()
-        +delete()
+        list()
+        register()
+        delete()
     }
     class InstanceStore {
-        +listByFramework(name, version)
+        listByFramework(name, version)
     }
 
+    AgentRegister --> ImageStore
+    AgentRegister --> InstanceStore : listInstances
     ImageStore *-- ImageEntry
 ```
 
-路径记在 `ImageEntry` 上。`unlink` 与 `docker rmi` 在管理面后端与工厂；注册中心只删记录。
+路径记在 `ImageEntry` 上。`ImageStore` 与 `InstanceStore` 彼此不调用；删前查实例由管理面后端经 `listInstances` 完成。`unlink` 与 `docker rmi` 在管理面后端与工厂；注册中心只删记录。
 
 ### 8.5 组件间通信（预留 TLS）
 
@@ -648,7 +649,7 @@ classDiagram
 classDiagram
     class 组件间通信 {
         <<interface>>
-        +request()
+        request()
     }
     class HttpComm {
         <<本轮缺省>>
