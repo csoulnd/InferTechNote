@@ -360,32 +360,59 @@ flowchart LR
 
 ### 8.1 组件协作
 
-管理后端编排；工厂只构建和卸本机已 load 镜像；注册中心只记账卡片和实例。实例计数复用注册中心既有实例查询，不在卡片类上加字段。
+三个进程。管理后端里的 Gateway 是本进程客户端；对端服务类在另外两个进程。实线是进程内委托，虚线是 HTTP。`RecipeRegistry`、`LocalPackageStore` 是进程内部细节，见 8.2 / 8.3，不画在这张协作图上。
 
 ```mermaid
 classDiagram
     direction LR
 
-    class AgentCardService
-    class FactoryGateway
-    class RegistryGateway
-    class LocalPackageStore
-    class FactoryService
-    class RecipeRegistry
-    class AgentCardStore
-    class InstanceStore
+    class AgentCardService {
+        <<管理后端>>
+        +publish()
+        +list()
+        +updateDescription()
+        +deleteCard()
+        +retry()
+        +deleteUnregistered()
+    }
+    class FactoryGateway {
+        <<管理后端>>
+        +buildFromPath(path)
+        +removeLoadedImage(imageurl)
+    }
+    class RegistryGateway {
+        <<管理后端>>
+        +register(card)
+        +list()
+        +updateDescription()
+        +delete()
+        +listInstances()
+    }
+    class FactoryService {
+        <<镜像工厂>>
+        +buildFromPath(path)
+        +removeLoadedImage(imageurl)
+    }
+    class AgentCardStore {
+        <<注册中心>>
+        +register()
+        +list()
+        +updateDescription()
+        +delete()
+    }
+    class InstanceStore {
+        <<注册中心>>
+        +listByFramework()
+    }
 
-    AgentCardService --> FactoryGateway : buildFromPath\nremoveLoadedImage
-    AgentCardService --> RegistryGateway : register / list\nupdateDescription / delete
-    AgentCardService --> LocalPackageStore : 摘要锁、未注册包
-    AgentCardService --> InstanceStore : 已创建/已注册计数\n删前是否有实例
-    FactoryGateway --> FactoryService
-    FactoryService --> RecipeRegistry
-    RegistryGateway --> AgentCardStore
-    RegistryGateway --> InstanceStore
+    AgentCardService --> FactoryGateway
+    AgentCardService --> RegistryGateway
+    FactoryGateway ..> FactoryService : HTTP
+    RegistryGateway ..> AgentCardStore : HTTP 卡片
+    RegistryGateway ..> InstanceStore : HTTP 实例
 ```
 
-`InstanceStore` 在注册中心。管理后端经 `RegistryGateway` 调既有实例接口，本轮不新开一套实例资源。
+管理后端**不**直接依赖工厂或注册中心的实现类。实例计数和删前检查都走 `RegistryGateway.listInstances()`，不把 `InstanceStore` 画进管理后端。卡片账本和实例账本在注册中心是两个库，彼此没有调用关系。
 
 ### 8.2 管理后端
 
@@ -416,7 +443,7 @@ classDiagram
 | 新增 | `RegistryGateway` | 类型化封装注册中心卡片与实例查询 |
 | 新增 | `LocalFileCleaner` | 按路径删源包和镜像文件 |
 | 保留 | 鉴权（`require_admin` / 用户角色） | 视图裁剪的输入 |
-| 保留 | 实例快照查询 | 只用于计数和删前检查 |
+| 保留 | 既有实例查询客户端 | 由 `RegistryGateway.listInstances` 复用，不在卡片模块再画一套 |
 | 删除 | `BuildTask`、`AgentRegistration` | 被本机包表 + 注册中心卡片替代 |
 | 删除 | `package.extract_package_meta` 及平台校验 | 迁到工厂 Recipe |
 | 删除 | `ThirdpartyAgentService.create_build_task` / `get_build_task` / `list_installers` 补本地注册 | 不再有安装包墙和 Job 墙 |
@@ -452,10 +479,12 @@ classDiagram
         +forAdmin(card, counts) AdminCardDto
     }
     class FactoryGateway {
+        <<HTTP client>>
         +buildFromPath(path) BuildResult
         +removeLoadedImage(imageurl)
     }
     class RegistryGateway {
+        <<HTTP client>>
         +register(card)
         +list() Card[]
         +updateDescription(id, text)
@@ -467,16 +496,16 @@ classDiagram
         +removeArchive(path)
     }
 
-    AgentCardService --> UploadGate
-    AgentCardService --> LocalPackageStore
-    AgentCardService --> CardViewProjector
-    AgentCardService --> FactoryGateway
-    AgentCardService --> RegistryGateway
-    AgentCardService --> LocalFileCleaner
+    AgentCardService --> UploadGate : publish 落盘
+    AgentCardService --> LocalPackageStore : 锁 / 未注册包
+    AgentCardService --> CardViewProjector : list 裁字段
+    AgentCardService --> FactoryGateway : 构建 / 卸镜像
+    AgentCardService --> RegistryGateway : 卡片与实例
+    AgentCardService --> LocalFileCleaner : 删源包和 archive
     LocalPackageStore *-- LocalPackageRecord
 ```
 
-`publish` 内部顺序固定：门禁落盘 → 摘要加锁 → `buildFromPath` → `register` → 解锁。管理后端不出现 `Recipe`、`Base`、`Dockerfile`。
+本图只含管理后端进程内对象。`FactoryGateway` / `RegistryGateway` 停在 HTTP 边界，对端类见 8.1。`publish` 顺序：门禁落盘 → 摘要加锁 → `buildFromPath` → `register` → 解锁。管理后端不出现 `Recipe`、`Base`、`Dockerfile`。
 
 ### 8.3 镜像工厂
 
@@ -513,6 +542,7 @@ classDiagram
         +removeLoadedImage(imageurl)
     }
     class RecipeRegistry {
+        +register(recipe)
         +resolve(path) Recipe
     }
     class Recipe {
@@ -534,6 +564,7 @@ classDiagram
     }
     class DockerRuntime
     class BuildResult {
+        <<data>>
         name
         version
         imageRef
@@ -543,15 +574,18 @@ classDiagram
         base_ref
     }
 
-    FactoryService --> RecipeRegistry : resolve
-    RecipeRegistry --> Recipe
-    Recipe <|-- NpmTgzOnBaseRecipe
-    Recipe <|-- OciImportRecipe
-    Recipe --> ImageRuntime : execute 时使用
-    ImageRuntime <|-- DockerRuntime
-    FactoryService --> BuildResult
+    FactoryService --> RecipeRegistry : buildFromPath 时 resolve
+    RecipeRegistry o-- Recipe : 已注册策略
+    Recipe <|.. NpmTgzOnBaseRecipe
+    Recipe <|.. OciImportRecipe
+    NpmTgzOnBaseRecipe --> ImageRuntime
+    OciImportRecipe --> ImageRuntime
     FactoryService --> ImageRuntime : removeLoadedImage
+    ImageRuntime <|.. DockerRuntime
+    Recipe ..> BuildResult : execute 返回
 ```
+
+`Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。`FactoryService` 构建走 Recipe，卸镜像绕过 Recipe 直接打运行时。`BuildResult` 是返回值，不是工厂持有的实体。
 
 `FactoryService.buildFromPath`：`RecipeRegistry.resolve` → `validate` → `selectBase` → `execute`。新增包类型只加 Recipe 实现并注册，不改 `FactoryService` 与管理后端。
 
@@ -577,7 +611,7 @@ classDiagram
 | 新增 | — | `DELETE /api/images/{framework}/{version}` |
 | 删除 | — | 不删现网运行字段；管理后端不再靠本地 `AgentRegistration` 补 `agent_name` / `display_name` |
 
-`AgentCard` 即扩字段后的 `ImageEntry`。新增字段见 §4。`countCreated` / `countRegistered` 不是卡片属性，由管理后端对 `InstanceStore` 的查询结果按名称、版本汇总。
+`AgentCard` 即扩字段后的 `ImageEntry`。新增字段见 §4。已创建 / 已注册实例数不是卡片属性：管理后端经 `RegistryGateway` 查 `InstanceStore`，按名称、版本自行汇总。
 
 ```mermaid
 classDiagram
@@ -605,10 +639,9 @@ classDiagram
     }
 
     AgentCardStore *-- AgentCard
-    AgentCardStore ..> InstanceStore : 不持有计数\n删卡由管理后端先查实例
 ```
 
-注册中心不调用工厂，也不持有本机文件。路径字段只是账本；真正 `unlink` 和 `docker rmi` 在管理后端与工厂。
+`AgentCardStore` 与 `InstanceStore` 同在注册中心、互不调用。删前有没有实例，由管理后端先查实例再决定是否调 `AgentCardStore.delete`。注册中心不调用工厂，也不持有本机文件。路径字段只是账本；真正 `unlink` 和 `docker rmi` 在管理后端与工厂。
 
 ## 9. 范围确认
 
