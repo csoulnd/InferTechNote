@@ -525,8 +525,8 @@ classDiagram
 
 | 方法 | 入参 | 返回 | 做什么 | 失败 |
 |---|---|---|---|---|
-| `matches` | 本机 `package_path` | `bool` | **制品识别**：这份文件是不是我能处理的形态。只做形态判断，不因平台不匹配而返回 false | 读文件失败视为 false，不抛 |
-| `validate` | 本机 `package_path` | `ArtifactManifest` | **制品解析 + 能否构建**：解包/读清单、取出名称版本、校验本机能否构建 | 抛错，构建失败 |
+| `matches` | 本机 `package_path` | `bool` | **形态 + 平台**：是不是我这种包，以及平台是否对本机。不通过不抛 | 读文件失败视为 false |
+| `validate` | 本机 `package_path` | `ArtifactManifest` | **能否构建**：清单能否支撑做镜像（入口、tag 合法等） | 抛错，构建失败 |
 | `selectBase` | `package_path`（及 validate 得到的清单） | `BaseRef` | 选预置底座 | 底座不存在则抛错 |
 | `execute` | `package_path`、`BaseRef` | `BuildResult` | 按方案注入与装配，打 tag，写出 archive | 抛错，构建失败 |
 
@@ -540,14 +540,14 @@ classDiagram
 | `inject_yuanrong_sdk` | 是否注入 yuanrong SDK |
 | `assemble` | 制品进镜像：`copy_binary` / `docker_load` / `node_install` / `harness_layout` |
 
-`matches` 与 `validate` 的分工：`matches` 回答「是不是这种包」；`validate` 回答「这种包在这台机器上能不能做成镜像」。例如 npm 二进制平台后缀对不上，`matches` 仍为 true（这就是 npm 二进制），`validate` 失败。
+`matches` 与 `validate` 的分工：`matches` 做形态识别和平台校验；`validate` 做能否构建。平台不对时 `matches` 为 false，错误是「平台不匹配」，不是「无法识别」。
 
 **`RecipeRegistry`**
 
 | 方法 | 入参 | 返回 | 做什么 |
 |---|---|---|---|
 | `register` | `Recipe` 实例 | void | 进程启动时登记。本轮登记 `NpmTgzOnBaseRecipe` |
-| `resolve` | `package_path` | `Recipe` | 对已登记 Recipe 依次 `matches`，**必须恰好一个为 true** |
+| `resolve` | `package_path` | `Recipe` | 对已登记 Recipe 依次 `matches`（形态+平台），**必须恰好一个为 true** |
 
 `resolve` 结果：0 个匹配 → 无法识别制品；2 个及以上 → 注册表配置错误（开发期不允许 Recipe 形态重叠）。
 
@@ -580,7 +580,7 @@ classDiagram
 | `version` | `package.json` 的 `version` | docker tag、注册 `framework_version` |
 | `display_name` | `displayName` 或 `name` | 可写入描述默认值，本轮非必须 |
 | `entrypoint` | `bin` 字段；没有则扫 ELF 可执行文件名 | 运行入口 |
-| `os` / `arch` / `libc` | 包名平台后缀 `-(linux\|darwin\|win32)-(x64\|arm64)(-musl)?` | `validate` 与本机比对 |
+| `os` / `arch` / `libc` | 包名平台后缀 `-(linux\|darwin\|win32)-(x64\|arm64)(-musl)?` | `matches` 与本机比对 |
 
 `BaseRef`：底座标识，本轮即 `agent-base:1.0`。
 
@@ -606,7 +606,8 @@ buildFromPath(path)
   → RecipeRegistry.resolve(path)
        对每个已登记 Recipe 调 matches(path)
        恰好一个 true → 该 Recipe
-       0 个 → 失败：无法识别制品
+       0 个 → 若已认出 npm 二进制但 os/arch/libc 与本机不符：失败「平台不匹配」
+              否则：失败「无法识别制品」
        ≥2 个 → 失败：Recipe 形态重叠（开发期缺陷）
   → recipe.validate(path)     // 真正解包、出清单
   → recipe.selectBase(...)
@@ -615,37 +616,36 @@ buildFromPath(path)
 
 后续加 OCI / OpenClaw / harness，只加实现并 `register`。新形态的识别规则写在该 Recipe 的 `matches` 里，不改 `resolve`。
 
-**本轮 `NpmTgzOnBaseRecipe.matches`（形态识别，不抛错）**
+**本轮 `NpmTgzOnBaseRecipe.matches`（形态 + 平台，不抛错）**
 
-同时满足才为 true，否则 false，把机会让给其他 Recipe：
+同时满足才为 true，否则 false：
 
 1. `package_path` 存在且可读。  
 2. 能按 gzip tar 打开（现网 `tarfile.open(..., "r:gz")`）。  
 3. 归档内存在成员路径以 `package/package.json` 结尾。  
 4. JSON 含非空 `name`、`version`。  
-5. `name` 去掉 `@scope/` 后，能匹配平台后缀 `-(linux|darwin|win32)-(x64|arm64)(-musl)?`。  
+5. `name` 去掉 `@scope/` 后，能匹配平台后缀 `-(linux|darwin|win32)-(x64|arm64)(-musl)?`，得到 `os` / `arch` / `libc`（无 `-musl` 则为 `gnu`）。  
+6. 与本机比对：`sys.platform`、`platform.machine()`、`platform.libc_ver()` 映射规则与现网 `PackageMeta.validate_platform` 相同。不一致则 false（平台不匹配）。  
 
-不在 `matches` 里做的事：不解出全部文件到磁盘；不比对本机 os/arch；不要求调用方传入 name/version。
+不在 `matches` 里做的事：不解出全部文件到磁盘；不检查 entrypoint；不要求调用方传入 name/version。
 
-**本轮 `NpmTgzOnBaseRecipe.validate`（解析 + 能否构建）**
+**本轮 `NpmTgzOnBaseRecipe.validate`（能否构建）**
 
-在 `matches` 已成立的前提下：
+在 `matches` 已成立的前提下解析清单并确认能进入 `execute`：
 
 1. 再读 `package/package.json`，去掉 scope 和平台后缀得到 `name`；`version` 取 JSON；`display_name` 取 `displayName` 或 `name`。  
-2. `entrypoint`：优先 `bin`（对象取第一个键，字符串则用之）；否则在 tar 里找第一个 ELF 魔数 `\x7fELF` 的文件 basename；仍没有则失败。  
-3. 从包名后缀得到 `os` / `arch` / `libc`（无 `-musl` 则为 `gnu`）。  
-4. 与本机比对：`sys.platform`、`platform.machine()`、`platform.libc_ver()` 映射规则与现网 `PackageMeta.validate_platform` 相同；不一致则失败（平台不匹配）。  
-5. `name`、`version` 须满足现网 docker tag 安全字符：`^[a-zA-Z0-9][-a-zA-Z0-9_.]*$`（与现网 `_SAFE_NAME_RE` 一致）。  
+2. `entrypoint`：优先 `bin`（对象取第一个键，字符串则用之）；否则在 tar 里找第一个 ELF 魔数 `\x7fELF` 的文件 basename；仍没有则失败（不能构建）。  
+3. `name`、`version` 须满足现网 docker tag 安全字符：`^[a-zA-Z0-9][-a-zA-Z0-9_.]*$`（与现网 `_SAFE_NAME_RE` 一致）。  
 
 成功则返回 `ArtifactManifest`。失败原因写回管理面本机包表 `last_error`，不进注册中心。
 
 **后续形态的解析（本轮不实现，只定扩展点）**
 
-| Recipe | `matches` 认什么 | `validate` 要解析什么 |
+| Recipe | `matches`（形态+平台） | `validate`（能否构建） |
 |---|---|---|
-| `oci_import` | 可 `docker load` 的 OCI/Docker archive | 镜像内名称/tag、能否注入 SDK；ssh 按该制品要不要 ssh 连接 |
-| `openclaw_node_npm` | OpenClaw 的 node 型 npm（无平台二进制后缀，或为 node 布局） | node 清单与安装前置条件 |
-| `deepseek_harness` | harness 包布局 | 由该 Recipe 定义 |
+| `oci_import` | 可 `docker load` 的 archive；平台/架构若可从镜像读出则与本机比对 | 能否注入 SDK；清单能否支撑导入 |
+| `openclaw_node_npm` | OpenClaw node 型 npm 布局；平台规则由该 Recipe 定义 | node 安装前置条件是否满足 |
+| `deepseek_harness` | harness 包布局 | 由该 Recipe 定义能否做出镜像 |
 
 两条约束：不同 Recipe 的 `matches` 不得同时为 true；解析失败只失败本次构建，不改工厂入口。
 
