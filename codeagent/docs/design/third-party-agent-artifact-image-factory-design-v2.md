@@ -582,30 +582,57 @@ classDiagram
 
 **构建策略**
 
+Recipe 不是管理面库表，也不是管理面传入的参数。它是工厂里的**一份构建方案**：这份包用哪类输入、从哪块底座长、往镜像里注入什么、制品怎么进镜像。工厂按路径 `resolve` 出唯一一份，执行后把 `recipe_id` / `base_ref` 写进 `BuildResult`，随卡片落到注册中心。
+
+```text
+recipe_id              策略标识（如 npm_tgz_on_base）
+artifact_kind          输入形态：npm_binary / oci / node_npm / harness
+base_ref               底座镜像，由 selectBase 决定
+inject_ssh             是否注入 ssh（要不要 ssh 连接）
+inject_yuanrong_sdk    是否注入 yuanrong SDK
+assemble               制品进镜像的方式：copy_binary / docker_load / node_install / harness_layout
+```
+
+接口方法是在跑这份方案：`matches` 认不认这个文件 → `validate` 能不能构建 → `selectBase` 选底座 → `execute` 按注入项和 assemble 做出镜像。
+
 ```mermaid
 classDiagram
     class Recipe {
-        <<interface>>
-        +matches(path) bool
-        +selectBase(path) BaseRef
-        +validate(path)
-        +execute(path, base) BuildResult
+        <<构建方案>>
+        recipe_id
+        artifact_kind
+        inject_ssh
+        inject_yuanrong_sdk
+        assemble
+        matches(path) bool
+        selectBase(path) BaseRef
+        validate(path)
+        execute(path, base) BuildResult
     }
     class NpmTgzOnBaseRecipe {
         <<本轮>>
-        npm + ssh + yuanrong SDK
+        recipe_id = npm_tgz_on_base
+        artifact_kind = npm_binary
+        inject_ssh = true
+        inject_yuanrong_sdk = true
+        assemble = copy_binary
     }
     class OciImportRecipe {
         <<后续>>
-        oci + yuanrong SDK；ssh 按需
+        artifact_kind = oci
+        inject_yuanrong_sdk = true
+        inject_ssh = 按需
+        assemble = docker_load
     }
     class OpenclawNodeNpmRecipe {
         <<后续>>
-        OpenClaw node 型 npm
+        artifact_kind = node_npm
+        assemble = node_install
     }
     class DeepseekHarnessRecipe {
         <<后续>>
-        DeepSeek harness
+        artifact_kind = harness
+        assemble = harness_layout
     }
 
     Recipe <|.. NpmTgzOnBaseRecipe
@@ -614,14 +641,14 @@ classDiagram
     Recipe <|.. DeepseekHarnessRecipe
 ```
 
-| 阶段 | Recipe | 输入 | 作用 |
-|---|---|---|---|
-| 本轮 | `npm_tgz_on_base` | npm 二进制 tgz | 预置 Base 上构建，注入 **ssh + yuanrong SDK**（现网能力包装） |
-| 后续 | `oci_import` | OCI/Docker archive | 导入已有镜像，注入 yuanrong SDK；**是否注入 ssh 取决于该制品要不要 ssh 连接** |
-| 后续 | `openclaw_node_npm` | OpenClaw 的 node 型 npm | node 运行形态，与二进制 npm 不是同一条 Recipe |
-| 后续 | `deepseek_harness` | DeepSeek harness | 新制品类型，只加 Recipe 并注册 |
+| 阶段 | recipe_id | artifact_kind | inject_ssh | inject_yuanrong_sdk | assemble |
+|---|---|---|---|---|---|
+| 本轮 | `npm_tgz_on_base` | npm 二进制 tgz | 是 | 是 | 拷进预置 Base（现网能力包装） |
+| 后续 | `oci_import` | OCI/Docker archive | 按是否需要 ssh 连接 | 是 | `docker load` 后再注入 |
+| 后续 | `openclaw_node_npm` | OpenClaw 的 node 型 npm | 按该形态需要 | 按该形态需要 | node 安装，与二进制 npm 不同条 |
+| 后续 | `deepseek_harness` | DeepSeek harness | 按该形态需要 | 按该形态需要 | harness 布局 |
 
-ssh、yuanrong SDK 不是独立 Recipe，而是某条策略在 `execute` 时的注入内容。后续只加新 `Recipe` 子类并 `register`，不改工厂编排入口与管理面后端。工厂不接收用户身份，也不接收管理面传入的 Recipe 或 Base。`Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。
+本轮 `execute` 可见步骤：认 npm 二进制 tgz → 选预置 Base → 注入 ssh → 注入 yuanrong SDK → 拷可执行文件 → `docker build` → 打 tag。ssh、yuanrong SDK 不是独立 Recipe，只是方案上的注入开关。后续只加新 `Recipe` 子类并 `register`，不改工厂编排入口与管理面后端。工厂不接收用户身份，也不接收管理面传入的 Recipe 或 Base。`Recipe` 接口不依赖 `ImageRuntime`；只有具体策略在 `execute` 时使用运行时。
 
 **运行时后端**
 
