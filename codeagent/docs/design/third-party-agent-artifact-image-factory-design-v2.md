@@ -232,7 +232,7 @@ sequenceDiagram
 
     Admin->>CP: 上传制品 + description
     CP->>CP: 校验大小/命名并落盘
-    CP->>F: buildFromPath(packagePath)
+    CP->>F: buildFromPath(packagePath, options)
     F->>F: 解析、选 Recipe、选 Base、执行
     F-->>CP: name, version, imageRef, archivePath, runtime, recipe, base
     CP->>R: POST /api/images（现网注册，体中带描述与路径字段）
@@ -385,7 +385,7 @@ classDiagram
     }
     class ImageProcessClient {
         <<管理面后端>>
-        buildFromPath(path)
+        buildFromPath(path, options)
         removeLoadedImage(tag)
     }
     class AgentRegisterClient {
@@ -397,7 +397,7 @@ classDiagram
     }
     class image_process {
         <<镜像工厂>>
-        buildFromPath(path)
+        buildFromPath(path, options)
         removeLoadedImage(tag)
     }
     class AgentRegister {
@@ -528,7 +528,7 @@ classDiagram
 | `matches` | 本机 `package_path` | `bool` | **形态 + 平台**：是不是我这种包，以及平台是否对本机。不通过不抛 | 读文件失败视为 false |
 | `validate` | 本机 `package_path` | `ArtifactManifest` | **能否构建**：清单能否支撑做镜像（入口、tag 合法等） | 抛错，构建失败 |
 | `selectBase` | `package_path`（及 validate 得到的清单） | `BaseRef` | 选预置底座 | 底座不存在则抛错 |
-| `execute` | `package_path`、`BaseRef` | `BuildResult` | 按方案注入与装配，打 tag，写出 archive | 抛错，构建失败 |
+| `execute` | `package_path`、`BaseRef`、`options` | `BuildResult` | 按方案注入与装配，打 tag，写出 archive。`options` 本轮可空 | 抛错，构建失败 |
 
 方案常量（实现类填死，不是调用方传入）：
 
@@ -555,8 +555,17 @@ classDiagram
 
 | 方法 | 入参 | 返回 | 做什么 |
 |---|---|---|---|
-| `buildFromPath` | `package_path`（可选请求 id） | `BuildResult` | `resolve` → `validate` → `selectBase` → `execute`。不接收 name/version/Recipe/Base/用户身份 |
+| `buildFromPath` | `package_path`、`options`（可空 kwargs）、可选请求 id | `BuildResult` | `resolve` → `validate` → `selectBase` → `execute(..., options)`。不接收 name/version/Recipe/Base/用户身份 |
 | `removeLoadedImage` | `tag` | void | 绕过 Recipe，直接 `ImageRuntime.remove(tag)`。tag 由管理面从注册中心卡片读取 |
+
+`options` 为本轮预留的可扩展入参（实现上 kwargs / JSON 对象），调用方可不传。不在其中指定 Recipe、Base、用户身份。yuanrong SDK **一律注入**，不走 `options`。
+
+| 键 | 本轮 | 后续 |
+|---|---|---|
+| `inject_ssh` | 可不传；不传则按 Recipe 常量（npm 二进制为 true） | 由调用方传入，覆盖是否打 ssh |
+| 其它键 | 忽略，不报错 | 预留交互相关配置；本轮不上「交互方式」枚举 |
+
+未知键本轮忽略，避免后续加字段时拆入口。
 
 **`ImageRuntime`（接口，现网 `AbstractBuilder` 改名）**
 
@@ -602,16 +611,16 @@ classDiagram
 **选出谁来解析**
 
 ```text
-buildFromPath(path)
+buildFromPath(path, options=None)
   → RecipeRegistry.resolve(path)
        对每个已登记 Recipe 调 matches(path)
        恰好一个 true → 该 Recipe
        0 个 → 若已认出 npm 二进制但 os/arch/libc 与本机不符：失败「平台不匹配」
               否则：失败「无法识别制品」
        ≥2 个 → 失败：Recipe 形态重叠（开发期缺陷）
-  → recipe.validate(path)     // 真正解包、出清单
+  → recipe.validate(path)
   → recipe.selectBase(...)
-  → recipe.execute(...)
+  → recipe.execute(path, base, options)
 ```
 
 后续加 OCI / OpenClaw / harness，只加实现并 `register`。新形态的识别规则写在该 Recipe 的 `matches` 里，不改 `resolve`。
@@ -659,7 +668,7 @@ sequenceDiagram
     participant R as Recipe
     participant RT as ImageRuntime
 
-    CP->>F: buildFromPath(package_path)
+    CP->>F: buildFromPath(package_path, options)
     F->>Reg: resolve(package_path)
     Reg->>R: matches(package_path)
     R-->>Reg: true（唯一）
@@ -668,14 +677,14 @@ sequenceDiagram
     R-->>F: ArtifactManifest
     F->>R: selectBase(...)
     R-->>F: BaseRef
-    F->>R: execute(path, base)
+    F->>R: execute(path, base, options)
     R->>RT: build / saveArchive
     RT-->>R: tag、archivePath、runtimeSpec
     R-->>F: BuildResult
     F-->>CP: BuildResult
 ```
 
-本轮 `NpmTgzOnBaseRecipe` 方案常量：`inject_ssh=true`，`inject_yuanrong_sdk=true`，`assemble=copy_binary`。ssh 与 SDK 已在预置 `agent-base:1.0` 中，`execute` 不再单独安装它们。
+本轮 `NpmTgzOnBaseRecipe`：不传 `options.inject_ssh` 时按常量 `inject_ssh=true`；yuanrong SDK 一律注入，不读 `options`。ssh 与 SDK 已在预置 `agent-base:1.0` 中，本轮 `execute` 不再单独安装它们。
 
 本轮 `execute`：
 
@@ -702,7 +711,7 @@ classDiagram
         matches(path) bool
         validate(path) ArtifactManifest
         selectBase() BaseRef
-        execute(path, base) BuildResult
+        execute(path, base, options) BuildResult
     }
     class NpmTgzOnBaseRecipe {
         <<本轮>>
@@ -725,18 +734,18 @@ classDiagram
 
 | 阶段 | recipe_id | artifact_kind | inject_ssh | inject_yuanrong_sdk | assemble |
 |---|---|---|---|---|---|
-| 本轮 | `npm_tgz_on_base` | npm 二进制 tgz | 是（在 Base 内） | 是（在 Base 内） | 拷进预置 Base |
-| 后续 | `oci_import` | OCI/Docker archive | 按是否需要 ssh 连接 | 是 | `docker load` 后再注入 |
-| 后续 | `openclaw_node_npm` | OpenClaw node 型 npm | 按该形态 | 按该形态 | node 安装 |
-| 后续 | `deepseek_harness` | DeepSeek harness | 按该形态 | 按该形态 | harness 布局 |
+| 本轮 | `npm_tgz_on_base` | npm 二进制 tgz | 默认是（可被 `options.inject_ssh` 预留覆盖） | 一律注入 | 拷进预置 Base |
+| 后续 | `oci_import` | OCI/Docker archive | 读 `options.inject_ssh` | 一律注入 | `docker load` 后再注入 |
+| 后续 | `openclaw_node_npm` | OpenClaw node 型 npm | 读 `options.inject_ssh` | 一律注入 | node 安装 |
+| 后续 | `deepseek_harness` | DeepSeek harness | 读 `options.inject_ssh` | 一律注入 | harness 布局 |
 
-ssh、yuanrong SDK 不是独立 Recipe。后续只加实现并 `register`。
+ssh 不是独立 Recipe。yuanrong SDK 一律注入，不进 `options`。后续只加实现并 `register`；ssh 是否打入走预留的 `options.inject_ssh`，本轮可不传。
 
 #### 8.3.5 对外 HTTP
 
 | 变更 | 现网 | 本轮 |
 |---|---|---|
-| 改 | `POST /v1/builds` 必填 `task_id, agent_name, version, installer_path, output_dir` | 入参只需 `package_path`（可选请求 id） |
+| 改 | `POST /v1/builds` 必填 `task_id, agent_name, version, installer_path, output_dir` | 必填 `package_path`；可选请求 id；可选 `options`（本轮可空，预留 `inject_ssh` 等） |
 | 保留 | `GET /v1/builds/{id}` | 上架等待进度；工厂内存任务，不落库 |
 | 新增 | — | `POST /v1/images/remove` 按 **tag** 做 `docker rmi` |
 | 删除 | 调用方指定 `output_dir` / `work_dir` | 产物路径由工厂写入约定目录后在 `BuildResult` 返回 |
@@ -745,7 +754,7 @@ ssh、yuanrong SDK 不是独立 Recipe。后续只加实现并 `register`。
 
 | 变更 | 类型 | 职责 |
 |---|---|---|
-| 新增 | `FactoryService` | `buildFromPath`、`removeLoadedImage(tag)` |
+| 新增 | `FactoryService` | `buildFromPath(path, options)`、`removeLoadedImage(tag)` |
 | 新增 | `Recipe`（接口） | `matches` / `validate` / `selectBase` / `execute` |
 | 新增 | `RecipeRegistry` | `register` / `resolve` |
 | 新增 | `ArtifactManifest` | 解析清单；本轮对齐现网 `PackageMeta` |
@@ -761,7 +770,7 @@ ssh、yuanrong SDK 不是独立 Recipe。后续只加实现并 `register`。
 ```mermaid
 classDiagram
     class FactoryService {
-        +buildFromPath(packagePath) BuildResult
+        +buildFromPath(packagePath, options) BuildResult
         +removeLoadedImage(tag)
     }
     class RecipeRegistry {
@@ -773,7 +782,7 @@ classDiagram
         +matches(path) bool
         +validate(path) ArtifactManifest
         +selectBase() BaseRef
-        +execute(path, base) BuildResult
+        +execute(path, base, options) BuildResult
     }
     class ImageRuntime {
         <<interface>>
