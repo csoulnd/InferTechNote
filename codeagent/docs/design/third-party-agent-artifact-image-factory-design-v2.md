@@ -2,8 +2,9 @@
 
 > 文档状态：评审稿，未定稿  
 > 适用范围：AgentOS Control Panel 三方 Agent 管理模块、`image_process` 镜像处理服务  
-> 代码基线：`refactor/image_process`，HEAD `68b395f`  
+> 代码基线：`refactor/image_process`，`86f565d`（不含其后的 openclaw/node 安装模式改动）  
 > 历史参考：`containerized-build.md`、`third-party-agent-integration-guide.md`  
+> 上传门禁参考：OWASP [File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html)（实践清单，非代码依赖）  
 > 说明：本文是面向后续扩展的新版本总体设计，不替代或覆盖旧版设计文档。
 
 ### 实现对齐修订摘要（2026-08-22）
@@ -17,483 +18,175 @@
 5. 为兼容现有启动链，当前暂把手工 `launch_command` 写入注册中心 `framework`。后续注册中心和启动协议新增独立 `launch_command` 后，`framework` 恢复为稳定的软件/卡片标识。
 6. 注册中心调用异常统一在管理面 Service 转换为 `AgentServiceError`；实例查询失败时不得显示虚假的 0，也不得继续删除。
 
-本修订同时明确注册中心必须增加的卡片字段与默认版本接口，见 §6.9。
+本修订同时明确注册中心必须增加的卡片字段与默认版本接口，见 §4.1。
 
 ## 1. 背景
 
-当前三方 Agent 上架能力围绕单一场景实现：管理员上传符合 NPM `pack` 布局的离线 `.tgz` 包，系统将其中的可执行文件加入固定的 `agent-base:1.0`，生成 Agent 运行镜像并尝试注册。
+当前三方 Agent 上架能力围绕单一场景实现：管理员上传符合 NPM `pack` 布局、且包名带平台后缀的离线 `.tgz` 包，系统将其中的可执行文件加入固定的 `agent-base:1.0`，生成 Agent 运行镜像并完成注册。
 
-这一方案已经打通上传、构建、状态查询、离线镜像保存和注册链路，但输入格式、校验逻辑、构建方式和基础镜像被绑定在同一流程中。继续增加 wheel、binary、OCI 镜像、SDK/SSH 注入、基础镜像升级、同包多基础镜像、制品删除和配额等能力时，容易要求同时修改管理面 API、Service、数据库模型、镜像处理客户端、Dockerfile和注册逻辑，形成霰弹修改。
+这一方案已经打通上传、构建、状态查询、离线镜像保存和注册链路，但输入格式、校验逻辑、构建方式和基础镜像被绑定在同一流程中。继续增加 node 包、wheel、独立 binary、OCI 镜像、SDK/SSH 注入、基础镜像升级、同包多基础镜像、制品删除和配额等能力时，容易要求同时修改管理面 API、Service、数据库模型、镜像处理客户端、Dockerfile 和注册逻辑，形成霰弹修改。
 
-本次设计的目标不是一次实现所有格式，而是建立稳定的扩展边界，使后续能力能够沿制品类型、处理 Recipe 和基础镜像三个维度独立演进。
+为了使后续能力能够沿制品类型（处理不同类型的三方制品）、处理 Recipe（根据需求选择不同的构建内容）和基础镜像（三方Agent默认运行底座）三个维度独立演进。本轮先落 **npm 二进制**（`npm + ssh + yuanrong SDK`，如 ScienceFlow）上架一体机；OpenClaw（node 型 npm）、OCI、DeepSeek harness 作为后续 Recipe 接入。
 
-## 2. 设计目标与非目标
+## 2. 本次需求
 
-### 2.1 设计目标
+本轮设计同时面向三个需求。产品主对象是**Agent Card**（已注册为框架的软件包）。尚未注册成功的落盘包不做成卡片，只在异常路径上允许删除或重试构建，不进入用户视图。
 
-1. 将用户身份、用户目录、配额、产品账本、删除策略和注册编排稳定保留在管理面。
-2. 将“制品能否按某种方式形成可运行镜像”及其执行逻辑收口到镜像工厂。
-3. 使用统一 Artifact 模型支持 NPM tgz、OCI archive，并可扩展 wheel、binary 等输入类型。
-4. 使用可注册的 Recipe 模型隔离不同校验、构建、注入和导入流程。
-5. 支持基础镜像版本管理，以及同一 Artifact 基于不同基础镜像构建。
-6. 支持已经构建完成的 OCI/Docker 镜像直接导入并注册，不强制再次构建。
-7. 支持按层级、按策略删除源制品、构建输出和注册记录。
-8. 保持已有 NPM tgz 构建能力兼容，并提供可回滚的渐进迁移路径。
+| 需求 | 需求描述 | 备注 |
+|---|---|---|
+| 1. 智能体卡片展示 | 增加智能体卡片描述；卡片信息**必须**来自注册中心 | 避免双份数据存储带来的问题 |
+| 2. 新包 / 新构建方式 | 构建侧高内聚低耦合，新增软件包类型或 Recipe 不改管理面主链 | 重构目标是减少不同类型构建方式的适配成本 |
+| 3. 智能体卡片管理 | 同一套卡片，按视图区分能力。权威数据在注册中心。本轮**改**只做描述编辑；**改（升级机上依赖）**不在本次承载 | 见下方用户视图 / 管理员视图 |
 
-### 2.2 非目标
+智能体卡片本质是「软件包 + 机上预置依赖」经 Recipe 得到的可运行身份。卡片上的展示字段、运行字段和本机资源路径**全部收拢到注册中心**，管理面不为卡片再建第二份库。升级（改机上依赖）本轮不做流程，但源包路径已落在卡片上，后续可直接用。
 
-1. 不将 IAM、用户目录或用户配额迁入镜像工厂。
-2. 不在镜像工厂建设第二套用户、制品或构建业务数据库。
-3. 不将 Control Panel 收缩为镜像工厂的反向代理。
-4. 第一阶段不支持用户动态上传代码形式的 Recipe。
-5. 第一阶段不解决跨架构模拟构建；是否引入 Buildx/QEMU 单独评审。
-6. 不把模型 API Key、SSH 私钥等凭据固化到镜像层。
+卡片管理功能区分两种视图：
 
-## 3. 已有功能描述
+| 操作 | 用户视图 | 管理员视图 |
+|---|---|---|
+| 查 | 注册中心卡片列表/详情（名称、版本、描述等展示字段） | 卡片展示：智能体名称、版本、描述；以及按该卡从**实例管理接口**汇总的**已创建实例数**、**已注册实例数**。详情另可见本机软件包路径、镜像路径 |
+| 增 | 无 | 上架并构建，写入注册中心 |
+| 删 | 无 | 先查实例，无实例才整卡拆除（软件包、镜像文件、已 load 镜像、注册记录） |
+| 改 | 无 | 可编辑描述并写回注册中心。机上依赖升级本轮不做 |
 
-### 3.1 管理面已有能力（设计基线）
+用户视图只消费已发布卡片，不接触本机路径、实例计数运维和拆除动作。管理员视图在同一卡片上叠加运维信息、描述编辑与增删。实例计数不落卡片、不进管理面库，查询时现取。
 
-- 三方 Agent API 使用 `require_admin` 管理员鉴权。
-- 接收 `.tgz` 上传，限制单包大小，并检查目标文件系统剩余空间。
-- 从 `package/package.json` 提取名称、版本和展示名；入口自动解析已在当前实现中删除。
-- 根据包名后缀校验 OS、CPU 架构和 libc。
-- 按 `{AGENTOS_HOME_BASE}/{uploaded_by}/installers` 保存安装包。
-- 在 PostgreSQL 中保存 `AgentInstaller` 和 `BuildTask`。
-- 以 `agent_name + version` 检查重名。
-- 创建构建任务，并限制全局活动构建数最多为 5。
-- 将安装包、输出目录和工作目录的绝对路径提交给 `image_process`。
-- 查询构建状态时轮询工厂，将进度和结果投影到 PostgreSQL。
-- 构建完成后尝试调用 `AGENT_REGISTER_URL` 注册镜像。
+## 3. 系统上下文
 
-### 3.2 镜像处理服务已有能力
-
-- 作为独立 FastAPI 服务部署，并通过共享卷访问用户目录。
-- 持有 Docker socket，执行 `docker build`、`docker save` 和镜像 ID 查询。
-- 使用固定 `agent.Dockerfile` 和固定 `agent-base:1.0`。
-- 使用内存字典保存任务执行状态，完成任务默认保留 24 小时。
-- 提供创建构建任务和查询任务状态接口。
-- 支持相同活动 `task_id` 的基本幂等提交。
-
-### 3.3 当前主要限制
-
-- 上传制品只能按 NPM tgz 解释。
-- 产品元数据解析、平台校验和 Dockerfile 隐式假设分散在 CP 与工厂。
-- 没有显式 `artifact_kind`、`recipe_id` 和可选 `base_ref`。
-- 固定基础镜像，不能基于同一制品构建多个基础镜像版本。
-- 不支持 OCI/Docker archive 上传、镜像注入或直接注册。
-- Installer 主键和构建并发限制是全局维度，尚未形成真正的用户级隔离。
-- 缺少删除 API、删除影响分析、级联策略和配额回收流程。
-- 工厂重启会丢失执行态，CP 对远端任务消失缺少收敛机制。
-- 注册失败不会影响构建完成状态，但当前没有独立、可信的注册状态。
-- 工厂接受绝对路径，但尚缺少通用的允许根目录和路径逃逸防护。
-
-## 4. 核心概念
-
-### 4.1 Artifact
-
-Artifact 表示用户交给 AgentOS 管理、可被检查、构建、转换、导入或注册的一个不可变输入制品。
-
-Artifact 不是构建任务，不是基础镜像，也不等同于最终运行镜像。示例包括：
-
-- NPM 离线包；
-- Python wheel 或 sdist；
-- ELF 等独立 binary；
-- OCI image archive；
-- Docker image archive；
-- 后续可能支持的远程 registry image reference。
-
-Artifact 负责表达制品的归属、存储、类型、摘要、生命周期和可追溯性。一个 Artifact 可以被多个处理任务引用，例如同一个 tgz 分别基于 base 1.0 和 base 2.0 构建。
-
-### 4.2 Artifact Kind 与 Media Type
-
-`kind` 表示平台理解的逻辑类型，初始建议：
-
-```text
-npm_tgz
-oci_archive
-docker_archive
-```
-
-后续可扩展：
-
-```text
-python_wheel
-python_sdist
-binary
-generic_archive
-registry_image_ref
-```
-
-`media_type` 表示文件或引用的物理格式。新增 kind 不应要求增加一组充满空值的数据库列；格式专有信息放在带 `schema_version` 的结构化 metadata 中。需要高频查询、唯一约束或索引的字段，再经评审提升为正式列。
-
-### 4.3 BaseImage
-
-BaseImage 是由 CP 管理版本和可见性的构建基础镜像目录项。CP 管理名称、版本、状态、默认版本和升级策略；工厂负责检查可用性、架构和 Recipe 兼容性，并在任务结果中返回不可变 digest。
-
-BaseImage 与用户上传的 Source Image 必须区分：NPM tgz 通常需要外部 BaseImage；上传的 OCI 镜像自身是 Source Image，不应为了字段统一被强行建模为 BaseImage。
-
-### 4.4 Recipe
-
-Recipe 表示工厂对一种 Artifact 进行校验和处理、最终产生可注册镜像的版本化方法。Recipe 声明：
-
-- 支持的 artifact kind；
-- 是否要求 base image；
-- 参数 schema；
-- Buildability 校验规则；
-- build、inject 或 import 执行流程；
-- 输出镜像和 runtime profile；
-- Recipe 自身版本。
-
-第一阶段 Recipe 在工厂代码中注册，不允许用户上传任意构建脚本。
-
-### 4.5 ImageProcessJob 与 ImageOutput
-
-当前 `BuildTask` 名称只适合狭义构建。目标任务实际可能执行：
-
-```text
-build     从安装包和基础镜像构建
-inject    向已有镜像注入 SDK/SSH
-import    导入已构建镜像，不执行 Dockerfile build
-validate  仅执行预检
-```
-
-本文暂称为 `ImageProcessJob`。为降低迁移风险，数据库表名可暂时保留 `build_tasks`，但领域语义和 API 应逐步通用化。
-
-ImageOutput 表示任务产生或导入的可运行镜像，包括 image ref、digest、离线 archive 路径和 runtime profile。
-
-### 4.6 Registration
-
-Registration 表示 CP 将一个 ImageOutput 发布到外部 Agent 注册中心的过程。注册属于管理面编排，不属于镜像工厂。构建/导入成功与注册成功必须使用独立状态表示。
-
-## 5. 总体架构
+参与方：普通用户、管理员、管理面、镜像工厂、注册中心。用户与管理员看到的是同一批注册中心卡片，接口按角色裁剪。
 
 ```mermaid
-flowchart TB
-    subgraph CP["Control Panel"]
-        IAM["IAM / Admin API"]
-        Admission["Admission / Quota"]
-        ArtifactSvc["Artifact Service"]
-        BaseCatalog["BaseImage Catalog"]
-        JobOrch["Image Job Orchestrator"]
-        DeleteOrch["Deletion Orchestrator"]
-        Register["Registration Service"]
-        DB[("PostgreSQL 业务账本")]
-        UserDir["users/{owner}/... 目录"]
-    end
-
-    subgraph Factory["Image Factory"]
-        Cap["Recipe Capabilities"]
-        Validator["Recipe Validator"]
-        Registry["Recipe Registry"]
-        Executor["Build / Inject / Import"]
-        Runtime["Docker / OCI Runtime"]
-        ExecState["短期执行态"]
-    end
-
-    IAM --> Admission
-    Admission --> ArtifactSvc
-    ArtifactSvc --> DB
-    ArtifactSvc --> UserDir
-    BaseCatalog --> DB
-    JobOrch --> DB
-    JobOrch -->|"artifact ref + recipe + base snapshot"| Validator
-    Validator --> Registry
-    Registry --> Executor
-    Executor --> Runtime
-    Executor --> ExecState
-    JobOrch -->|"状态与结果投影"| DB
-    JobOrch --> Register
-    DeleteOrch --> DB
-    DeleteOrch --> UserDir
-    DeleteOrch -.->|"按明确资源执行辅助清理"| Factory
+flowchart LR
+    User[普通用户] -->|"查卡片"| CP[管理面 Control Panel]
+    Admin[管理员] -->|"上架 / 查详情 / 改描述 / 删卡"| CP
+    CP --> Factory[镜像工厂 Image Factory]
+    CP --> Registry[注册中心]
+    CP -->|"转发框架查询、实例查询、改描述"| Registry
 ```
 
-### 5.1 稳定边界
-
-| 能力 | 所属 | 原因 |
-|---|---|---|
-| IAM、操作者身份 | CP | 工厂不拥有用户模型 |
-| 用户目录及路径布局 | CP | 目录属于用户制品管理语义 |
-| 上传大小、数量、容量和重名 | CP | 属于 Admission 与产品策略 |
-| Artifact、BaseImage、Job、Registration 账本 | CP PostgreSQL | 避免第二套业务真相源 |
-| Recipe 与 Buildability | Factory | 与具体构建/注入方式绑定 |
-| Docker/OCI build、load、save、inspect | Factory | 高权限执行能力集中隔离 |
-| 短期进度和执行错误 | Factory | 属于任务执行态 |
-| 状态投影、重试和注册 | CP | 属于业务编排与最终一致性 |
-
-## 6. 新增功能设计
-
-### 6.1 通用 Artifact 管理
-
-建议 Artifact 核心模型：
-
-```text
-id
-owner_id
-kind
-name
-version
-display_name
-source_type          # uploaded_file / registry_ref 等
-storage_path         # 文件型制品适用
-size_bytes
-content_digest
-media_type
-metadata             # 带 schema_version
-status
-created_at
-updated_at
-deleted_at
-```
-
-建议状态：
-
-```text
-uploading -> inspecting -> available
-                       -> invalid
-available -> deleting -> deleted
-                    -> delete_failed
-```
-
-CP 可以为不同 kind 注册轻量 `ArtifactInspector`，只提取建账和展示所需信息，不判断某个 Recipe 是否可构建。示例：NPM inspector 读取包名和版本；OCI inspector 读取 manifest、tag 和架构；wheel inspector 读取 distribution 和 wheel tags。
-
-### 6.2 Recipe 扩展机制
-
-建议初始 Recipe：
-
-| Recipe ID | 输入 | 操作 | 是否需要 BaseImage |
-|---|---|---|---|
-| `npm_tgz_on_base` | `npm_tgz` | 解包并构建 | 是 |
-| `oci_import` | `oci_archive`/`docker_archive` | load、inspect、输出可注册结果 | 否 |
-| `oci_with_yuanrong_sdk` | OCI 镜像 | 注入 Yuanrong SDK | 否 |
-| `oci_with_yuanrong_sdk_and_ssh` | OCI 镜像 | 注入 Yuanrong SDK 和 SSH | 否 |
-
-后续可扩展 `python_wheel_on_base`、`binary_on_base` 等 Recipe。新增已有 kind 的 Recipe 时，主要修改工厂和测试；新增 kind 时，需要增加 Inspector、Recipe 和 capabilities 展示，但不修改 CP 通用账本与编排主流程。
-
-工厂应提供 capabilities：
-
-```http
-GET /v1/capabilities
-```
-
-返回 Recipe ID、版本、支持的 artifact kind、是否要求 base、参数 schema 和输出能力。CP 和前端不得各自硬编码一份不一致的 Recipe 列表。
-
-### 6.3 Buildability 校验
-
-校验分为三层：
-
-1. CP Admission：鉴权、大小、数量、容量、重名、用户目录归属。
-2. Artifact Inspection：识别格式并提取最小产品元数据。
-3. Factory Buildability：判断 Artifact 是否满足指定 Recipe 和 base 的技术条件。
-
-工厂提供：
-
-```http
-POST /v1/validate
-POST /v1/jobs
-GET  /v1/jobs/{job_id}
-```
-
-`POST /v1/jobs` 必须在执行前调用与 `/v1/validate` 相同的 validator，避免调用方跳过预检。
-
-结构化错误建议包含：
-
-```json
-{
-  "code": "PACKAGE_ROOT_MISSING",
-  "message": "package/ directory is required",
-  "field": "artifact.path",
-  "recipe_id": "npm_tgz_on_base",
-  "details": {}
-}
-```
-
-错误码至少覆盖无效 archive、缺失目录、缺失入口、平台不匹配、base 不可用、artifact kind 不支持、路径越界和镜像不可 load。
-
-### 6.4 BaseImage 版本管理与同包多 base
-
-建议 BaseImage 模型：
-
-```text
-id
-name
-version
-image_ref
-resolved_digest
-os
-architecture
-status              # draft / validating / active / deprecated / disabled
-is_default
-metadata
-created_at
-updated_at
-```
-
-基础镜像升级通过新增版本完成，不原地覆盖旧版本。创建 ImageProcessJob 时，CP 固化 `base_image_id`、提交时的 `image_ref` 和工厂解析后的 digest。一个 Artifact 可以创建多个使用不同 BaseImage 的任务和 ImageOutput。
-
-### 6.5 已构建镜像直接导入并注册
-
-必须支持 OCI/Docker archive 不重建直接注册，推荐流程：
-
-```text
-上传 OCI/Docker archive
--> CP 建立 Artifact 账本
--> Factory oci_import: validate/load/inspect
--> 返回 image ref、digest、runtime profile
--> CP 建立 ImageOutput
--> CP 调用注册中心
-```
-
-`oci_import` 不执行 Dockerfile build，但必须检查 archive、OS/架构、入口、运行用户、必要端口和平台运行契约。whl、NPM tgz 和单独 binary 不是可运行镜像，不能直接注册，必须先通过 Recipe 产生 ImageOutput。
-
-注册状态建议：
-
-```text
-not_requested
-pending
-registered
-failed
-unregistering
-unregistered
-```
-
-注册失败不反向将镜像处理任务标记为失败，但应保存错误、支持重试，并禁止使用 `job.status == done` 推导 `registered == true`。
-
-### 6.6 分层删除与策略化接口
-
-删除涉及源 Artifact、任务记录、ImageOutput、本地 Docker image、外部注册记录和工作目录。不能使用一个隐式级联的 DELETE 完成所有动作。
-
-首批策略：
-
-| 策略 | 行为 |
+| 参与方 | 职责 |
 |---|---|
-| `source_only` | 删除源文件，保留输出、注册和历史任务 |
-| `outputs_only` | 删除指定或全部派生输出，保留源 Artifact |
-| `cascade` | 解除注册、删除输出、删除源文件并回收运行目录 |
+| 普通用户 | 用户视图：刷新、查看已发布卡片 |
+| 管理员 | 管理员视图：上架、查看名称/版本/描述与实例计数、编辑描述、发起删卡 |
+| 管理面 | 按角色鉴权；上传通用门禁与落盘；把路径交给工厂；用结果注册；按卡片路径清本机文件；转发查询与改描述；按卡汇总实例管理计数 |
+| 镜像工厂 | 解析制品、选择 Recipe 与 Base、校验能否构建并执行；按指示卸本机已 load 镜像 |
+| 注册中心 | **卡片权威**；框架查询、实例查询、落卡、改描述与删卡 |
 
-建议先生成删除计划：
+现状是**串行且耦合**：管理面既做落盘，又做包格式/平台校验和「能不能构建」；镜像处理只按固定 Dockerfile 和固定 base 执行。两个进程只是把执行器隔开，构建知识仍在管理面。注册串在构建成功之后。
 
-```http
-POST /api/v1/artifacts/{artifact_id}/delete-plan
+目标：管理面只做通用门禁并把路径交出；解析、选策略、选 Base、构建都在工厂内完成。管理面再用工厂返回的名称、版本、镜像和 runtime 去注册中心落卡。
+
+**现状**
+
+```mermaid
+flowchart LR
+    subgraph CP["管理面"]
+        direction TB
+        A1[上传 tgz / 落盘]
+        A2[深校验<br/>格式、平台、能否构建]
+        A3[注册<br/>成功才算上架完成]
+        A1 --> A2
+    end
+    subgraph IP["镜像处理"]
+        direction TB
+        B1[固定 Dockerfile]
+        B2[固定 agent-base]
+        B3[docker build / save]
+        B1 --> B2 --> B3
+    end
+    subgraph REG["注册中心"]
+        C1[写入框架记录]
+    end
+    A2 -->|"路径"| B1
+    B3 -->|"镜像"| A3
+    A3 --> C1
 ```
 
-```json
-{
-  "policy": "cascade",
-  "options": {
-    "unregister": true,
-    "remove_output_archives": true,
-    "remove_local_images": false,
-    "retain_job_history": true
-  }
-}
+**目标**
+
+```mermaid
+flowchart LR
+    subgraph CP["管理面"]
+        direction TB
+        T1[通用校验<br/>大小、命名]
+        T2[写入用户目录]
+        T3[把路径交给工厂]
+        T4[按结果注册]
+        T1 --> T2 --> T3
+    end
+    subgraph IP["镜像工厂"]
+        direction TB
+        U1[解析制品]
+        U2[选择 Recipe 与 Base]
+        U3[校验并执行]
+        U1 --> U2 --> U3
+    end
+    subgraph REG["注册中心"]
+        V1[落下卡片]
+    end
+    T3 -->|"路径"| U1
+    U3 -->|"名称/版本/镜像/runtime"| T4
+    T4 --> V1
 ```
 
-返回受影响任务、输出、注册记录、预计回收空间、阻塞原因和警告。执行接口建议创建异步删除任务：
+对应目标图，上传职责拆成两层，互不替代：
 
-```http
-DELETE /api/v1/artifacts/{artifact_id}
-GET    /api/v1/deletion-jobs/{deletion_job_id}
-```
+| 分层 | 管理面：通用门禁 | 镜像工厂：构建条件 |
+|---|---|---|
+| 校验核心 | 这是不是一次可接受的上传 | 这个文件能不能、以及如何做成镜像 |
+| 重点关注 | 单文件大小、实际字节封顶、磁盘余量；扩展名白名单；文件名去掉路径穿越，落盘名由服务端生成；先写临时文件再改名 | 解析包内容；选择构建方式和基础镜像；判断能否构建；执行构建、导入或注入 |
+| 不关注 | 不解包、不读包内清单、不选构建方式或底座 | 不管用户身份、配额展示、卡片目录 |
+| 参考 | OWASP File Upload Cheat Sheet | 按制品类型匹配处理方式 |
 
-CP 内部使用 `DeletionPolicy.plan()` 与 `DeletionPolicy.execute()`；工厂只接受明确的资源标识执行镜像或产物清理辅助，不决定级联范围和用户策略。
+## 4. 卡片字段
 
-### 6.7 数量与容量限制
+管理面卡片对应注册中心 `GET/POST /api/images` 的框架记录，本轮在该记录上增加下列字段。
 
-配额建议独立为 `ArtifactQuotaService`：
+| 字段 | 现网 | 本轮 | 谁用 |
+|---|---|---|---|
+| `framework` / `framework_version` | 有 | 保留，卡片主键 | 两种视图 |
+| `runtime_spec` / `imageurl` / 资源字段 | 有 | 保留 | 拉起实例 |
+| `uploaded_by` | 有 | 保留 | 管理员 |
+| `description` | 无 | **新增**；管理员可改，写回注册中心 | 两种视图展示；仅管理员编辑 |
+| `is_default` | 无 | **新增**；同一 `framework` 恰好一个为 `true` | 默认版本展示、解析和删除提升 |
+| `package_path` | 无 | **新增** | 管理员详情、整卡删源包 |
+| `image_archive_path` | 无 | **新增** | 管理员详情、整卡删落盘镜像 |
+| `recipe_id` / `base_ref` | 无 | **新增** | 构建方式与基础镜像追溯 |
+| `launch_command` | 无 | **后续协议新增**；兼容期暂由 `framework` 承载 | 独立表达启动 Agent 的命令 |
+
+用户视图由管理面裁掉路径类运维字段。文件物理上仍在管理面机器，路径记在卡片上。
+
+已创建 / 已注册实例数**不是卡片字段**。管理员查询时，管理面按该卡的智能体名称与版本调用既有**实例管理接口**汇总，不写入注册中心，也不抄进本机包表。
+
+管理面镜像相关**只保留一张表**，替换现网的 `build_tasks` 与 `agent_registrations`。工厂不建库。
 
 ```text
-check_create
-reserve
-commit
-release
-reconcile
-```
-
-上传开始前预留数量和预期空间，上传或建账失败时释放，成功后提交真实大小。删除成功后释放配额。使用 reservation 防止并发上传同时通过检查。
-
-配额至少区分：
-
-- 用户源 Artifact 数量和总容量；
-- 构建输出数量和总容量；
-- 活动 ImageProcessJob 数量；
-- 单文件最大大小。
-
-### 6.8 共享路径安全
-
-共享卷模型可以保留，目录归属仍由 CP 决定。工厂不识别 `users/{owner}`，但必须实现通用执行安全：
-
-- 输入、输出和 work 路径必须位于配置的 allowed roots；
-- 对路径执行规范化和符号链接解析后再次校验；
-- 输入路径只读，输出/work 路径按需可写；
-- 禁止 output/work 指向敏感路径或相互危险重叠；
-- 限制归档展开后的文件数量、单文件大小和总展开大小；
-- 防止归档路径穿越、符号链接逃逸和解压炸弹；
-- 工厂接口仅在受限内部网络开放，并增加服务间认证或请求签名。
-
-这些是工厂的执行安全约束，不属于用户目录业务语义。
-
-### 6.9 卡片、启动命令与默认版本管理
-
-#### 6.9.1 卡片权威与本地状态
-
-已注册卡片以注册中心 `/api/images` 记录为唯一权威。管理面本地只保留 `local_packages`，用于未注册包、失败重试和内容摘要锁：
-
-```text
-content_digest     SHA-256 主键、去重与互斥
-package_path       本地源包路径
-locked_until       摘要锁过期时间
-last_error         最近一次构建或注册失败
+content_digest     主键，锁与去重
+package_path
+locked_until
+last_error         未注册时才有
 request_id         工厂任务 ID
 description        上传时填写的卡片描述
 uploaded_by        上传管理员
 launch_command     管理员手工填写的启动 Agent 命令
 ```
 
-构建并注册成功后删除对应本地记录。实例计数不落库，管理员查询卡片时从注册中心实例接口实时汇总；实例查询失败必须返回错误，禁止将“未知”投影为 0。
+已注册后卡片在注册中心，本行可删除或标已消费，不再抄名称/版本/描述。未注册包的删除、重试和摘要锁都打这张表。实例查询失败必须返回错误，禁止将「未知」投影为 0。
 
-#### 6.9.2 启动命令兼容策略
+### 4.1 启动命令与默认版本（实现对齐）
 
-`framework` 是卡片/软件身份，`launch_command` 是运行行为，两者概念上必须分离。但现有启动链沿用了历史约定，把 `framework` 当作启动命令。当前实现为保持可用采用以下临时映射：
+`framework` 是卡片/软件身份，`launch_command` 是运行行为，两者概念上必须分离。现有启动链沿用了历史约定，把 `framework` 当作启动命令。当前实现为保持可用采用以下临时映射：
 
 ```text
 registry.framework = upload.launch_command
 factory manifest.name = 从包名解析出的制品名，仅用于镜像 tag 和构建追溯
 ```
 
-上传表单必须提示管理员手工填写启动 Agent 的命令并做非空校验。失败重试沿用本地保存的 `launch_command`。镜像工厂不解析 `package.json.bin`，不扫描 ELF 推断入口，也不因缺少可自动识别的入口而拒绝构建。
+上传表单必须提示管理员手工填写启动 Agent 的命令并做非空校验。失败重试沿用本地保存的 `launch_command`。镜像工厂不解析 `package.json.bin`，不扫描 ELF 推断入口。
 
-TODO：注册中心和实例启动协议完成独立字段后，调整为：
+TODO：注册中心和实例启动协议完成独立字段后，启动端只能读取 `launch_command`，不得再从 `framework` 推断可执行命令。
 
-```json
-{
-  "framework": "scienceflow",
-  "framework_version": "1.2.0",
-  "launch_command": "science-flow-agent"
-}
-```
-
-届时启动端只能读取 `launch_command`，不得再从 `framework` 推断可执行命令。若运行协议支持 argv，后续优先把该字段升级为字符串数组，避免 shell 拆词和注入问题。
-
-#### 6.9.3 注册中心必须新增的字段
-
-注册中心 `POST /api/images`、`GET /api/images` 和 `GET /api/images/{framework}/launch-spec` 必须接收、持久化并返回以下字段，不能依赖框架默认行为忽略额外字段：
-
-| 字段 | 要求 | 用途 |
-|---|---|---|
-| `is_default` | **本轮必须新增**；同一 `framework` 存在版本时恰好一个为 `true` | 默认版本展示、解析和删除提升 |
-| `description` | **本轮必须新增**，默认空字符串，支持 upsert 更新 | 用户/管理员卡片描述 |
-| `package_path` | **本轮必须新增**，可空 | 管理员详情、删除本地源包 |
-| `image_archive_path` | **本轮必须新增**，可空 | 管理员详情、删除离线镜像文件 |
-| `recipe_id` | **本轮必须新增**，可空 | 构建方式追溯 |
-| `base_ref` | **本轮必须新增**，可空 | 基础镜像追溯、后续升级 |
-| `launch_command` | **后续协议必须新增** | 独立表达启动 Agent 的命令；兼容期暂由 `framework` 承载 |
-
-现有 `runtime_spec`、`env_vars`、`workspace`、`mounts`、`image_module_version`、`uploaded_by` 继续保留。`imageurl` 以 `runtime_spec.rootfs.imageurl` 为运行权威值；如列表接口提供顶层投影，其值必须保持一致。
-
-#### 6.9.4 默认版本接口与约束
-
-新增接口：
+默认版本接口：
 
 ```http
 PUT /api/images/{framework}/default
@@ -502,301 +195,760 @@ Content-Type: application/json
 {"framework_version": "2.10.0"}
 ```
 
-注册中心必须保证：
+注册中心必须保证：切换后同一框架只有一个默认版本；删除有实例的版本返回 409；删除默认版本后按语义版本提升最高剩余版本。
 
-- 目标框架版本不存在时返回 404。
-- 切换后同一框架只有一个默认版本。
-- `GET /api/images` 返回每个版本的 `is_default`。
-- 未指定版本的 launch-spec 解析到默认版本。
-- 删除有实例的任何版本返回 409。
-- 删除默认版本后，若仍有其他版本，按语义版本提升最高版本；例如 `2.10.0 > 2.9.0`，release 高于相同核心版本的 prerelease。
-- 删除最后一个版本时允许该框架不再存在默认版本。
+## 5. 主成功路径
 
-长期应由注册中心在同一事务中完成“删除默认版本并提升继任版本”。管理面当前的删除前提升只作为兼容措施，不能成为两个组件各自维护默认状态的长期方案。
+中间态不画进主路径。失败见 §7。
 
-## 7. 目标接口契约
+### 5.1 上架（增）
 
-### 7.1 创建处理任务
+本图描述管理员上架：连续上传并构建，成功后注册中心落下带描述的卡片。
 
-```json
-{
-  "contract_version": "1",
-  "job_id": "job-123",
-  "operation": "build",
-  "artifact": {
-    "id": "artifact-123",
-    "kind": "npm_tgz",
-    "path": "/home/agentos/users/admin/installers/opencode.tgz",
-    "digest": "sha256:..."
-  },
-  "recipe": {
-    "id": "npm_tgz_on_base",
-    "version": "1"
-  },
-  "base": {
-    "ref": "agent-base:2.0",
-    "digest": "sha256:..."
-  },
-  "output": {
-    "directory": "/home/agentos/users/admin/images"
-  },
-  "work_directory": "/home/agentos/users/admin/run/job-123",
-  "parameters": {}
-}
+```mermaid
+flowchart TD
+    A[管理员上传制品并填写描述] --> B[管理面：大小/命名校验并落盘]
+    B --> C[把路径交给工厂]
+    C --> D[工厂：解析、选 Recipe/Base、构建]
+    D --> E[管理面用工厂结果注册]
+    E --> F[注册中心写入镜像记录]
+    F --> G[前端刷新：查询注册中心]
 ```
 
-工厂不接收 username，也不从 artifact ID 或路径解析用户身份。
+管理面在上架时只做通用校验（大小、安全命名）并落盘，然后把路径交给工厂。名称、版本、用哪条 Recipe、用哪个 Base，都由工厂解析后决定并随构建结果返回。管理面据此注册，不本地建卡片表。
 
-### 7.2 任务结果
+### 5.2 查询（查）
 
-```json
-{
-  "job_id": "job-123",
-  "status": "done",
-  "progress": 100,
-  "operation": "build",
-  "recipe_id": "npm_tgz_on_base",
-  "recipe_version": "1",
-  "output": {
-    "image_ref": "opencode:1.2.0",
-    "image_digest": "sha256:...",
-    "archive_path": "/home/agentos/users/admin/images/opencode-1.2.0.tar.gz"
-  },
-  "base": {
-    "ref": "agent-base:2.0",
-    "digest": "sha256:..."
-  },
-  "runtime_profile": {
-    "user": "agentos",
-    "ports": ["tcp:2222"]
-  },
-  "error": null
-}
+本图描述卡片查询：列表都回源注册中心。管理员视图再按卡调实例管理接口，补上已创建 / 已注册实例数；本机路径只给管理员详情。
+
+```mermaid
+flowchart TD
+    A[用户或管理员刷新 / 搜索] --> B[管理面转发框架查询]
+    B --> C[注册中心返回卡片列表<br/>含名称、版本、description]
+    C --> D{视图}
+    D -->|用户| E[展示名称、版本、描述，去掉路径]
+    D -->|管理员| F[按卡调用实例管理接口]
+    F --> G[展示名称、版本、描述<br/>已创建实例数、已注册实例数]
+    G --> H[详情另含包路径和镜像路径]
 ```
 
-`launch_command` 不属于工厂自动解析结果。它由管理员在管理面填写并保存在本地未注册包记录中，注册时再按 §6.9 的兼容策略写入注册中心。
+### 5.3 删除（删）
 
-## 8. 数据模型修改建议
+本图描述整卡拆除。有实例则到此为止。
 
-### 8.1 新增或重构模型
-
-当前实现先收敛为一张轻量本地表 `local_packages`，字段见 §6.9.1；已注册卡片不在管理面复制。以下 Artifact、BaseImage、ImageOutput 等模型仍属于后续完整演进目标：
-
-- 新增通用 `Artifact`，逐步替代 NPM 专用 `AgentInstaller` 作为主账本。
-- 新增 `BaseImage` 产品目录。
-- 新增 `ImageOutput`，避免将某次构建结果覆盖写回 Artifact。
-- 将 `BuildTask` 扩展为通用 ImageProcessJob 语义，记录 owner、artifact、recipe、base 和参数快照。
-- 新增 `Registration` 或至少增加独立注册状态字段。
-- 新增 `DeletionJob` 和必要的配额 reservation 记录。
-
-### 8.2 唯一性与隔离
-
-当前 `(agent_name, version)` 全局主键不适合用户级制品目录。建议业务唯一性改为：
-
-```text
-(owner_id, kind, name, version)
+```mermaid
+flowchart TD
+    A[管理员选中卡片] --> B[注册中心查询实例]
+    B -->|有实例| C[拒绝删除]
+    B -->|无实例| D[按卡片上的路径级联]
+    D --> D1[管理面删软件包]
+    D --> D2[管理面删落盘镜像文件]
+    D --> D3[工厂卸已 load 镜像]
+    D --> D4[注册中心删卡片]
 ```
 
-Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 name/version 但不同 digest，需要评审决定。
+本轮「改」只做描述编辑，见 §5.4。机上依赖升级无主成功路径。
 
-## 9. 需要进行的代码修改及原因
+### 5.4 编辑描述（改）
 
-| 模块 | 修改 | 原因 |
+本图描述管理员改卡片描述：只写回注册中心上的 `description`，不触构建、不改路径、不改实例。
+
+```mermaid
+flowchart TD
+    A[管理员在卡片上改描述] --> B[管理面鉴权后写回注册中心]
+    B --> C[注册中心更新该卡 description]
+    C --> D[刷新后两种视图看到新描述]
+```
+
+## 6. 关键交互
+
+把上一节跨进程箭头展开为调用。参与方与 §3 一致。
+
+### 6.1 上架
+
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant CP as 管理面
+    participant F as 镜像工厂
+    participant R as 注册中心
+
+    Admin->>CP: 上传制品 + description
+    CP->>CP: 校验大小/命名并落盘
+    CP->>F: buildFromPath(packagePath, options)
+    F->>F: 解析、选 Recipe、选 Base、执行
+    F-->>CP: name, version, imageRef, archivePath, runtime, recipe, base
+    CP->>R: POST /api/images（现网注册，体中带描述与路径字段）
+    R-->>CP: registered / updated
+    Admin->>CP: 刷新列表
+    CP->>R: GET /api/images
+    R-->>Admin: 镜像记录（管理面展示为卡片）
+```
+
+### 6.2 查询
+
+```mermaid
+sequenceDiagram
+    actor User as 用户或管理员
+    participant CP as 管理面
+    participant R as 注册中心
+
+    User->>CP: 刷新 / 查询卡片
+    CP->>R: GET /api/images
+    R-->>CP: ImageEntry[]
+    alt 用户视图
+        CP-->>User: 名称、版本、描述（去掉路径）
+    else 管理员视图
+        CP->>R: GET /api/instances（按框架汇总）
+        R-->>CP: 已创建实例数、已注册实例数
+        CP-->>User: 名称、版本、描述、两计数；详情含路径
+    end
+```
+
+查询不经过镜像工厂。上架、改描述、删除时序仅管理员可发起。
+
+### 6.3 删除
+
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant CP as 管理面
+    participant F as 镜像工厂
+    participant R as 注册中心
+
+    Admin->>CP: 删除卡片
+    CP->>R: listInstances(card)
+    alt 仍有实例
+        R-->>CP: 实例列表非空
+        CP-->>Admin: 拒绝
+    else 无实例
+        R-->>CP: 空
+        CP->>R: 取卡片上的 tag、package_path、image_archive_path
+        CP->>CP: 按路径删软件包、落盘镜像文件
+        CP->>F: removeLoadedImage(tag)
+        CP->>R: deleteImage()
+        CP-->>Admin: 已拆除
+    end
+```
+
+### 6.4 编辑描述
+
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant CP as 管理面
+    participant R as 注册中心
+
+    Admin->>CP: 更新卡片 description
+    CP->>R: POST /api/images
+    R-->>CP: registered / updated
+    CP-->>Admin: 成功
+```
+
+改描述走 `POST /api/images`。不经过镜像工厂，不改本机包表。
+
+## 7. 异常
+
+不塞进主成功路径。对已经落盘的软件包只分两种，不再单独做「上传包目录」产品：
+
+| 状态 | 怎么管 | 能做什么 |
 |---|---|---|
-| CP API | 增加 Artifact、BaseImage、ImageProcessJob、删除计划和注册重试接口 | 从 NPM 专用接口扩展为通用产品能力 |
-| CP 上架表单/API | 增加必填 `launch_command`；提示该值当前同时作为框架名 | 保持现有启动链可用，同时停止不可靠的自动入口推断 |
-| CP Service | 拆分 ArtifactService、QuotaService、JobOrchestrator、DeletionOrchestrator、RegistrationService | 避免单个 service 持续膨胀和跨领域修改 |
-| CP package.py | 仅保留或迁移为 NPM ArtifactInspector；移除 Recipe/Dockerfile 相关校验 | 分离产品元数据与 Buildability |
-| CP Model | 引入 Artifact、BaseImage、ImageOutput、Registration、DeletionJob；扩展任务快照 | 支持多类型、多 base、直接导入和可追溯状态 |
-| CP Factory Client | 增加 capabilities、validate 和通用 jobs 契约 | 避免客户端绑定单一 tgz build |
-| Factory Schema | 增加 artifact、recipe、base、operation、runtime profile 和结构化错误 | 建立可扩展稳定契约 |
-| Factory Core | 增加 RecipeRegistry、Validator 和统一 Executor | 新增能力通过注册扩展而非修改巨型分支 |
-| Factory Builder | 把固定 Dockerfile 和 `_BASE_IMAGE` 移入 `npm_tgz_on_base` Recipe | 消除全局固定基础镜像 |
-| Factory Importer | 增加 OCI/Docker archive load、inspect 和结果输出 | 支持已构建镜像直接注册 |
-| Factory Security | 增加 allowed roots、归档限制和服务认证 | 工厂持有 Docker socket，必须缩小输入攻击面 |
-| 状态协调 | 定义工厂重启、任务丢失、超时和重复提交的收敛规则 | 防止 CP 任务永久停留在 pending/building |
-| 注册逻辑 | 构建状态与注册状态解耦，支持重试和解除注册 | 当前 `done` 不能代表注册成功 |
-| 注册中心 | 增加 §6.9.3 字段、默认版本接口和删除默认版本后的语义版本提升 | 卡片权威数据必须完整，默认版本不能由管理面本地复制 |
-| 测试 | 增加契约、Recipe、迁移、配额并发、删除和故障恢复测试 | 保证扩展不会破坏已有链路 |
+| 已注册为框架 | 按卡片，权威在注册中心 | 与 §5 相同：查、改描述、整卡拆除（有实例则拒绝） |
+| 未注册为框架 | 不是卡片；管理面只记住这次的包路径和失败原因 | **删除该软件包**，或 **按原路径重试构建** |
 
-## 10. 兼容与迁移方案
+未注册包括：工厂解析/构建失败、注册中心写入失败。这两种都不在注册中心造半张卡，也不用 Job 成功冒充已上架。
 
-### 阶段 0：设计与契约冻结
-
-- 评审领域模型、状态机、错误码、路径安全和接口契约。
-- 不修改现网行为。
-
-### 阶段 1：以 Recipe 包装现有能力
-
-- 将现有流程包装为 `npm_tgz_on_base:v1`。
-- 保持现有 CP API 和数据库可用。
-- 固定 Dockerfile 行为移入 Recipe，但不改变输出。
-- 删除 NPM `bin`/ELF 入口自动推断；启动命令改由管理员显式填写，兼容期写入 `framework`。
-- 注册中心补齐卡片扩展字段和默认版本管理接口。
-
-### 阶段 2：迁移 Buildability
-
-- 工厂增加 `/v1/validate`。
-- build 强制执行同一 validator。
-- CP package 模块只保留最小元数据提取。
-- CP 将工厂结构化错误转换为稳定产品错误。
-
-### 阶段 3：引入 Artifact 和用户级 Admission
-
-- 新建 Artifact 等表并双写或执行一次性数据迁移。
-- 将现有 AgentInstaller 记录映射为 `kind=npm_tgz` Artifact。
-- 列表、上传和构建逐步切换到 Artifact ID。
-- 引入数量/容量 reservation 和删除策略。
-
-### 阶段 4：BaseImage 管理
-
-- 增加基础镜像目录和版本状态。
-- 构建请求支持 base 选择和 digest 固化。
-- 支持同一 Artifact 多 base 构建。
-
-### 阶段 5：镜像导入与注入
-
-- 增加 `oci_import`，支持直接注册。
-- 增加仅 SDK 注入。
-- 增加 SDK + SSH 注入。
-
-旧接口在迁移期转换为新 Job 请求；在调用方切换并完成数据迁移后再评审废弃时间，不建议一次性删除。
-
-## 11. 测试与验收
-
-### 11.1 兼容性
-
-- 原有 NPM tgz 成功和失败场景保持一致。
-- 旧 API 在兼容期返回相同核心字段。
-- 已有 AgentInstaller 和 BuildTask 数据可迁移和查询。
-- 启动命令与包名不同时，注册后的 `framework` 必须等于管理员填写的 `launch_command`。
-- 缺少手工启动命令的历史未注册包不得生成空 `framework`，应提示删除后重新上传。
-
-### 11.2 扩展性
-
-- 新增测试 Recipe 不修改 CP JobOrchestrator 主流程。
-- 同一 Artifact 可使用两个 BaseImage 创建独立输出。
-- OCI import 不执行 Dockerfile build 即可形成可注册 ImageOutput。
-- 新增独立 `launch_command` 后，启动端不再依赖 `framework` 作为命令。
-
-### 11.3 删除与配额
-
-- 三种删除策略均先返回准确影响范围。
-- 活动任务引用的 Artifact 不会被直接删除。
-- 并发上传不会突破数量或容量上限。
-- 部分删除失败可以重试，账本与实际文件可 reconcile。
-
-### 11.4 故障恢复
-
-- 工厂重启后 CP 活动任务能够在规定时间内收敛为重试或失败。
-- 重复 job ID 不产生重复输出。
-- 注册失败可以独立重试，不重复构建镜像。
-
-### 11.5 安全
-
-- 路径穿越、符号链接逃逸、解压炸弹和超量文件被拒绝。
-- 非法 Recipe、artifact kind/Recipe 不匹配被拒绝。
-- 未授权调用方不能直接访问工厂高权限接口。
-- 敏感凭据不进入构建上下文、镜像层、错误详情和日志。
-
-## 12. 评审决策点
-
-以下内容由模块 Owner 提出建议，但需要相关团队共同评审。
-
-### D1：Artifact 唯一性
-
-- 建议：使用 `(owner_id, kind, name, version)` 作为默认业务唯一键。
-- 待决策：同 owner、同 name/version、不同 digest 是拒绝、创建 revision，还是允许多个 Artifact。
-- 影响：用户体验、升级语义、目录命名和历史可追溯性。
-
-### D2：Artifact metadata 管理
-
-- 建议：JSON metadata 必须包含 `schema_version`，每个 kind 有独立 schema。
-- 待决策：schema 仅由代码校验，还是登记到 capabilities 并允许前端消费。
-- 影响：数据库稳定性和新 kind 接入成本。
-
-### D3：任务命名与 API 兼容
-
-- 建议：领域名使用 ImageProcessJob；迁移期保留 `build_tasks` 表和旧 API 适配层。
-- 待决策：是否在本轮直接更名数据库表和外部 API。
-- 影响：迁移风险、概念准确性和客户端改造范围。
-
-### D4：工厂执行态可靠性
-
-- 方案 A：继续内存执行态，由 CP 负责超时和重提。
-- 方案 B：工厂增加轻量持久执行日志，但不存业务账本。
-- 方案 C：引入消息队列/任务系统。
-- 建议：近期采用 A 并补全收敛协议；达到多实例或长任务规模后评审 C。
-- 影响：部署复杂度、任务可靠性和多实例能力。
-
-### D5：BaseImage 的来源和发布权限
-
-- 待决策：仅允许系统预置，还是允许管理员上传 OCI archive/填写 registry ref。
-- 待决策：tag 是否允许更新；建议 active 版本使用 digest 固化且禁止静默覆盖。
-- 影响：供应链安全、升级流程和可复现构建。
-
-### D6：直接导入镜像的准入标准
-
-- 待决策：必须满足统一用户/端口契约，还是允许管理员显式补充 runtime profile。
-- 建议：工厂提供用户、端口等检测结果；启动命令一律由管理员显式填写并留审计记录，不再由工厂自动推断。
-- 影响：接入灵活性、运行成功率和安全责任边界。
-
-### D7：删除默认策略
-
-- 建议：默认 `source_only`，高影响 `cascade` 必须先执行 delete-plan 并二次确认。
-- 待决策：存在已注册输出时是否允许 source_only；删除本地 archive 是否保留 Docker daemon 中镜像。
-- 影响：磁盘回收、历史复现和运行实例可用性。
-
-### D8：历史 BuildJob 与审计保留
-
-- 建议：Artifact 和输出物理删除后保留脱敏任务记录、digest 和审计事件。
-- 待决策：保留期限以及是否满足产品合规要求。
-- 影响：数据库增长、故障追踪和合规。
-
-### D9：配额统计口径
-
-- 待决策：按逻辑文件大小还是实际磁盘占用；硬链接/重复 digest 是否去重计费；输出 archive 与 Docker daemon 镜像是否同时计费。
-- 建议：第一阶段按 CP 管理文件的逻辑大小计费，Docker daemon 占用作为系统级容量指标。
-- 影响：实现复杂度和用户可解释性。
-
-### D10：Recipe 发布与版本兼容
-
-- 建议：Recipe ID 稳定，行为不兼容时提升 Recipe version；BuildJob 保存版本快照。
-- 待决策：旧 Recipe 版本保留期限和历史 Artifact 重建策略。
-- 影响：可复现构建和工厂维护成本。
-
-### D11：跨架构能力
-
-- 建议：第一阶段继续要求 Artifact、BaseImage 和构建节点架构一致。
-- 待决策：后续采用多架构工厂节点调度，还是 Buildx/QEMU 模拟。
-- 影响：性能、部署成本和输出可信度。
-
-### D12：工厂鉴权和部署隔离
-
-- 建议：在内部网络隔离基础上增加服务身份认证，并限制 allowed roots。
-- 待决策：采用 mTLS、短期签名 token 还是部署平台提供的 workload identity。
-- 影响：安全强度和部署运维复杂度。
-
-## 13. 建议评审顺序
-
-1. 先评审 CP 与 Factory 的职责边界。
-2. 再评审 Artifact、BaseImage、ImageOutput 和 Registration 概念。
-3. 再评审 Recipe、validate/build 契约和错误模型。
-4. 再评审删除、配额和状态恢复。
-5. 最后评审数据库迁移、旧 API 兼容和实施阶段。
-
-只有前四项达成一致后，才建议进入详细设计和任务拆分，避免实现过程中反复移动职责边界。
-
-## 14. 总结
-
-本设计将当前“上传 NPM tgz 并基于固定基础镜像构建”的单一路径，演进为三个可独立扩展的维度：
-
-```text
-Artifact Kind x Recipe x BaseImage Version
+```mermaid
+flowchart TD
+    A[落盘后的软件包] --> B{是否已在注册中心成为框架}
+    B -->|是| C[按卡片管理]
+    B -->|否| D[未注册包]
+    D --> D1[删除软件包]
+    D --> D2[按原路径重试构建]
+    D2 -->|成功并注册| C
+    D2 -->|仍失败| D
 ```
 
-CP 长期拥有用户、目录、账本、配额、删除、版本选择和注册；Factory 长期拥有 Buildability、Recipe 和高权限镜像执行。新增 Recipe 不应修改 CP 核心编排，新增 Artifact kind 只增加对应 Inspector 和 Recipe，新基础镜像版本只新增目录项和任务快照。
+未注册包的删除只清管理面磁盘上的该文件（及构建残留目录），不查实例、不调注册中心删卡。重试构建仍走工厂「路径进、结果出」，成功后再注册。
 
-该边界既保留当前已经落地的服务拆分成果，也为 wheel、binary、OCI 直接导入、SDK/SSH 注入、同包多 base 和策略化删除提供统一演进路径。
+**同一软件包要互斥，不同包不互斥。** 锁按内容摘要（sha256）持有，不是锁整个上传窗口，以免堵死后续并行上架。
 
-当前实现补充形成了卡片管理闭环：卡片权威在注册中心，管理面只保留未注册包状态；管理员可以编辑描述、切换默认版本，并在无实例时拆除卡片。注册中心必须新增并透传 `is_default`、`description`、`package_path`、`image_archive_path`、`recipe_id`、`base_ref`，后续必须增加独立 `launch_command`。兼容期由管理员手工填写启动命令并暂存到 `framework`，该映射必须作为 TODO 在注册中心与启动协议完成字段拆分后移除。
+- 首次上架、以及未注册包的**重试构建**，开始时加锁，结束（成功出卡 / 仍失败）或超时后释放。  
+- **未持锁**的未注册包才允许删除或再次构建；持锁期间这两项都拒绝。  
+- 同一摘要已在处理中，再上传同一包直接拒绝，不新开一条流水。  
+- 前端与后端一致：持锁时禁用「删除」「重新构建」，上传同包给出进行中提示；禁用按钮不能代替管理面互斥。
+
+```mermaid
+flowchart TD
+    P[针对某一内容摘要] --> L{是否已持锁}
+    L -->|是| R[拒绝：上传 / 删除 / 重试]
+    L -->|否| G[加锁]
+    G --> H{操作}
+    H -->|上架或重试| I[工厂构建]
+    H -->|删除| J[删文件并结束]
+    I --> K[解锁]
+    J --> K
+```
+
+已注册卡片上若删除被拒，仍只是：
+
+```mermaid
+flowchart LR
+    D1[查实例非空] --> D2[整卡保留]
+```
+
+## 8. 静态结构（代码设计）
+
+整体涉及三个组件。
+
+| 组件 | 仓库与进程 | 管理面后端如何访问 |
+|---|---|---|
+| 管理面后端 | `control-panel/backend`，独立进程 | — |
+| 镜像工厂 | 同仓库 `control-panel/image_process`，独立进程 | 现网已有 `image_process_client`，配置 `IMAGE_PROCESS_URL` |
+| 注册中心 | 独立组件，配置 `AGENT_REGISTER_URL` | 现网写在 Service 里的 HTTP 调用，本轮收拢为 `AgentRegisterClient` |
+
+因此管理面后端会留 **两个组件间客户端**：`ImageProcessClient`（现网 `image_process_client`）、`AgentRegisterClient`（收拢对 `AGENT_REGISTER_URL` 的调用）。两者都走 **组件间通信**（§8.5），当前实现缺省 HTTP。
+
+### 8.1 组件间交互
+
+本图是组件间调用接口。各组件删除的接口见 8.2–8.4。
+
+```mermaid
+classDiagram
+    direction LR
+
+    class ThirdpartyAgentService {
+        <<管理面后端>>
+        publish()
+        list()
+        updateDescription()
+        deleteCard()
+        retry()
+        deleteUnregistered()
+    }
+    class ImageProcessClient {
+        <<管理面后端>>
+        buildFromPath(path, options)
+        removeLoadedImage(tag)
+    }
+    class AgentRegisterClient {
+        <<管理面后端>>
+        registerImage()
+        listImages()
+        deleteImage()
+        listInstances()
+    }
+    class image_process {
+        <<镜像工厂>>
+        buildFromPath(path, options)
+        removeLoadedImage(tag)
+    }
+    class AgentRegister {
+        <<注册中心>>
+        listImages()
+        registerImage()
+        deleteImage()
+        listInstances()
+    }
+
+    ThirdpartyAgentService --> ImageProcessClient
+    ThirdpartyAgentService --> AgentRegisterClient
+    ImageProcessClient ..> image_process
+    AgentRegisterClient ..> AgentRegister
+```
+
+`deleteCard` 在清完本机文件并卸镜像后，经 `AgentRegisterClient.deleteImage` 回写注册中心。
+
+### 8.2 管理面后端
+
+现网把上传、深校验、异步 Job、本地注册副本揉在 `ThirdpartyAgentService`。目标拆成门禁、本机包、卡片编排三块；卡片目录不再落本库。本轮在 Service 上新增方法，调用走镜像工厂与注册中心（见 8.1）。
+
+**新增方法**
+
+| 方法 | 做什么 | 调用 |
+|---|---|---|
+| `updateDescription` | 改描述 | 注册中心 `registerImage`（POST upsert） |
+| `deleteCard` | 整卡拆除 | 注册中心 `listInstances` → 本机按路径清文件 → 工厂按注册中心 tag `removeLoadedImage` → 注册中心 `deleteImage` |
+| `retry` | 未注册包按原路径重试 | 工厂 `buildFromPath` → 注册中心 `registerImage` |
+| `deleteUnregistered` | 删除未注册包 | 只看本机包表：没有未注册行则结束；有行且未持锁才清文件。不调注册中心 |
+
+**现网接口收拢**
+
+| 变更 | 现网 | 本轮 |
+|---|---|---|
+| 删 | `GET/POST /installers` | 列表回源注册中心；上传并入上架 |
+| 删 | `POST/GET /build_tasks` | 上架连续完成，不把 Job 当产品 |
+| 保留 | `GET /api/v1/agent/instances` | 实例管理；卡片上的两计数也走注册中心实例查询 |
+
+**类：新增 / 保留 / 删除**
+
+| 变更 | 类型 | 职责 |
+|---|---|---|
+| 演进 | `ThirdpartyAgentService` | 现网上传/构建/列表/注册的编排入口；本轮新增 `updateDescription`、`deleteCard`、`retry`、`deleteUnregistered` |
+| 新增 | `UploadGate` | 参考前文通用门禁（OWASP File Upload Cheat Sheet）做校验 |
+| 新增 | `LocalPackageRecord` / `LocalPackageStore` | 管理面数据中心 |
+| 新增 | `CardViewProjector` | 按角色裁字段；管理员再填两计数 |
+| 演进 | `ImageProcessClient` | 现网模块 `image_process_client`；改入参为只交路径 |
+| 演进 | `AgentRegisterClient` | 收拢对 `AGENT_REGISTER_URL` 的调用 |
+| 新增 | 组件间通信接口 | 两个客户端共用；本轮缺省 HTTP，TLS 预留，见 §8.5 |
+| 新增 | `LocalFileCleaner` | 按路径删源包和镜像文件 |
+| 保留 | 鉴权（`require_admin` / 用户角色） | 视图裁剪的输入 |
+| 删除 | `BuildTask`、`AgentRegistration` | 被本机包表 + 注册中心镜像记录替代 |
+| 删除 | `package.extract_package_meta` 及平台校验 | 迁到工厂 Recipe |
+| 删除 | `create_build_task` / `get_build_task` / `list_installers` | 上架与列表走工厂、注册中心 |
+
+```mermaid
+classDiagram
+    class ThirdpartyAgentService {
+        <<新增方法>>
+        updateDescription(id, text)
+        deleteCard(id)
+        retry(digest)
+        deleteUnregistered(digest)
+    }
+    class UploadGate {
+        +accept(file) PackagePath
+    }
+    class LocalPackageStore {
+        +tryLock(digest)
+        +unlock(digest)
+        +save(record)
+        +get(digest)
+        +delete(digest)
+    }
+    class LocalPackageRecord {
+        content_digest
+        package_path
+        locked_until
+        last_error
+    }
+    class CardViewProjector {
+        +forUser(card) CardDto
+        +forAdmin(card, counts) AdminCardDto
+    }
+    class ImageProcessClient {
+        <<image_process_client>>
+    }
+    class AgentRegisterClient {
+        <<AGENT_REGISTER_URL>>
+    }
+    class LocalFileCleaner {
+        +removePackage(path)
+        +removeArchive(path)
+    }
+
+    ThirdpartyAgentService --> UploadGate : publish 落盘
+    ThirdpartyAgentService --> LocalPackageStore : 锁 / 未注册包
+    ThirdpartyAgentService --> CardViewProjector : list 裁字段
+    ThirdpartyAgentService --> ImageProcessClient : 构建 / 卸镜像
+    ThirdpartyAgentService --> AgentRegisterClient : 注册 / 查询 / 删除
+    ThirdpartyAgentService --> LocalFileCleaner : 删源包和 archive
+    LocalPackageStore *-- LocalPackageRecord
+```
+
+本图只含管理面后端进程内对象。`publish`：门禁落盘 → 摘要加锁 → `buildFromPath` → `registerImage` → 解锁。`deleteCard`：查实例 → 按路径清文件 → 按注册中心 tag `removeLoadedImage` → `deleteImage`。
+
+### 8.3 镜像工厂
+
+现网 `build()` 固定拷贝 `agent.Dockerfile`、固定 `agent-base:1.0`，且要求调用方传入 `agent_name` / `version`。管理面现网还在 `package.py` 里解包、读 `package.json`、校验平台。本轮把「这是什么包、能不能构建、如何构建」全部收进工厂；管理面只交路径。
+
+工厂内部三块：抽象接口如下，实现类后文列出。
+
+| 块 | 抽象类型 | 职责 |
+|---|---|---|
+| 工厂 | `FactoryService`、`RecipeRegistry` | 对外入口；选出唯一 Recipe 并按固定顺序调用 |
+| 策略 | `Recipe` | 一份构建方案：解析制品、选底座、注入、装配 |
+| 运行时 | `ImageRuntime` | docker 执行器。`Recipe` 接口不依赖它 |
+
+#### 8.3.1 抽象类型与方法
+
+**`Recipe`（接口）**
+
+一份构建方案。不是库表，不是管理面入参。实现类自带方案常量（`recipe_id`、注入开关、assemble）。工厂只依赖本接口。
+
+| 方法 | 入参 | 返回 | 做什么 | 失败 |
+|---|---|---|---|---|
+| `matches` | 本机 `package_path` | `bool` | **形态 + 平台**：是不是我这种包，以及平台是否对本机。不通过不抛 | 读文件失败视为 false |
+| `validate` | 本机 `package_path` | `ArtifactManifest` | **能否构建**：清单能否支撑做镜像（入口、tag 合法等） | 抛错，构建失败 |
+| `selectBase` | `package_path`（及 validate 得到的清单） | `BaseRef` | 选预置底座 | 底座不存在则抛错 |
+| `execute` | `package_path`、`BaseRef`、`options` | `BuildResult` | 按方案注入与装配，打 tag，写出 archive。`options` 本轮可空 | 抛错，构建失败 |
+
+方案常量（实现类填死，不是调用方传入）：
+
+| 字段 | 含义 |
+|---|---|
+| `recipe_id` | 策略名，写入 `BuildResult` 再落到卡片 |
+| `artifact_kind` | 输入形态：`npm_binary` / `oci` / `node_npm` / `harness` |
+| `inject_ssh` | 是否注入 ssh |
+| `inject_yuanrong_sdk` | 是否注入 yuanrong SDK |
+| `assemble` | 制品进镜像：`copy_binary` / `docker_load` / `node_install` / `harness_layout` |
+
+`matches` 与 `validate` 的分工：`matches` 做形态识别和平台校验；`validate` 做能否构建。平台不对时 `matches` 为 false，错误是「平台不匹配」，不是「无法识别」。
+
+**`RecipeRegistry`**
+
+| 方法 | 入参 | 返回 | 做什么 |
+|---|---|---|---|
+| `register` | `Recipe` 实例 | void | 进程启动时登记。本轮登记 `NpmTgzOnBaseRecipe` |
+| `resolve` | `package_path` | `Recipe` | 对已登记 Recipe 依次 `matches`（形态+平台），**必须恰好一个为 true** |
+
+`resolve` 结果：0 个匹配 → 无法识别制品；2 个及以上 → 注册表配置错误（开发期不允许 Recipe 形态重叠）。
+
+**`FactoryService`**
+
+| 方法 | 入参 | 返回 | 做什么 |
+|---|---|---|---|
+| `buildFromPath` | `package_path`、`options`（可空 kwargs）、可选请求 id | `BuildResult` | `resolve` → `validate` → `selectBase` → `execute(..., options)`。不接收 name/version/Recipe/Base/用户身份 |
+| `removeLoadedImage` | `tag` | void | 绕过 Recipe，直接 `ImageRuntime.remove(tag)`。tag 由管理面从注册中心卡片读取 |
+
+`options` 为本轮预留的可扩展入参（实现上 kwargs / JSON 对象），调用方可不传。不在其中指定 Recipe、Base、用户身份。yuanrong SDK **一律注入**，不走 `options`。
+
+| 键 | 本轮 | 后续 |
+|---|---|---|
+| `inject_ssh` | 可不传；不传则按 Recipe 常量（npm 二进制为 true） | 由调用方传入，覆盖是否打 ssh |
+| 其它键 | 忽略，不报错 | 预留交互相关配置；本轮不上「交互方式」枚举 |
+
+未知键本轮忽略，避免后续加字段时拆入口。
+
+**`ImageRuntime`（接口，现网 `AbstractBuilder` 改名）**
+
+| 方法 | 入参 | 做什么 |
+|---|---|---|
+| `build` | 工作目录、tag、build args | `docker build` |
+| `loadArchive` | archive 路径 | `docker load` |
+| `saveArchive` | tag | 写出约定目录下的 tar |
+| `remove` | tag | `docker rmi` |
+| `inspect` | tag 或底座 | 读 label / digest / `runtime_spec` |
+
+本轮实现 `DockerRuntime`（现网 `DockerBuilder`）。
+
+**数据对象（不是实体库表）**
+
+`ArtifactManifest`：某条 Recipe `validate` 解析出来的清单，供选底座和 `execute` 使用。本轮 npm 二进制字段与现网 `package.py` 的 `PackageMeta` 对齐，整体迁到工厂：
+
+| 字段 | 来源 | 用途 |
+|---|---|---|
+| `name` | `package.json` 的 `name` 去掉 scope 和平台后缀 | docker tag 名、注册 `framework` |
+| `version` | `package.json` 的 `version` | docker tag、注册 `framework_version` |
+| `display_name` | `displayName` 或 `name` | 可写入描述默认值，本轮非必须 |
+| `os` / `arch` / `libc` | 包名平台后缀 `-(linux\|darwin\|win32)-(x64\|arm64)(-musl)?` | `matches` 与本机比对 |
+
+启动命令不由工厂从 `package.json.bin` 或 ELF 推断，改由管理员上传时手工填写 `launch_command`（见 §4.1）。
+
+`BaseRef`：底座标识，本轮即 `agent-base:1.0`。
+
+`BuildResult`：`execute` 返回值，不是工厂持有的实体。
+
+| 字段 | 含义 |
+|---|---|
+| `name` / `version` | 来自清单 |
+| `imageRef` | 本机 docker **tag**（`name:version`），不是文件路径 |
+| `archivePath` | 工厂写入约定目录后的落盘包路径 |
+| `runtimeSpec` | 从底座 inspect 得到，带 `sandbox_type` |
+| `recipe_id` / `base_ref` | 所用方案与底座，随卡片写入注册中心 |
+| `image_digest` / `image_module_version` | 现网已有，沿用 |
+
+#### 8.3.2 制品解析
+
+解析发生在工厂，不在管理面。管理面现网 `extract_package_meta` / `validate_platform` 删除，迁到本轮 `NpmTgzOnBaseRecipe`。
+
+**选出谁来解析**
+
+```text
+buildFromPath(path, options=None)
+  → RecipeRegistry.resolve(path)
+       对每个已登记 Recipe 调 matches(path)
+       恰好一个 true → 该 Recipe
+       0 个 → 若已认出 npm 二进制但 os/arch/libc 与本机不符：失败「平台不匹配」
+              否则：失败「无法识别制品」
+       ≥2 个 → 失败：Recipe 形态重叠（开发期缺陷）
+  → recipe.validate(path)
+  → recipe.selectBase(...)
+  → recipe.execute(path, base, options)
+```
+
+后续加 OCI / OpenClaw / harness，只加实现并 `register`。新形态的识别规则写在该 Recipe 的 `matches` 里，不改 `resolve`。
+
+**本轮 `NpmTgzOnBaseRecipe.matches`（形态 + 平台，不抛错）**
+
+同时满足才为 true，否则 false：
+
+1. `package_path` 存在且可读。  
+2. 能按 gzip tar 打开（现网 `tarfile.open(..., "r:gz")`）。  
+3. 归档内存在成员路径以 `package/package.json` 结尾。  
+4. JSON 含非空 `name`、`version`。  
+5. `name` 去掉 `@scope/` 后，能匹配平台后缀 `-(linux|darwin|win32)-(x64|arm64)(-musl)?`，得到 `os` / `arch` / `libc`（无 `-musl` 则为 `gnu`）。  
+6. 与本机比对：`sys.platform`、`platform.machine()`、`platform.libc_ver()` 映射规则与现网 `PackageMeta.validate_platform` 相同。不一致则 false（平台不匹配）。  
+
+不在 `matches` 里做的事：不解出全部文件到磁盘；不检查 entrypoint；不要求调用方传入 name/version。
+
+**本轮 `NpmTgzOnBaseRecipe.validate`（能否构建）**
+
+在 `matches` 已成立的前提下解析清单并确认能进入 `execute`：
+
+1. 再读 `package/package.json`，去掉 scope 和平台后缀得到 `name`；`version` 取 JSON；`display_name` 取 `displayName` 或 `name`。  
+2. `name`、`version` 须满足现网 docker tag 安全字符：`^[a-zA-Z0-9][-a-zA-Z0-9_.]*$`（与现网 `_SAFE_NAME_RE` 一致）。  
+
+成功则返回 `ArtifactManifest`。失败原因写回管理面本机包表 `last_error`，不进注册中心。不在此阶段解析或校验启动命令。
+
+**后续形态的解析（本轮不实现，只定扩展点）**
+
+| Recipe | `matches`（形态+平台） | `validate`（能否构建） |
+|---|---|---|
+| `oci_import` | 可 `docker load` 的 archive；平台/架构若可从镜像读出则与本机比对 | 能否注入 SDK；清单能否支撑导入 |
+| `openclaw_node_npm` | OpenClaw node 型 npm 布局；平台规则由该 Recipe 定义 | node 安装前置条件是否满足 |
+| `deepseek_harness` | harness 包布局 | 由该 Recipe 定义能否做出镜像 |
+
+两条约束：不同 Recipe 的 `matches` 不得同时为 true；解析失败只失败本次构建，不改工厂入口。
+
+#### 8.3.3 构建流程
+
+```mermaid
+sequenceDiagram
+    participant CP as 管理面
+    participant F as FactoryService
+    participant Reg as RecipeRegistry
+    participant R as Recipe
+    participant RT as ImageRuntime
+
+    CP->>F: buildFromPath(package_path, options)
+    F->>Reg: resolve(package_path)
+    Reg->>R: matches(package_path)
+    R-->>Reg: true（唯一）
+    Reg-->>F: Recipe
+    F->>R: validate(package_path)
+    R-->>F: ArtifactManifest
+    F->>R: selectBase(...)
+    R-->>F: BaseRef
+    F->>R: execute(path, base, options)
+    R->>RT: build / saveArchive
+    RT-->>R: tag、archivePath、runtimeSpec
+    R-->>F: BuildResult
+    F-->>CP: BuildResult
+```
+
+本轮 `NpmTgzOnBaseRecipe`：不传 `options.inject_ssh` 时按常量 `inject_ssh=true`；yuanrong SDK 一律注入，不读 `options`。ssh 与 SDK 已在预置 `agent-base:1.0` 中，本轮 `execute` 不再单独安装它们。
+
+本轮 `execute`：
+
+1. `selectBase` 返回 `agent-base:1.0`（底座不存在则失败）。  
+2. 工作目录由工厂约定，调用方不传 `output_dir` / `work_dir`。  
+3. 拷贝源 tgz；拷贝现网 `agent.Dockerfile`（`FROM` 该 Base，把 `package/` 下可执行文件拷进 `/usr/local/bin`）。  
+4. `ImageRuntime.build`，tag 为 `name:version`。  
+5. `ImageRuntime.saveArchive`，路径由工厂写入约定目录，填入 `BuildResult.archivePath`。  
+6. inspect 底座得到 `runtimeSpec`；填 `recipe_id=npm_tgz_on_base`、`base_ref`。  
+
+卸镜像不走 Recipe：管理面从注册中心取 tag，调 `removeLoadedImage(tag)` → `ImageRuntime.remove(tag)`。
+
+#### 8.3.4 本轮与后续方案
+
+```mermaid
+classDiagram
+    class Recipe {
+        <<interface>>
+        recipe_id
+        artifact_kind
+        inject_ssh
+        inject_yuanrong_sdk
+        assemble
+        matches(path) bool
+        validate(path) ArtifactManifest
+        selectBase() BaseRef
+        execute(path, base, options) BuildResult
+    }
+    class NpmTgzOnBaseRecipe {
+        <<本轮>>
+    }
+    class OciImportRecipe {
+        <<后续>>
+    }
+    class OpenclawNodeNpmRecipe {
+        <<后续>>
+    }
+    class DeepseekHarnessRecipe {
+        <<后续>>
+    }
+
+    Recipe <|.. NpmTgzOnBaseRecipe
+    Recipe <|.. OciImportRecipe
+    Recipe <|.. OpenclawNodeNpmRecipe
+    Recipe <|.. DeepseekHarnessRecipe
+```
+
+| 阶段 | recipe_id | artifact_kind | inject_ssh | inject_yuanrong_sdk | assemble |
+|---|---|---|---|---|---|
+| 本轮 | `npm_tgz_on_base` | npm 二进制 tgz | 默认是（可被 `options.inject_ssh` 预留覆盖） | 一律注入 | 拷进预置 Base |
+| 后续 | `oci_import` | OCI/Docker archive | 读 `options.inject_ssh` | 一律注入 | `docker load` 后再注入 |
+| 后续 | `openclaw_node_npm` | OpenClaw node 型 npm | 读 `options.inject_ssh` | 一律注入 | node 安装 |
+| 后续 | `deepseek_harness` | DeepSeek harness | 读 `options.inject_ssh` | 一律注入 | harness 布局 |
+
+ssh 不是独立 Recipe。yuanrong SDK 一律注入，不进 `options`。后续只加实现并 `register`；ssh 是否打入走预留的 `options.inject_ssh`，本轮可不传。
+
+#### 8.3.5 对外 HTTP
+
+| 变更 | 现网 | 本轮 |
+|---|---|---|
+| 改 | `POST /v1/builds` 必填 `task_id, agent_name, version, installer_path, output_dir` | 必填 `package_path`；可选请求 id；可选 `options`（本轮可空，预留 `inject_ssh` 等） |
+| 保留 | `GET /v1/builds/{id}` | 上架等待进度；工厂内存任务，不落库 |
+| 新增 | — | `POST /v1/images/remove` 按 **tag** 做 `docker rmi` |
+| 删除 | 调用方指定 `output_dir` / `work_dir` | 产物路径由工厂写入约定目录后在 `BuildResult` 返回 |
+
+#### 8.3.6 类：新增 / 保留 / 删除
+
+| 变更 | 类型 | 职责 |
+|---|---|---|
+| 新增 | `FactoryService` | `buildFromPath(path, options)`、`removeLoadedImage(tag)` |
+| 新增 | `Recipe`（接口） | `matches` / `validate` / `selectBase` / `execute` |
+| 新增 | `RecipeRegistry` | `register` / `resolve` |
+| 新增 | `ArtifactManifest` | 解析清单；本轮对齐现网 `PackageMeta` |
+| 新增 | `NpmTgzOnBaseRecipe` | 本轮。接收现网 `package.py` 与固定 Dockerfile |
+| 后续 | `OciImportRecipe` / `OpenclawNodeNpmRecipe` / `DeepseekHarnessRecipe` | 只加实现 |
+| 保留并改名 | `ImageRuntime` ← `AbstractBuilder` | `build` / `loadArchive` / `saveArchive` / `remove` / `inspect` |
+| 保留 | `DockerRuntime` ← `DockerBuilder` | 本机 dockerd |
+| 保留 | 内存 `TaskRecord` | 进行中构建；非产品目录 |
+| 删除 | 管理面 `extract_package_meta` / `validate_platform` | 迁到 `NpmTgzOnBaseRecipe` |
+| 删除 | `build()` 写死 Dockerfile 拷贝与 `_BASE_IMAGE` | 变为本轮 Recipe 的 `execute` / `selectBase` |
+| 删除 | 入参强制 `agent_name` / `version` | 由 `validate` 写入 `BuildResult` |
+
+```mermaid
+classDiagram
+    class FactoryService {
+        +buildFromPath(packagePath, options) BuildResult
+        +removeLoadedImage(tag)
+    }
+    class RecipeRegistry {
+        +register(recipe)
+        +resolve(path) Recipe
+    }
+    class Recipe {
+        <<interface>>
+        +matches(path) bool
+        +validate(path) ArtifactManifest
+        +selectBase() BaseRef
+        +execute(path, base, options) BuildResult
+    }
+    class ImageRuntime {
+        <<interface>>
+        +build()
+        +loadArchive()
+        +saveArchive()
+        +remove(tag)
+        +inspect()
+    }
+    class DockerRuntime
+    class BuildResult {
+        <<data>>
+        name
+        version
+        imageRef
+        archivePath
+        runtimeSpec
+        recipe_id
+        base_ref
+    }
+
+    FactoryService --> RecipeRegistry : resolve
+    RecipeRegistry o-- Recipe
+    FactoryService ..> Recipe : validate / selectBase / execute
+    Recipe ..> BuildResult
+    FactoryService --> ImageRuntime : removeLoadedImage(tag)
+    ImageRuntime <|.. DockerRuntime
+```
+
+`Recipe` 接口不依赖 `ImageRuntime`；只有具体实现的 `execute` 使用运行时。卸镜像：管理面从注册中心取 tag，不是文件路径。
+
+### 8.4 注册中心
+
+对外仍是镜像接口与实例接口。管理面卡片读写 `/api/images` 上的框架记录；删除由 `deleteImage` 回写。
+
+| 现网 | 本轮 |
+|---|---|
+| `GET /api/images`、`POST /api/images` | 沿用。POST 为 upsert。扩 `description` 等字段 |
+| `GET /api/images/{framework}/launch-spec` | 沿用 |
+| `GET /api/instances` 及实例注册/心跳 | 沿用；计数、删前检查 |
+| 镜像删除 | `deleteImage`：`deleteCard` 清完本机与已 load 镜像后调用；处理逻辑在现有镜像接口上改 |
+
+```mermaid
+classDiagram
+    class ImageEntry {
+        framework
+        framework_version
+        imageurl
+        runtime_spec
+        uploaded_by
+        description
+        package_path
+        image_archive_path
+        recipe_id
+        base_ref
+    }
+    class ImageStore {
+        +list()
+        +register()
+        +delete()
+    }
+    class InstanceStore {
+        +listByFramework(name, version)
+    }
+
+    ImageStore *-- ImageEntry
+```
+
+路径记在 `ImageEntry` 上，供删文件。`docker rmi` 用的是卡片上的 **tag**（现网字段 `imageurl`，实际是镜像 tag），由管理面读出后交给工厂；注册中心只删记录。
+
+### 8.5 组件间通信（预留 TLS）
+
+范围：管理面后端 → 镜像工厂、管理面后端 → 注册中心。浏览器到管理面、NFS、docker.sock 不在本条。
+
+两个客户端共用组件间通信抽象。本轮缺省 HTTP；TLS 为后续实现，配上运维证书路径后切换。
+
+```mermaid
+classDiagram
+    class 组件间通信 {
+        <<interface>>
+        +request()
+    }
+    class HttpComm {
+        <<本轮缺省>>
+    }
+    class TlsComm {
+        <<预留>>
+    }
+    class ImageProcessClient
+    class AgentRegisterClient
+
+    组件间通信 <|.. HttpComm
+    组件间通信 <|.. TlsComm
+    ImageProcessClient --> 组件间通信
+    AgentRegisterClient --> 组件间通信
+```
+
+| 项 | 本轮 | 后续 |
+|---|---|---|
+| 实现 | `HttpComm`：现网明文 HTTP | `TlsComm`：校验证书、HTTPS |
+| 选择 | 固定走缺省实现 | 读到证书路径则切 `TlsComm`，两个客户端都不用改 |
+| 证书 | 不涉及 | 运维发放并挂到约定路径，应用不签发、不内置 CA |
+| 配置点（预留，本轮可空） | `INTERNAL_TLS_CA_FILE` / `CERT_FILE` / `KEY_FILE`，建议 `/etc/agentos/tls/` | 配齐后自动切 TLS |
+
+镜像工厂与注册中心本轮仍明文监听。双向 TLS 若需要，作为 `TlsComm` 的选项。
+
+## 9. 范围确认
+
+| 做 | 不做 |
+|---|---|
+| 卡片数据落在注册中心镜像记录；管理面只留一张本机包表 | 继续保留 `build_tasks` + `agent_registrations` |
+| 上架连续完成并一次写全镜像记录；失败包可删或重试，不进卡片墙 | 把未注册包做成第二套卡片目录 |
+| 查询回源 `GET /api/images`；用户视图裁路径；管理员看名称/版本/描述、实例计数与路径 | 用户侧增删改卡；把实例计数写入镜像记录或本机库 |
+| 改描述走 `POST /api/images`；整卡拆除末步 `deleteImage` 回写注册中心 | 本轮实现升级流程（字段可先写入） |
+| 本轮 Recipe：`npm + ssh + yuanrong SDK`；后续以加 Recipe 接入 OCI / OpenClaw / DeepSeek harness | 用户自定义 Recipe 脚本 |
+| 组件间通信抽象为接口，本轮只落明文 HTTP | 本轮实现 TLS/mTLS；应用内签发证书 |
+
+## 10. 总结
+
+- **卡片**对应注册中心 `/api/images` 记录；管理面编排增删查与改描述。  
+- **构建**用策略 + 工厂拆开扩展轴。本轮 Recipe 为 npm 二进制（ssh + yuanrong SDK）；OCI（ssh 按需）、OpenClaw node 型 npm、DeepSeek harness 后续只加策略。  
+- **管理**区分用户/管理员视图。管理员卡片展示名称、版本，以及实例管理接口给出的已创建 / 已注册实例数。改（升级）不做流程。  
+- 已注册包按卡片管；未注册包只支持删除或重试构建，不进用户视图。管理面只留一张本机包表。  
+- 同一内容摘要加锁防并发；未持锁才可删或重试，重试再加锁。不同包不互斥。  
+- **结构**见 §8：管理面后端编排；`deleteCard` 末步经 `AgentRegisterClient.deleteImage` 回写注册中心。  
+- **组件间通信**：`ImageProcessClient`、`AgentRegisterClient`；本轮 HTTP，TLS 预留。  
