@@ -6,6 +6,19 @@
 > 历史参考：`containerized-build.md`、`third-party-agent-integration-guide.md`  
 > 说明：本文是面向后续扩展的新版本总体设计，不替代或覆盖旧版设计文档。
 
+### 实现对齐修订摘要（2026-08-22）
+
+当前分支在总体边界不变的前提下做了以下落地调整：
+
+1. 卡片数据以注册中心 `/api/images` 为唯一权威，管理面不再保存卡片副本，只保留未注册包、失败原因和内容摘要锁。
+2. 已实现管理员卡片列表/详情、描述编辑、未注册包删除与重试、无实例卡片拆除，以及用户/管理员字段裁剪。
+3. 新增同一框架多版本的默认版本管理：首次注册自动成为默认版本；管理员可手工切换；删除无实例的默认版本时，按语义版本提升剩余最高版本。
+4. 启动 Agent 的命令改为管理员上传时手工填写，镜像工厂不再读取 `package.json.bin` 或扫描 ELF 自动推断入口。
+5. 为兼容现有启动链，当前暂把手工 `launch_command` 写入注册中心 `framework`。后续注册中心和启动协议新增独立 `launch_command` 后，`framework` 恢复为稳定的软件/卡片标识。
+6. 注册中心调用异常统一在管理面 Service 转换为 `AgentServiceError`；实例查询失败时不得显示虚假的 0，也不得继续删除。
+
+本修订同时明确注册中心必须增加的卡片字段与默认版本接口，见 §6.9。
+
 ## 1. 背景
 
 当前三方 Agent 上架能力围绕单一场景实现：管理员上传符合 NPM `pack` 布局的离线 `.tgz` 包，系统将其中的可执行文件加入固定的 `agent-base:1.0`，生成 Agent 运行镜像并尝试注册。
@@ -38,11 +51,11 @@
 
 ## 3. 已有功能描述
 
-### 3.1 管理面已有能力
+### 3.1 管理面已有能力（设计基线）
 
 - 三方 Agent API 使用 `require_admin` 管理员鉴权。
 - 接收 `.tgz` 上传，限制单包大小，并检查目标文件系统剩余空间。
-- 从 `package/package.json` 提取名称、版本、展示名和入口信息。
+- 从 `package/package.json` 提取名称、版本和展示名；入口自动解析已在当前实现中删除。
 - 根据包名后缀校验 OS、CPU 架构和 libc。
 - 按 `{AGENTOS_HOME_BASE}/{uploaded_by}/installers` 保存安装包。
 - 在 PostgreSQL 中保存 `AgentInstaller` 和 `BuildTask`。
@@ -420,6 +433,87 @@ reconcile
 
 这些是工厂的执行安全约束，不属于用户目录业务语义。
 
+### 6.9 卡片、启动命令与默认版本管理
+
+#### 6.9.1 卡片权威与本地状态
+
+已注册卡片以注册中心 `/api/images` 记录为唯一权威。管理面本地只保留 `local_packages`，用于未注册包、失败重试和内容摘要锁：
+
+```text
+content_digest     SHA-256 主键、去重与互斥
+package_path       本地源包路径
+locked_until       摘要锁过期时间
+last_error         最近一次构建或注册失败
+request_id         工厂任务 ID
+description        上传时填写的卡片描述
+uploaded_by        上传管理员
+launch_command     管理员手工填写的启动 Agent 命令
+```
+
+构建并注册成功后删除对应本地记录。实例计数不落库，管理员查询卡片时从注册中心实例接口实时汇总；实例查询失败必须返回错误，禁止将“未知”投影为 0。
+
+#### 6.9.2 启动命令兼容策略
+
+`framework` 是卡片/软件身份，`launch_command` 是运行行为，两者概念上必须分离。但现有启动链沿用了历史约定，把 `framework` 当作启动命令。当前实现为保持可用采用以下临时映射：
+
+```text
+registry.framework = upload.launch_command
+factory manifest.name = 从包名解析出的制品名，仅用于镜像 tag 和构建追溯
+```
+
+上传表单必须提示管理员手工填写启动 Agent 的命令并做非空校验。失败重试沿用本地保存的 `launch_command`。镜像工厂不解析 `package.json.bin`，不扫描 ELF 推断入口，也不因缺少可自动识别的入口而拒绝构建。
+
+TODO：注册中心和实例启动协议完成独立字段后，调整为：
+
+```json
+{
+  "framework": "scienceflow",
+  "framework_version": "1.2.0",
+  "launch_command": "science-flow-agent"
+}
+```
+
+届时启动端只能读取 `launch_command`，不得再从 `framework` 推断可执行命令。若运行协议支持 argv，后续优先把该字段升级为字符串数组，避免 shell 拆词和注入问题。
+
+#### 6.9.3 注册中心必须新增的字段
+
+注册中心 `POST /api/images`、`GET /api/images` 和 `GET /api/images/{framework}/launch-spec` 必须接收、持久化并返回以下字段，不能依赖框架默认行为忽略额外字段：
+
+| 字段 | 要求 | 用途 |
+|---|---|---|
+| `is_default` | **本轮必须新增**；同一 `framework` 存在版本时恰好一个为 `true` | 默认版本展示、解析和删除提升 |
+| `description` | **本轮必须新增**，默认空字符串，支持 upsert 更新 | 用户/管理员卡片描述 |
+| `package_path` | **本轮必须新增**，可空 | 管理员详情、删除本地源包 |
+| `image_archive_path` | **本轮必须新增**，可空 | 管理员详情、删除离线镜像文件 |
+| `recipe_id` | **本轮必须新增**，可空 | 构建方式追溯 |
+| `base_ref` | **本轮必须新增**，可空 | 基础镜像追溯、后续升级 |
+| `launch_command` | **后续协议必须新增** | 独立表达启动 Agent 的命令；兼容期暂由 `framework` 承载 |
+
+现有 `runtime_spec`、`env_vars`、`workspace`、`mounts`、`image_module_version`、`uploaded_by` 继续保留。`imageurl` 以 `runtime_spec.rootfs.imageurl` 为运行权威值；如列表接口提供顶层投影，其值必须保持一致。
+
+#### 6.9.4 默认版本接口与约束
+
+新增接口：
+
+```http
+PUT /api/images/{framework}/default
+Content-Type: application/json
+
+{"framework_version": "2.10.0"}
+```
+
+注册中心必须保证：
+
+- 目标框架版本不存在时返回 404。
+- 切换后同一框架只有一个默认版本。
+- `GET /api/images` 返回每个版本的 `is_default`。
+- 未指定版本的 launch-spec 解析到默认版本。
+- 删除有实例的任何版本返回 409。
+- 删除默认版本后，若仍有其他版本，按语义版本提升最高版本；例如 `2.10.0 > 2.9.0`，release 高于相同核心版本的 prerelease。
+- 删除最后一个版本时允许该框架不再存在默认版本。
+
+长期应由注册中心在同一事务中完成“删除默认版本并提升继任版本”。管理面当前的删除前提升只作为兼容措施，不能成为两个组件各自维护默认状态的长期方案。
+
 ## 7. 目标接口契约
 
 ### 7.1 创建处理任务
@@ -474,16 +568,19 @@ reconcile
   },
   "runtime_profile": {
     "user": "agentos",
-    "ports": ["tcp:2222"],
-    "entrypoint": "opencode"
+    "ports": ["tcp:2222"]
   },
   "error": null
 }
 ```
 
+`launch_command` 不属于工厂自动解析结果。它由管理员在管理面填写并保存在本地未注册包记录中，注册时再按 §6.9 的兼容策略写入注册中心。
+
 ## 8. 数据模型修改建议
 
 ### 8.1 新增或重构模型
+
+当前实现先收敛为一张轻量本地表 `local_packages`，字段见 §6.9.1；已注册卡片不在管理面复制。以下 Artifact、BaseImage、ImageOutput 等模型仍属于后续完整演进目标：
 
 - 新增通用 `Artifact`，逐步替代 NPM 专用 `AgentInstaller` 作为主账本。
 - 新增 `BaseImage` 产品目录。
@@ -507,6 +604,7 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 | 模块 | 修改 | 原因 |
 |---|---|---|
 | CP API | 增加 Artifact、BaseImage、ImageProcessJob、删除计划和注册重试接口 | 从 NPM 专用接口扩展为通用产品能力 |
+| CP 上架表单/API | 增加必填 `launch_command`；提示该值当前同时作为框架名 | 保持现有启动链可用，同时停止不可靠的自动入口推断 |
 | CP Service | 拆分 ArtifactService、QuotaService、JobOrchestrator、DeletionOrchestrator、RegistrationService | 避免单个 service 持续膨胀和跨领域修改 |
 | CP package.py | 仅保留或迁移为 NPM ArtifactInspector；移除 Recipe/Dockerfile 相关校验 | 分离产品元数据与 Buildability |
 | CP Model | 引入 Artifact、BaseImage、ImageOutput、Registration、DeletionJob；扩展任务快照 | 支持多类型、多 base、直接导入和可追溯状态 |
@@ -518,6 +616,7 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 | Factory Security | 增加 allowed roots、归档限制和服务认证 | 工厂持有 Docker socket，必须缩小输入攻击面 |
 | 状态协调 | 定义工厂重启、任务丢失、超时和重复提交的收敛规则 | 防止 CP 任务永久停留在 pending/building |
 | 注册逻辑 | 构建状态与注册状态解耦，支持重试和解除注册 | 当前 `done` 不能代表注册成功 |
+| 注册中心 | 增加 §6.9.3 字段、默认版本接口和删除默认版本后的语义版本提升 | 卡片权威数据必须完整，默认版本不能由管理面本地复制 |
 | 测试 | 增加契约、Recipe、迁移、配额并发、删除和故障恢复测试 | 保证扩展不会破坏已有链路 |
 
 ## 10. 兼容与迁移方案
@@ -532,6 +631,8 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 - 将现有流程包装为 `npm_tgz_on_base:v1`。
 - 保持现有 CP API 和数据库可用。
 - 固定 Dockerfile 行为移入 Recipe，但不改变输出。
+- 删除 NPM `bin`/ELF 入口自动推断；启动命令改由管理员显式填写，兼容期写入 `framework`。
+- 注册中心补齐卡片扩展字段和默认版本管理接口。
 
 ### 阶段 2：迁移 Buildability
 
@@ -568,12 +669,15 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 - 原有 NPM tgz 成功和失败场景保持一致。
 - 旧 API 在兼容期返回相同核心字段。
 - 已有 AgentInstaller 和 BuildTask 数据可迁移和查询。
+- 启动命令与包名不同时，注册后的 `framework` 必须等于管理员填写的 `launch_command`。
+- 缺少手工启动命令的历史未注册包不得生成空 `framework`，应提示删除后重新上传。
 
 ### 11.2 扩展性
 
 - 新增测试 Recipe 不修改 CP JobOrchestrator 主流程。
 - 同一 Artifact 可使用两个 BaseImage 创建独立输出。
 - OCI import 不执行 Dockerfile build 即可形成可注册 ImageOutput。
+- 新增独立 `launch_command` 后，启动端不再依赖 `framework` 作为命令。
 
 ### 11.3 删除与配额
 
@@ -633,8 +737,8 @@ Artifact 仍使用独立 UUID 主键。是否允许同一 owner 上传相同 nam
 
 ### D6：直接导入镜像的准入标准
 
-- 待决策：必须满足统一用户/端口/entrypoint 契约，还是允许管理员显式补充 runtime profile。
-- 建议：工厂提供检测结果，缺失项允许管理员补充但必须显式确认并留审计记录。
+- 待决策：必须满足统一用户/端口契约，还是允许管理员显式补充 runtime profile。
+- 建议：工厂提供用户、端口等检测结果；启动命令一律由管理员显式填写并留审计记录，不再由工厂自动推断。
 - 影响：接入灵活性、运行成功率和安全责任边界。
 
 ### D7：删除默认策略
@@ -694,3 +798,5 @@ Artifact Kind x Recipe x BaseImage Version
 CP 长期拥有用户、目录、账本、配额、删除、版本选择和注册；Factory 长期拥有 Buildability、Recipe 和高权限镜像执行。新增 Recipe 不应修改 CP 核心编排，新增 Artifact kind 只增加对应 Inspector 和 Recipe，新基础镜像版本只新增目录项和任务快照。
 
 该边界既保留当前已经落地的服务拆分成果，也为 wheel、binary、OCI 直接导入、SDK/SSH 注入、同包多 base 和策略化删除提供统一演进路径。
+
+当前实现补充形成了卡片管理闭环：卡片权威在注册中心，管理面只保留未注册包状态；管理员可以编辑描述、切换默认版本，并在无实例时拆除卡片。注册中心必须新增并透传 `is_default`、`description`、`package_path`、`image_archive_path`、`recipe_id`、`base_ref`，后续必须增加独立 `launch_command`。兼容期由管理员手工填写启动命令并暂存到 `framework`，该映射必须作为 TODO 在注册中心与启动协议完成字段拆分后移除。
