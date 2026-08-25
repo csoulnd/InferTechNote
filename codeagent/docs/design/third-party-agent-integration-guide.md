@@ -1,3 +1,10 @@
+---
+title: "三方 Agent 使用与接入原理"
+type: design
+domain: codeagent
+status: active
+---
+
 # 三方 Agent 使用与接入原理
 
 > 本文面向 Agent OS 的使用者、Agent 软件维护者和平台管理员，说明两种已经明确的接入方式：

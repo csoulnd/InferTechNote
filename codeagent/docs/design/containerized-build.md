@@ -1,3 +1,10 @@
+---
+title: "容器镜像的容器化构建"
+type: design
+domain: codeagent
+status: active
+---
+
 # 容器镜像的容器化构建
 
 ## 使用docker构建容器镜像

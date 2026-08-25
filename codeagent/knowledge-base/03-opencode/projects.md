@@ -1,3 +1,10 @@
+---
+title: "OpenCode 开源项目"
+type: reference
+domain: codeagent
+status: active
+---
+
 # OpenCode 开源项目
 
 ### [anomalyco/opencode](https://github.com/anomalyco/opencode)

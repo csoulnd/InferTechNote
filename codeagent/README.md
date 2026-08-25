@@ -1,3 +1,10 @@
+---
+title: "Code Agent"
+type: moc
+domain: codeagent
+status: active
+---
+
 # Code Agent
 
 Engineering knowledge for integrating **third-party Code Agents** (Claude Code, OpenCode, etc.) into **Agent OS** via Gateway, SSH, and sandbox lifecycle.
@@ -22,7 +29,7 @@ codeagent/
 |----------|------------|
 | New to Agent OS integration | [knowledge-base/00-architecture-overview.md](knowledge-base/00-architecture-overview.md) |
 | Implementation / requirements | [docs/design/third-party-agent-agentos-requirements.md](docs/design/third-party-agent-agentos-requirements.md) |
-| SSH auth & TUI passthrough | [docs/design/gateway-ssh-auth-design.md](docs/design/gateway-ssh-auth-design.md) + [knowledge-base/04-integration-patterns/ssh-channel.md](knowledge-base/04-integration-patterns/ssh-channel.md) |
+| SSH auth & TUI passthrough | [knowledge-base/04-integration-patterns/ssh-channel.md](knowledge-base/04-integration-patterns/ssh-channel.md) + [docs/design/third-party-agent-agentos-requirements.md](docs/design/third-party-agent-agentos-requirements.md) |
 | Claude Code offline install | [docs/design/claude-code-offline-install.md](docs/design/claude-code-offline-install.md) |
 
 Full curriculum: [knowledge-base/README.md](knowledge-base/README.md) · Weekly plan: [knowledge-base/ROADMAP.md](knowledge-base/ROADMAP.md)
@@ -32,9 +39,8 @@ Full curriculum: [knowledge-base/README.md](knowledge-base/README.md) · Weekly 
 | Document | Description |
 |----------|-------------|
 | [third-party-agent-agentos-requirements.md](docs/design/third-party-agent-agentos-requirements.md) | Third-party agent sandbox, Gateway SSH, registration |
-| [gateway-ssh-auth-design.md](docs/design/gateway-ssh-auth-design.md) | SSH public-key auth chain (control vs data plane) |
-| [tui-vs-acp-comparison.md](docs/design/tui-vs-acp-comparison.md) | SSH+TUI vs ACP+WebSocket trade-offs |
-| [pty-remote-agent-design.md](docs/design/pty-remote-agent-design.md) | PTY + WebSocket remote agent design |
+| [third-party-agent-artifact-image-factory-design-v2.md](docs/design/third-party-agent-artifact-image-factory-design-v2.md) | Third-party Agent artifact management and image factory design |
+| [third-party-agent-integration-guide.md](docs/design/third-party-agent-integration-guide.md) | Deployment modes, integration boundaries, and acceptance checklist |
 | [claude-code-offline-install.md](docs/design/claude-code-offline-install.md) | Claude Code offline install & local API config |
 
 ## Insights & reports
@@ -52,7 +58,7 @@ Full curriculum: [knowledge-base/README.md](knowledge-base/README.md) · Weekly 
 | Short (knowledge-base) | Long (docs/) | Relationship |
 |------------------------|--------------|--------------|
 | [05-other-codeagents/codex-gemini-zcode.md](knowledge-base/05-other-codeagents/codex-gemini-zcode.md) | [zcode-insight.md](docs/insights/zcode-insight.md) | Summary vs full product insight |
-| [04-integration-patterns/ssh-channel.md](knowledge-base/04-integration-patterns/ssh-channel.md) | [gateway-ssh-auth-design.md](docs/design/gateway-ssh-auth-design.md) | Integration pattern vs auth deep-dive |
+| [04-integration-patterns/ssh-channel.md](knowledge-base/04-integration-patterns/ssh-channel.md) | [third-party-agent-agentos-requirements.md](docs/design/third-party-agent-agentos-requirements.md) | Integration pattern vs formal SSH requirements |
 | [00-architecture-overview.md](knowledge-base/00-architecture-overview.md) | [third-party-agent-agentos-requirements.md](docs/design/third-party-agent-agentos-requirements.md) | Map vs formal requirements spec |
 
 Keep both: knowledge-base for navigation, `docs/design/` for implementable specs.

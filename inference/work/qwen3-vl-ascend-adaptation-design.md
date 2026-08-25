@@ -1,3 +1,10 @@
+---
+title: "Qwen3-VL Ascend Adaptation Design"
+type: design
+domain: inference
+status: active
+---
+
 # Qwen3-VL Ascend Adaptation Design
 
 > 工程：vllm-project/vllm-ascend · 310P · Qwen3-VL

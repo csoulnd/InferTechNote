@@ -1,3 +1,10 @@
+---
+title: "JiuwenSwarm 扩展机制深度分析"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # JiuwenSwarm 扩展机制深度分析
 
 JiuwenSwarm 内置了一套完整的扩展系统，允许第三方在不修改核心代码的前提下，通过钩子事件、RPC 方法注入和能力替换来扩展 Agent 服务器的功能。本文档从定义、架构、加载流程到实战案例，逐层解析这套机制。

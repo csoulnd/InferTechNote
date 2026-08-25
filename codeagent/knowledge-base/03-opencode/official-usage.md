@@ -1,3 +1,10 @@
+---
+title: "OpenCode 官方用法"
+type: reference
+domain: codeagent
+status: active
+---
+
 # OpenCode 官方用法
 
 ## P0 必读

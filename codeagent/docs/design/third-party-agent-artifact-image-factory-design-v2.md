@@ -1,3 +1,10 @@
+---
+title: "三方 Agent 制品管理与镜像工厂总体设计（V2 评审稿）"
+type: design
+domain: codeagent
+status: active
+---
+
 # 三方 Agent 制品管理与镜像工厂总体设计（V2 评审稿）
 
 > 文档状态：评审稿，未定稿  

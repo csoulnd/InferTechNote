@@ -1,3 +1,10 @@
+---
+title: "学习计划（8 周）"
+type: work
+domain: codeagent
+status: active
+---
+
 # 学习计划（8 周）
 
 > **原则**：Week 1–2 只读 00 + 01，建立全局认知后再深入 Agent。**不跳读**。

@@ -1,3 +1,10 @@
+---
+title: "鉴权安全：OAuth / API Key / Agent Rail"
+type: concept
+domain: codeagent
+status: evergreen
+---
+
 # 鉴权安全：OAuth / API Key / Agent Rail
 
 > 介绍级文档：建立原理认知与场景映射，深入实践见参考链接。

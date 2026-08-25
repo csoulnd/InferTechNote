@@ -1,3 +1,10 @@
+---
+title: "Claude Code 官方用法"
+type: reference
+domain: codeagent
+status: active
+---
+
 # Claude Code 官方用法
 
 ## P0 必读

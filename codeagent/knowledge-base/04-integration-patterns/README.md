@@ -1,3 +1,10 @@
+---
+title: "04 接入模式"
+type: moc
+domain: codeagent
+status: active
+---
+
 # 04 接入模式
 
 > **深度专题**。将 [00 全局架构](../00-architecture-overview.md) 中的两条路径落地为可实施设计。

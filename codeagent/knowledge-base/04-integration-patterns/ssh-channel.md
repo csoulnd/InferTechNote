@@ -1,3 +1,10 @@
+---
+title: "SSH Channel 接入"
+type: implementation
+domain: codeagent
+status: evergreen
+---
+
 # SSH Channel 接入
 
 ## 两种 SSH 用法
@@ -41,4 +48,4 @@ Claude Code 无 HTTP Server，SSH + CLI 是通用方案。
 - `jiuwenswarm/gateway/` — SSH channel 实现
 - 对照 [00 全局架构](../00-architecture-overview.md) 路径 A/B 时序图
 
-走读笔记：[notes/integration-ssh-passthrough.md](../notes/integration-ssh-passthrough.md) · 认证深读：[../../docs/design/gateway-ssh-auth-design.md](../../docs/design/gateway-ssh-auth-design.md)
+走读笔记：[notes/integration-ssh-passthrough.md](../notes/integration-ssh-passthrough.md) · 需求深读：[third-party-agent-agentos-requirements.md](../../docs/design/third-party-agent-agentos-requirements.md)

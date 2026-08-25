@@ -1,3 +1,10 @@
+---
+title: "03 OpenCode"
+type: moc
+domain: codeagent
+status: active
+---
+
 # 03 OpenCode
 
 > **深度专题**。MIT 开源、C/S 可分离、原生 ACP——接入工程的首选源码实验室。

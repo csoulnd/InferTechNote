@@ -1,3 +1,10 @@
+---
+title: "OpenCode 视频"
+type: reference
+domain: codeagent
+status: draft
+---
+
 # OpenCode 视频
 
 ## 搜索关键词

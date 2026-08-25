@@ -1,18 +1,27 @@
+---
+title: "CodeAgent 接入对比矩阵"
+type: work
+domain: codeagent
+status: draft
+---
+
 # CodeAgent 接入对比矩阵
 
 > 自研走读笔记 · 对应专题：02 / 03 / 05
 
 ## 核心结论
 
-（CC vs OC vs Codex vs Gemini CLI 接入路径对比）
+> 状态：尚未开始对比，以下内容为研究提纲。
+
+- [ ] 对比 CC、OpenCode、Codex 和 Gemini CLI 的接入路径
 
 ## 与 Agent OS 接入的关系
 
-（选型决策：何时 HTTP/ACP，何时仅 SSH+CLI）
+- [ ] 形成 HTTP/ACP 与 SSH+CLI 的选型决策表
 
 ## 遗留问题
 
-- [ ] 
+- [ ] 补充运行模式、会话能力和权限模型维度
 
 ## 参考
 

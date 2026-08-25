@@ -1,3 +1,10 @@
+---
+title: "Architecture Overview"
+type: architecture
+domain: codeagent
+status: evergreen
+---
+
 # Architecture Overview
 
 > **首读文档**。在读 Claude Code、OpenCode 等 Agent 专题之前，先建立 Agent OS + 三方 CodeAgent 接入的整体地图。

@@ -1,3 +1,10 @@
+---
+title: "ZCode Insight"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # ZCode Insight
 
 [![ZCode - 简单、迅捷、氛围十足](../../assets/images/zcode.png)](https://zcode.z.ai/newdocs/welcome)

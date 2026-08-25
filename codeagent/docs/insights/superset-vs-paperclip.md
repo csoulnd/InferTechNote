@@ -1,3 +1,10 @@
+---
+title: "AI Agent 编排平台深度调研：Superset vs Paperclip"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # AI Agent 编排平台深度调研：Superset vs Paperclip
 
 > 调研日期：2026-06-08  

@@ -1,3 +1,10 @@
+---
+title: "{标题}"
+type: reference
+domain: codeagent
+status: active
+---
+
 # {标题}
 
 > 介绍级文档：建立原理认知与场景映射，深入实践见参考链接。

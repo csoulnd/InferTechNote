@@ -1,3 +1,10 @@
+---
+title: "OpenCode 源码走读索引"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # OpenCode 源码走读索引
 
 > 仓库：[anomalyco/opencode](https://github.com/anomalyco/opencode)

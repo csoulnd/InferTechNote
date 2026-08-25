@@ -1,3 +1,10 @@
+---
+title: "05 其他 CodeAgent"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # 05 其他 CodeAgent
 
 > 选读。接入 Agent OS 时以 Claude Code、OpenCode 为主，以下为扩展对比。

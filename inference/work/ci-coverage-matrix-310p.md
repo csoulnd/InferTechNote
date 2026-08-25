@@ -1,3 +1,10 @@
+---
+title: "310P Model and Feature CI Coverage Matrix"
+type: work
+domain: inference
+status: active
+---
+
 # 310P Model and Feature CI Coverage Matrix
 
 本文档统计 **Ascend 310P（Atlas 300I）** 的平台能力现状与 **E2E-Light CI 覆盖现状**。
@@ -109,7 +116,7 @@
 
 ## 参考
 
-- [E2E CI Test 文档](e2e_ci_test.md)
-- [Atlas 300I 使用教程](../../tutorials/hardwares/310p.md)
+- 上游 E2E CI 文档：`docs/developer_guide/e2e_ci_test.md`
+- 上游 Atlas 300I 使用教程：`tutorials/hardwares/310p.md`
 - 测试目录：`tests/e2e/310p/`
 - Workflow：`.github/workflows/pr_test_light.yaml`、`.github/workflows/_e2e_test.yaml`

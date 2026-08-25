@@ -1,3 +1,10 @@
+---
+title: "Claude Code 泄露源码分析索引"
+type: reference
+domain: codeagent
+status: active
+---
+
 # Claude Code 泄露源码分析索引
 
 > 2026 年 3 月 `@anthropic-ai/claude-code@2.1.88` npm 包误带 source map，社区产出结构化分析。**不镜像原始源码**，优先读下列分析文档。

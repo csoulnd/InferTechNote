@@ -1,3 +1,10 @@
+---
+title: "02 Claude Code"
+type: moc
+domain: codeagent
+status: active
+---
+
 # 02 Claude Code
 
 > **深度专题**。三方 CodeAgent 接入的核心对象之一：闭源 CLI 整包，需通过 SSH/CLI 路径接入 Agent OS。

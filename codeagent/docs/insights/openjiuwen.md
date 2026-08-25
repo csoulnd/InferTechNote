@@ -1,3 +1,10 @@
+---
+title: "openJiuwen 代码仓库导读"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # openJiuwen 代码仓库导读
 
 [openJiuwen](https://gitcode.com/openJiuwen) 是华为开源的 AI Agent 平台，致力于构建易用、灵活且稳定的开源智能体平台，推动商用级 Agentic AI 技术广泛应用与落地。

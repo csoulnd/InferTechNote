@@ -1,3 +1,10 @@
+---
+title: "Claude Code 社区架构分析"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # Claude Code 社区架构分析
 
 ## 核心架构结论（读分析文档前的预期收获）

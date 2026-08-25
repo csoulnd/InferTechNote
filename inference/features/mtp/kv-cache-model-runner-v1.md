@@ -1,3 +1,10 @@
+---
+title: "KV Cache and Page Table Management — NPUModelRunner"
+type: implementation
+domain: inference
+status: evergreen
+---
+
 # KV Cache and Page Table Management — NPUModelRunner
 
 > 基于 `vllm_ascend/worker/model_runner_v1.py`（继承 upstream `GPUModelRunner`）整理。  

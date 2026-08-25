@@ -1,3 +1,10 @@
+---
+title: "三方 Agent 上架设计说明书"
+type: design
+domain: codeagent
+status: active
+---
+
 # 三方 Agent 上架设计说明书
 
 > 版本：v1.0  

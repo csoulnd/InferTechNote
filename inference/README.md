@@ -1,3 +1,10 @@
+---
+title: "Inference"
+type: moc
+domain: inference
+status: active
+---
+
 # Inference
 
 Model inference engineering notes for **vLLM Ascend** on **Atlas 310P**: platform adaptation, speculative decoding, and multimodal models.

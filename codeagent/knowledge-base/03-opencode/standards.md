@@ -1,3 +1,10 @@
+---
+title: "OpenCode 相关协议标准"
+type: reference
+domain: codeagent
+status: evergreen
+---
+
 # OpenCode 相关协议标准
 
 ## ACP（Agent Client Protocol）

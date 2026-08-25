@@ -1,3 +1,10 @@
+---
+title: "Third-Party Agent Agent OS Requirements"
+type: design
+domain: codeagent
+status: active
+---
+
 # Third-Party Agent Agent OS Requirements
 
 ## 概述

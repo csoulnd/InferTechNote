@@ -1,3 +1,10 @@
+---
+title: "消息队列 TDMQ / CMQ / DMQ"
+type: concept
+domain: codeagent
+status: evergreen
+---
+
 # 消息队列 TDMQ / CMQ / DMQ
 
 > 介绍级文档：建立原理认知与场景映射，深入实践见参考链接。

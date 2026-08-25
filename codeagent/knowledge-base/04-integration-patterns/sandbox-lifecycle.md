@@ -1,3 +1,10 @@
+---
+title: "Agent 容器实例生命周期"
+type: implementation
+domain: codeagent
+status: evergreen
+---
+
 # Agent 容器实例生命周期
 
 ## 六步拉起流程

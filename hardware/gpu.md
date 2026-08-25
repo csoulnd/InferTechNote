@@ -1,3 +1,10 @@
+---
+title: "Why GPU so Fast？"
+type: concept
+domain: hardware
+status: evergreen
+---
+
 # Why GPU so Fast？
 希望通过这篇文章了解一下GPU的发展和和相关的硬件知识，帮助学习NPU的相关知识
 

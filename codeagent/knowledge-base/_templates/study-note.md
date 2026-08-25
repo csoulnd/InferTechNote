@@ -1,3 +1,10 @@
+---
+title: "{标题}"
+type: reference
+domain: codeagent
+status: active
+---
+
 # {标题}
 
 > 自研走读笔记 · 对应专题：02-claude-code / 03-opencode / 04-integration-patterns

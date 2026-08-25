@@ -1,3 +1,10 @@
+---
+title: "Claude Code 接入 Agent OS 要点"
+type: implementation
+domain: codeagent
+status: active
+---
+
 # Claude Code 接入 Agent OS 要点
 
 ## 接入路径

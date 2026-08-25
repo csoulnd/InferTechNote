@@ -1,3 +1,10 @@
+---
+title: "Knowledge Base"
+type: moc
+domain: codeagent
+status: active
+---
+
 # Knowledge Base
 
 Structured curriculum for **Agent OS + third-party Code Agent** integration (Claude Code / OpenCode) and shared infrastructure concepts.

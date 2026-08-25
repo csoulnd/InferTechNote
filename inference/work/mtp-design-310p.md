@@ -1,3 +1,10 @@
+---
+title: "MTP Design on Ascend 310P"
+type: design
+domain: inference
+status: active
+---
+
 # MTP Design on Ascend 310P
 
 > 模型场景：**Qwen3.5 + MTP**（`speculative_config.method = "mtp"` 或 E2E 中 `"qwen3_5_mtp"`）。  

@@ -1,3 +1,10 @@
+---
+title: "Infra"
+type: moc
+domain: repository
+status: active
+---
+
 # Infra
 
 Engineering knowledge base for **model inference on Ascend NPU** and **third-party Code Agent integration** into Agent OS.
@@ -28,3 +35,6 @@ Infra/
 - **Paths and filenames:** English kebab-case (`gateway-ssh-auth-design.md`)
 - **Document titles (H1):** English
 - **Body text:** Chinese or bilingual as authored; prefer clarity over forced translation
+- **Frontmatter:** Keep metadata minimal: `title`, `type`, `domain`, and `status`
+- **Status:** Use `draft` for incomplete notes, `active` for maintained work, and `evergreen` for stable knowledge
+- **Links:** Prefer relative Markdown links so documents remain navigable on GitHub and outside Obsidian

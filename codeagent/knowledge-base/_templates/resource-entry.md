@@ -1,3 +1,10 @@
+---
+title: "Resource Entry Template"
+type: reference
+domain: codeagent
+status: active
+---
+
 ### [资源标题](URL)
 - **type**: standard | course | video | project | analysis
 - **lang**: zh | en

@@ -1,3 +1,10 @@
+---
+title: "Claude Code 视频"
+type: reference
+domain: codeagent
+status: draft
+---
+
 # Claude Code 视频
 
 ## B 站 / YouTube 搜索关键词

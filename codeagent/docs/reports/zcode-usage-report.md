@@ -1,3 +1,10 @@
+---
+title: "ZCode 使用体验报告"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # ZCode 使用体验报告
 
 > 报告日期：2026-05-29  

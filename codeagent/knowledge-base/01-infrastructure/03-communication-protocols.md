@@ -1,3 +1,10 @@
+---
+title: "通信协议栈：HTTP / SSH / ZMQ / ACP / MCP"
+type: concept
+domain: codeagent
+status: evergreen
+---
+
 # 通信协议栈：HTTP / SSH / ZMQ / ACP / MCP
 
 > 介绍级文档：建立原理认知与场景映射，深入实践见参考链接。

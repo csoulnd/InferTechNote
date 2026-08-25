@@ -1,3 +1,10 @@
+---
+title: "容器化构建方案：安全性与性能对比分析"
+type: investigation
+domain: codeagent
+status: active
+---
+
 # 容器化构建方案：安全性与性能对比分析
 
 ## 1. 背景与威胁模型

@@ -1,3 +1,10 @@
+---
+title: "Qwen3-VL：配置摘要与视觉前处理 → LLM Prefill 流程"
+type: investigation
+domain: inference
+status: evergreen
+---
+
 # Qwen3-VL：配置摘要与视觉前处理 → LLM Prefill 流程
 
 本文整理 Hugging Face 仓库中的 `config.json` / `preprocessor_config.json`，并结合 **vLLM**（`qwen3_vl.py`）与 **Transformers**（`Qwen2VLImageProcessor` / `Qwen3VLProcessor`）中的实现，说明从原始图像到 **LLM prefill 序列长度** 的演变。图像默认策略以官方权重中的 `preprocessor_config.json` 为准（`Qwen3-VL-4B-Instruct` 与 `Qwen3-VL-8B-Instruct` 的预处理配置一致）。

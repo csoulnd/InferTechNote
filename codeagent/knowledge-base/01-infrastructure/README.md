@@ -1,3 +1,10 @@
+---
+title: "01 基础设施"
+type: moc
+domain: codeagent
+status: active
+---
+
 # 01 基础设施
 
 > **第二站 · 介绍级**。每篇固定结构：**原理 → 典型应用场景 → 参考链接**。建立全局认知后再读 [02 Claude Code](../02-claude-code/README.md)。

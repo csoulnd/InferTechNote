@@ -1,3 +1,10 @@
+---
+title: "MTP Code Walkthrough Guide"
+type: implementation
+domain: inference
+status: evergreen
+---
+
 # MTP Code Walkthrough Guide
 
 本文档梳理 vLLM Ascend 中 **Multi-Token Prediction (MTP)** 投机解码的主线代码路径，包括走读目录、推荐阅读顺序与关键变量说明。

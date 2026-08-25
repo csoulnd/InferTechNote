@@ -1,3 +1,10 @@
+---
+title: "NPUModelRunner (model_runner_v1.py) Code Walkthrough"
+type: implementation
+domain: inference
+status: evergreen
+---
+
 # NPUModelRunner (model_runner_v1.py) Code Walkthrough
 
 ## 概述
