@@ -1,2 +1,7 @@
 # Local / vendored op tree (not tracked)
 ops-nn-master-index-masked_scatter/
+
+# Obsidian device-local state
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache/
