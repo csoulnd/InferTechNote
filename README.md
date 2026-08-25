@@ -7,34 +7,58 @@ status: active
 
 # Infra
 
-Engineering knowledge base for **model inference on Ascend NPU** and **third-party Code Agent integration** into Agent OS.
+Markdown-first engineering knowledge base organized around Agent and infrastructure work, followed by reusable knowledge distillation.
 
-> **Note:** This repository is being renamed from `InferTechNote` to `Infra`. If the folder is still named `InferTechNote` locally, rename it when no editor or process holds a lock on the directory.
+The repository is the source of truth. Obsidian, GitHub, Codex, RAG, and MCP consumers are clients of the same Markdown content.
 
 ## Structure
 
-```
+```text
 Infra/
-├── inference/          # Model inference — vLLM Ascend, 310P, Qwen3-VL, MTP
-└── codeagent/          # Code Agent — Claude Code, OpenCode, Gateway, Agent OS integration
+├── agent/
+│   ├── designs/          # Agent business designs
+│   ├── investigations/   # Agent investigations
+│   ├── reports/          # Hands-on reports
+│   └── study-notes/      # In-progress learning
+├── infra/                # Inference and infrastructure business work
+├── knowledge/
+│   ├── agent/            # Reusable Agent knowledge
+│   ├── infra/            # Reusable infrastructure knowledge and references
+│   └── foundations/      # Cross-domain foundations such as hardware
+├── templates/            # Business-study and atomic-knowledge templates
+└── .agents/skills/       # Repository-scoped Codex workflows
 ```
 
 | Domain | Entry | Scope |
-|--------|-------|-------|
-| **Inference** | [inference/README.md](inference/README.md) | Ascend 310P adaptation, speculative decoding (MTP), multimodal (Qwen3-VL), CI coverage |
-| **Code Agent** | [codeagent/README.md](codeagent/README.md) | Agent OS design specs, SSH/ACP integration, knowledge base, product insights |
+|---|---|---|
+| **Agent** | [agent/README.md](agent/README.md) | Agent OS, Gateway, SSH/ACP/MCP, sandboxes, products |
+| **Infra** | [infra/README.md](infra/README.md) | vLLM Ascend, 310P, MTP, KV cache, Qwen3-VL |
+| **Knowledge** | [knowledge/README.md](knowledge/README.md) | Distilled Agent, infrastructure, and hardware foundations |
 
-## Quick start
+## Knowledge lifecycle
 
-**Inference engineer** → [inference/work/ci-coverage-matrix-310p.md](inference/work/ci-coverage-matrix-310p.md) for platform matrix, then feature-specific walkthroughs under `inference/features/`.
+```text
+Business question
+  → agent/ or infra/ investigation and design
+  → verified conclusion or completed stage
+  → knowledge-extraction review
+  → create or update atomic knowledge
+  → link work and knowledge in both directions
+```
 
-**Agent OS / Gateway engineer** → [codeagent/knowledge-base/00-architecture-overview.md](codeagent/knowledge-base/00-architecture-overview.md), then [codeagent/docs/design/third-party-agent-agentos-requirements.md](codeagent/docs/design/third-party-agent-agentos-requirements.md).
+- Follow the business thread while learning; do not interrupt discovery to over-classify every fact.
+- Trigger extraction when a design, investigation, bug fix, source walkthrough, or PoC reaches a stable checkpoint.
+- Promote content only when it remains useful outside the original task or is likely to be reused.
+- Keep decision context in `agent/` or `infra/`; keep reusable mechanisms and boundaries in `knowledge/`.
+- Update an existing atomic note before creating a competing note.
+
+Use [business-study.md](templates/business-study.md) for business-driven learning and [atomic-knowledge.md](templates/atomic-knowledge.md) for reusable knowledge. Codex can run the repository skill with `$knowledge-distillation`.
 
 ## Conventions
 
-- **Paths and filenames:** English kebab-case (`gateway-ssh-auth-design.md`)
-- **Document titles (H1):** English
-- **Body text:** Chinese or bilingual as authored; prefer clarity over forced translation
-- **Frontmatter:** Keep metadata minimal: `title`, `type`, `domain`, and `status`
-- **Status:** Use `draft` for incomplete notes, `active` for maintained work, and `evergreen` for stable knowledge
-- **Links:** Prefer relative Markdown links so documents remain navigable on GitHub and outside Obsidian
+- **Paths:** English kebab-case.
+- **Titles:** One clear H1 per document.
+- **Frontmatter:** `title`, `type`, `domain`, and `status` only unless another field is necessary.
+- **Status:** `draft`, `active`, `evergreen`, or `archived`.
+- **Links:** Relative Markdown links; no Obsidian-only dependency for core navigation.
+- **History:** Use `git mv` for structural changes and avoid rewriting technical content during moves.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Knowledge Distillation"
+  short_description: "Turn business learning into reusable atomic knowledge"
+  default_prompt: "Use $knowledge-distillation to review this completed work and extract reusable atomic knowledge."

@@ -1,0 +1,4 @@
+[submodule "knowledge/infra/infratech"]
+	path = knowledge/infra/infratech
+	url = https://github.com/CalvinXKY/InfraTech.git
+	shallow = true
