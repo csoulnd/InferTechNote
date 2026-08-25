@@ -1,40 +1,40 @@
 ---
-title: "{Atomic topic}"
+title: "{Atomic Knowledge Title}"
 type: concept
 domain: "{agent | infra | foundations}"
 status: draft
 ---
 
-# {Atomic topic}
+# {Atomic Knowledge Title}
 
-## Question
+## 核心问题
 
-The single independently searchable question this note answers.
+这篇笔记要回答的、可独立检索的单一问题是什么？
 
-## Short Answer
+## 简要结论
 
-State the reusable conclusion without project-specific history.
+直接给出可复用结论，不展开当前项目的业务历史。
 
-## How It Works
+## 工作原理
 
-Explain the mechanism, components, and data flow.
+说明机制、关键组件、数据流以及它们之间的关系。
 
-## Boundaries
+## 适用边界
 
-State assumptions, version sensitivity, and what this note does not cover.
+说明成立前提、版本敏感性、已知限制以及本文不覆盖的内容。
 
-## Practical Implications
+## 实践意义
 
-- {Implication}
+- {实践启示}
 
-## Applied In
+## 应用记录
 
-- [Business context](../{path-to-work-document}.md)
+- [业务背景](../{path-to-business-document}.md)
 
-## Related
+## 相关知识
 
-- {Related note}
+- {相关笔记}
 
-## References
+## 参考资料
 
-- {Reference}
+- {参考资料}

@@ -1,11 +1,11 @@
 ---
-title: "{标题}"
-type: reference
+title: "{Study Note Title}"
+type: work
 domain: agent
-status: active
+status: draft
 ---
 
-# {标题}
+# {Study Note Title}
 
 > 自研走读笔记 · 对应专题：02-claude-code / 03-opencode / 04-integration-patterns
 
@@ -21,7 +21,7 @@ status: active
 
 - [ ] 
 
-## Knowledge Extraction
+## 知识沉淀
 
 - [ ] 哪些结论脱离当前业务后仍然成立？
 - [ ] 是否应先更新已有原子知识，而不是新建近似文档？

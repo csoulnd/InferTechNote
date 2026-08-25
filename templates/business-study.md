@@ -1,39 +1,39 @@
 ---
-title: "{Business topic}"
+title: "{Business Study Title}"
 type: work
 domain: "{agent | infra}"
 status: draft
 ---
 
-# {Business topic}
+# {Business Study Title}
 
-## Background
+## 业务背景
 
-Why this question matters and what business outcome is expected.
+说明为什么要研究这个问题，以及预期解决什么业务问题。
 
-## Constraints
+## 约束条件
 
-- {Constraint}
+- {约束条件}
 
-## Questions
+## 待解决问题
 
-- [ ] {Question}
+- [ ] {问题}
 
-## Investigation
+## 调研与实践
 
-Record findings along the business thread. Do not interrupt discovery to split every concept immediately.
+沿业务主线记录调查、实验和源码走读结果；探索阶段不必立即拆分所有基础概念。
 
-## Decision or Outcome
+## 决策或结果
 
-What was decided or verified, including scope and version boundaries.
+记录最终决策或已验证结论，并注明适用范围与版本边界。
 
-## Knowledge Extraction
+## 知识沉淀
 
-- [ ] Which conclusions remain valid outside this task?
-- [ ] Can an existing atomic note be updated instead of creating a new one?
-- [ ] Has each extracted note been reduced to one independently searchable question?
-- [ ] Are work and knowledge linked in both directions?
+- [ ] 哪些结论脱离当前任务后仍然成立？
+- [ ] 是否可以更新已有原子知识，而不是创建近似笔记？
+- [ ] 每篇沉淀笔记是否只回答一个可独立检索的问题？
+- [ ] 业务文档与原子知识是否已建立双向链接？
 
-## References
+## 参考资料
 
-- {Reference}
+- {参考资料}

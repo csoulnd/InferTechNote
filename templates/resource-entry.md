@@ -2,12 +2,12 @@
 title: "Resource Entry Template"
 type: reference
 domain: agent
-status: active
+status: draft
 ---
 
-### [资源标题](URL)
+### [Resource Title](URL)
 - **type**: standard | course | video | project | analysis
 - **lang**: zh | en
 - **priority**: P0 | P1 | P2
 - **status**: todo | in_progress | done
-- **notes**: 一句话说明
+- **notes**: 用中文概括资源价值及适用场景

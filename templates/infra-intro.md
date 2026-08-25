@@ -1,11 +1,11 @@
 ---
-title: "{标题}"
+title: "{Infrastructure Topic Title}"
 type: reference
 domain: agent
-status: active
+status: draft
 ---
 
-# {标题}
+# {Infrastructure Topic Title}
 
 > 介绍级文档：建立原理认知与场景映射，深入实践见参考链接。
 
