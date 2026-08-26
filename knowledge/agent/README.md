@@ -12,10 +12,11 @@ Reusable knowledge that should remain meaningful after an individual project, de
 ## Recommended path
 
 1. [Architecture overview](architecture/overview.md)
-2. [Infrastructure concepts](concepts/infrastructure/README.md)
-3. [Claude Code](products/claude-code/README.md) or [OpenCode](products/opencode/README.md)
-4. [Integration patterns](integration/README.md)
-5. [Other Code Agents](products/comparisons/codex-gemini-zcode.md)
+2. Core extension mechanisms: [Hook](concepts/hook-mechanism.md) and [Cordis](concepts/cordis-plugin-runtime.md)
+3. [Infrastructure concepts](concepts/infrastructure/README.md)
+4. [Claude Code](products/claude-code/README.md) or [OpenCode](products/opencode/README.md)
+5. [Integration patterns](integration/README.md)
+6. [Other Code Agents](products/comparisons/codex-gemini-zcode.md)
 
 ## Atomicity rule
 

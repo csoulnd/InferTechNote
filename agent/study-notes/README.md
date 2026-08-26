@@ -18,6 +18,8 @@ status: active
 | [cc-mcp-hooks.md](cc-mcp-hooks.md) | draft | CC MCP / Hooks |
 | [oc-server-architecture.md](oc-server-architecture.md) | draft | OpenCode Hono Server |
 | [oc-acp-integration.md](oc-acp-integration.md) | draft | OpenCode ACP |
+| [opencode-plugin.md](opencode-plugin.md) | draft | OpenCode 插件系统 |
+| [dsh-plugin.md](dsh-plugin.md) | draft | DeepSeek Harness / Cordis 插件系统 |
 | [integration-ssh-passthrough.md](integration-ssh-passthrough.md) | draft | SSH 双路径 |
 | [integration-comparison.md](integration-comparison.md) | draft | CC/OC/Codex 矩阵 |
 
