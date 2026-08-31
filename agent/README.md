@@ -14,6 +14,7 @@ Business work for Agent systems, including third-party Code Agent integration, A
 ```text
 agent/
 ├── designs/          # Requirements, integration, image-factory, and deployment designs
+├── dev-guides/       # Development, build, deployment, and troubleshooting guides
 ├── investigations/   # Product, ecosystem, architecture, and security investigations
 ├── reports/          # Hands-on reports
 ├── study-notes/      # In-progress business-led learning
@@ -28,6 +29,7 @@ agent/
 | Implement third-party Agent requirements | [Agent OS requirements](designs/third-party-agent-agentos-requirements.md) |
 | Review ecosystem findings | [Investigations](investigations/) |
 | Continue an unfinished study | [Study notes](study-notes/README.md) |
+| Develop and deploy AgentOS | [AgentOS development and deployment guide](dev-guides/agentos-development-deployment.md) |
 
 ## Work-to-knowledge examples
 
