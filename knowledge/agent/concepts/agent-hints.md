@@ -94,6 +94,65 @@ capability、进度、handoff 和依赖 Hint 可减少 orchestrator 探测与重
 
 NVIDIA 在 2026 年将 Agent Hints 明确命名为 Dynamo 的 harness–orchestrator interface，把原本分散的优先级、输出长度估计和 KV Cache 预热信号收敛为 `nvext.agent_hints`。它代表基础设施侧的系统化实现，但 Hint/heuristic/advice 作为通用思想早已存在于搜索、交互式学习和 Agent guidance 中。
 
+## 对端到端体验的贡献
+
+| 贡献 | Hint 如何发挥作用 | 代表模式 |
+|---|---|---|
+| 更快收敛 | 减少计划、证据、工具和动作分支 | subgoal、tool description、错误定位、语义 UI |
+| 更少上下文 | 只在决策点加载相关技能、工具和记忆 | JIT skills、tool search、memory retrieval |
+| 更低执行延迟 | 暴露负载、priority、locality 和可预测下一轮 | OSL、KV reuse、speculative prefill |
+| 更好感知速度 | 尽早展示阶段、计划和进度 | preamble、progress/status hint |
+| 更强追溯 | 记录 Hint 来源、注入点、采纳与结果 | `hint_id → turn/tool call → outcome` |
+| 更好维测 | 在 lifecycle event 采集并回灌局部状态 | before/after model/tool、compact、stop hooks |
+| 更高可靠性 | 将失败、验证和风险转成下一步指导 | test failure feedback、MCP risk annotations |
+| 更顺畅协作 | 提示能力、负载、依赖、handoff 和 blocker | multi-agent routing / continuation hint |
+
+“加速”至少要区分决策收敛、上下文处理、执行调度和用户感知四层。只降低模型 latency 不是唯一目标；减少一次错误工具调用或避免压缩后重新扫描仓库，往往对端到端时间更有价值。
+
+### 值得复用的加速模式
+
+1. **按需技能与工具发现**：先用短 description/capability Hint 检索，再加载完整技能或工具，减少 token 和工具混淆。
+2. **语义环境压缩**：用 Accessibility Tree、OCR/grounding 和交互状态代替原始 DOM/图像穷举。
+3. **局部验证即时回灌**：编辑后立刻运行最窄相关检查，只返回失败摘要和位置，缩短修复闭环。
+4. **压缩前 continuation Hint**：保存目标、决定、活动文件、blocker、验证状态和下一步，降低长会话恢复成本。
+5. **KV Cache 预热**：下一轮前缀可预测时 speculative prefill，降低实际请求 TTFT。
+6. **OSL 与优先级调度**：用校准后的输出长度、任务等级帮助 Router、engine 和 cache 做资源决策。
+
+## Plugin 事件、Hook 与 Hint 的关系
+
+Plugin 开放事件不是天然的 Hint。四者分别回答不同问题：
+
+- **Event**：何时发生了什么，是 observation。
+- **Hook/Plugin**：在 Agent 生命周期哪里扩展，是机制。
+- **Hint**：向哪个决策提供什么可覆盖的辅助信号，是决策输入。
+- **Policy/Guardrail**：什么必须允许或禁止，是强制控制。
+
+```text
+event → plugin/hook → 记录日志                = telemetry，不是 Hint
+event → plugin/hook → 注入 context/候选分数   = Hint
+event → plugin/hook → 返回 retry reason       = feedback Hint
+event → plugin/hook → 强制 allow/deny         = Policy
+event → plugin/hook → 改写参数后直接执行       = transformation
+```
+
+同一个 hook 可以同时包含 Policy 和 Hint：例如 `PreToolUse` 强制拒绝越权命令属于 Policy，把拒绝原因返回给 Agent 以便选择替代方案属于反馈型 Hint。
+
+## 主流 Agent 软件支持概览
+
+截至 2026-09-02，主流 Coding Agent 普遍通过 rules/context、skills、MCP/tools、hooks/events、memory/compaction 和 logging 支持 Hint 的各个环节，但尚无跨产品统一 Hint schema。
+
+| 产品 | 主要 Hint 入口 | 生命周期/维测能力 | 支持判断 |
+|---|---|---|---|
+| Codex | `AGENTS.md`、rules、skills、plugins、MCP、memory | Hooks 覆盖 tool、prompt、compact、subagent、stop；另有 Record & Replay、SDK/App Server | 高 |
+| Claude Code | `CLAUDE.md`、skills、plugins、MCP | session、prompt、tool、permission、compact、subagent、stop hooks | 高 |
+| Gemini CLI | `GEMINI.md`、skills、extensions、MCP | Before/After Agent、Model、Tool、ToolSelection、Compress，带 session/transcript 元数据 | 很高 |
+| Cursor | rules、skills、plugins、MCP、subagents | Hooks 带 conversation/generation/model/version/duration/transcript | 很高 |
+| OpenCode | rules、plugins、custom tools、MCP | 广泛 event bus、tool hook、compaction hook、structured logging | 高 |
+| GitHub Copilot | instructions、skills、agents、MCP | 确定性 lifecycle hooks，可运行检查和审批/拒绝工具 | 高，具体能力依 surface |
+| NVIDIA Dynamo | `nvext.agent_hints` | serving trace/metrics；不负责上层语义 Hint | 基础设施专精 |
+
+共同缺口在于 provenance、confidence、scope、TTL、exposure、accept/override 和 outcome 尚未形成统一端到端契约。
+
 ## 生命周期与设计原则
 
 ```mermaid
@@ -164,4 +223,11 @@ flowchart LR
 - [MCP Tool Annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
 - [MCP Tool Annotations as Risk Vocabulary](https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/)
 - [OpenAI Function Calling](https://openai.com/index/function-calling-and-other-api-updates/)
+- [OpenAI Codex Hooks](https://developers.openai.com/codex/hooks)
+- [OpenAI Plugins](https://developers.openai.com/plugins)
+- [Claude Code Hooks](https://code.claude.com/docs/en/hooks-guide)
+- [Gemini CLI Hooks](https://geminicli.com/docs/hooks/reference/)
+- [Cursor Hooks](https://prod.cursor.com/docs/hooks)
+- [OpenCode Plugins](https://dev.opencode.ai/docs/plugins/)
+- [GitHub Copilot Customization](https://docs.github.com/en/copilot/reference/customization-cheat-sheet)
 - [NVIDIA Dynamo Agent Hints](https://docs.nvidia.com/dynamo/agents/agent-hints)

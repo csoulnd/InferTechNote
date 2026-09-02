@@ -288,7 +288,136 @@ flowchart LR
 7. **观测**：衡量任务结果、成本、安全事件及 Hint 是否真正影响决策。
 8. **更新**：校准置信度、缩短 TTL、修订内容或移除负收益 Hint。
 
-### 七、典型应用场景
+### 七、Hint 对端到端体验的贡献
+
+Hint 的价值不应只用“模型回答是否更准”衡量。它可以同时改善用户体验、Agent 决策、Runtime 执行和工程运营。
+
+#### 1. 加速：四种不同层次
+
+| 加速层次 | 机制 | 端到端收益 | 代表例子 |
+|---|---|---|---|
+| 决策收敛加速 | 缩小计划、工具、动作和证据候选 | 减少错误分支、工具调用与重试 | tool description、subgoal、相似修复、AX semantic role |
+| 上下文加速 | 只在需要时加载相关知识和工具 | 减少输入 token，提高 prompt cache 稳定性，降低干扰 | Agent Skills、tool search、JIT memory retrieval |
+| 执行加速 | 向 runtime 暴露负载、优先级、locality 和可预测性 | 改善 TTFT、吞吐、KV Cache 命中和资源调度 | Dynamo `priority`、`osl`、`speculative_prefill` |
+| 感知加速 | 尽早展示阶段、计划或进度 | 降低用户感知等待时间和重复询问 | preamble、progress hint、工具执行状态 |
+
+OpenAI 模型指南建议减少重复指令、只暴露相关工具；其公开内部 Coding Agent eval 示例中，精简 system prompt 带来约 10–15% 的分数提升，同时减少 41–66% token 和 33–67% 成本。这个结果不能泛化为所有 Hint，但说明 **Hint selection 本身和 Hint 内容同样重要**：相关的少量 Hint 可能优于全量静态上下文。
+
+#### 2. 追溯：解释“Agent 为什么这样做”
+
+只有最终 transcript 往往只能看到“做了什么”，不能区分哪些信号影响了决策。可追溯 Hint 需要记录：
+
+- `hint_id`、类型、生产者、来源证据和版本。
+- 注入的 session / turn / tool call / decision point。
+- 消费者是否收到、是否采纳、是否被覆盖及原因。
+- 采纳前后的候选排序或动作差异。
+- 最终结果、成本和安全影响。
+
+这能回答四类生产问题：错误是模型能力不足、Hint 错误、Hint 没有送达，还是正确 Hint 被其他信息覆盖？没有这条链路，Hint 优化只能依赖猜测。
+
+#### 3. 维测：把 Agent Loop 变成可观测系统
+
+生命周期事件为 Hint 的生成和测量提供天然采样点：
+
+| 事件位置 | 可观测内容 | 可生成的 Hint / 用途 |
+|---|---|---|
+| Session/turn start | 任务、工作区、历史状态 | 动态项目上下文、恢复点、用户偏好 |
+| Before model | prompt、tool set、模型参数 | 上下文去重、工具过滤、模型路由建议 |
+| Before tool selection/use | 候选工具、参数、权限状态 | 工具优先级、参数修复、风险提醒 |
+| After tool/model | 结果、错误、token、延迟 | 重试建议、失败归因、成本异常提示 |
+| Pre/Post compact | 被压缩状态和摘要 | 必须保留的决策、文件、blocker 和下一步 |
+| Stop/session end | 完成状态、产物和验证 | 质量 gate、经验提取、跨会话 handoff |
+
+Gemini CLI hook 的通用输入包含 `session_id`、`transcript_path`、`cwd`、事件名和时间戳；Cursor hooks 包含 conversation/generation ID、模型、版本、workspace 和 transcript path，并可在 shell 执行后观察 duration。这类关联字段使事件能够同时服务 trace、metric 和 Hint 效果归因。
+
+#### 4. 可靠性、安全与可维护性
+
+- 在动作前提示幂等性、破坏性和开放世界风险，可改善工具选择和审批说明。
+- 在动作后把测试失败、诊断或 verifier 结果变成局部反馈 Hint，可减少整轮重做。
+- 动态 Hint 可在不修改模型权重或 Agent 核心代码时更新领域知识和项目状态。
+- compaction Hint 保留当前任务、关键决定、活动文件和 blocker，可减少长会话“失忆”。
+- capability/load Hint 可改善多 Agent 分派和 handoff，降低重复劳动。
+
+但安全边界不能只靠 Hint：例如 hook 返回 deny、policy engine 拒绝、sandbox 阻断属于确定性控制；它们可以同时提供解释性 Hint，但最终安全性来自强制执行。
+
+### 八、基于 Hint 加速的优秀模式
+
+#### 模式 A：按需技能与工具发现
+
+静态把全部规则、技能和工具描述塞进 context 会增加 token、降低 cache 稳定性并制造工具混淆。更好的做法是：先用轻量 description/capability Hint 检索候选，再只加载当前任务相关技能和工具。Gemini CLI 官方将 Agent Skills 描述为“仅在需要时激活”，明确用于避免主上下文膨胀；OpenAI 也建议只暴露相关工具并使用 tool search。
+
+#### 模式 B：语义环境代替原始环境穷举
+
+Browser Agent 不必把完整 DOM、CSS 和脚本都交给模型。Accessibility Tree 的 role、name、state，加上当前可交互元素和视觉 grounding，可把数千节点压缩成小得多的语义动作空间。这里 semantic role 是感知 Hint；域名限制、付款确认仍应是强约束。
+
+#### 模式 C：局部验证结果即时回灌
+
+在 `PostToolUse` / `AfterTool` 对刚修改的文件运行最窄相关测试或静态检查，只把失败摘要和修复位置反馈给 Agent。相比等到任务末尾运行全套测试，它能更早发现错误，保留更强的因果邻近性，并减少返工。Claude Code、Codex、Gemini CLI、Cursor、OpenCode 和 Copilot 的 hook/plugin 机制都能承载这种模式。
+
+#### 模式 D：长会话压缩前保存 continuation Hint
+
+在 `PreCompact` 记录目标、已完成步骤、关键决定、修改文件、未解决 blocker、验证状态和下一步，再把结构化摘要注入压缩过程。OpenCode 官方插件示例直接支持向 compaction context 注入这些状态。它减少压缩后的重新扫描和错误重复。
+
+#### 模式 E：可预测下一轮的 KV Cache 预热
+
+Dynamo `speculative_prefill` 在本轮结束后构造可预测的下一轮前缀，并用单 token 请求预填 KV Cache；真实下一轮共享该前缀时可降低 TTFT。该优化适合稳定的“LLM → tool → LLM”循环，不适合下一轮上下文不可预测或额外预填成本高于命中收益的场景。
+
+#### 模式 F：预计输出长度驱动负载均衡
+
+Harness 可按任务或工具类型学习输出长度，将 `osl` Hint 传给 Router 估计 worker 占用和输出 block。关键是持续对比 predicted/actual tokens 并校准；静态拍脑袋的 OSL 可能比缺省策略更差。
+
+#### 模式 G：优先级贯穿队列、引擎和 Cache
+
+用户交互请求和后台总结任务可携带不同 priority。Dynamo 能将统一优先级用于 Router queue，并向支持的 backend 转换语义；SGLang 还可据此进行 priority-aware radix cache eviction。优先级只在发生排队或显存压力时有可观察收益，并须防止所有调用方自报最高级造成饥饿。
+
+### 九、主流 Agent 软件的 Hint 支持程度
+
+截至 2026-09-02，主流产品通常不提供一个统一的 `Hint` 对象，而是通过多种扩展能力间接支持。下表中的“高”表示覆盖多个 Hint 生命周期环节，不表示不同产品语义兼容。
+
+| 产品 | 静态/按需语义 Hint | 工具/能力 Hint | 生命周期事件与反馈回灌 | 追溯/维测基础 | 综合判断 |
+|---|---|---|---|---|---|
+| Codex | `AGENTS.md`、rules、skills、memory | Plugins、MCP、apps | Hooks 可运行脚本或 MCP tools，覆盖 tool、compact、prompt、subagent、stop 等节点 | transcript、hooks、Record & Replay、SDK/App Server 事件 | 高；能力完整，但通用 Hint schema 仍分散 |
+| Claude Code | `CLAUDE.md`、skills、commands | MCP、plugins、tool description | 丰富 hooks：session、prompt、tool、permission、compact、subagent、stop | session/cwd/tool JSON、transcript 与 hook 日志 | 高；确定性 hook 和反馈回灌成熟 |
+| Gemini CLI | `GEMINI.md`、Agent Skills、extensions | MCP、custom tools、policy | Before/After Agent、Model、Tool、ToolSelection、Compress、Notification | `session_id`、timestamp、transcript、token metadata | 很高；事件粒度最细之一，明确支持动态过滤/注入 |
+| Cursor | rules、skills、subagents、commands | MCP、plugins | Hooks 可观察、修改或阻断 agent loop 与 shell/MCP 操作 | conversation/generation ID、model/version、duration、transcript | 很高；IDE、plugin 和 observability 结合紧密 |
+| OpenCode | `AGENTS.md`、rules、commands | custom tools、MCP、plugins | 广泛 event bus、tool before hook、compaction hook | session/message/file/LSP events、structured logging | 高；开放灵活，但部分 hook 带 experimental 语义 |
+| GitHub Copilot | custom instructions、prompt files、skills、custom agents | MCP、subagents | Hooks 在固定生命周期确定执行，可审批/拒绝工具并运行检查 | GitHub/IDE/CLI 各 surface 的日志和运行记录 | 高；企业工作流覆盖广，能力随使用 surface 有差异 |
+| NVIDIA Dynamo | 不负责模型语义 Hint | 不负责工具层 | `agent_hints` 进入 Router/backend | session/trace 与 serving metrics | 专精；基础设施 Hint 强，Agent 上层 Hint 不在其职责内 |
+
+业界共同缺口不是“完全不支持 Hint”，而是：
+
+1. 缺少跨产品统一的 provenance、confidence、scope、TTL 和 consumer schema。
+2. 很少原生记录 Hint exposure、accept/override 和 outcome 的因果链。
+3. rules、skills、memory、hook output、tool annotations 和 serving metadata 各自演进，难以端到端关联。
+4. Plugin 生态的事件输入可信度、权限和失败语义并不统一。
+
+### 十、Plugin 开放事件是不是 Hint？
+
+**事件本身通常不是 Hint，而是 Hint 的原料、触发点或传输通道。**
+
+```text
+Event（发生了什么）
+  └─ Hook/Plugin（在什么时机处理）
+       ├─ Log/Metric（只观察：不是 Hint）
+       ├─ Context/Ranking（影响后续决策：是 Hint）
+       ├─ Retry reason（把反馈回灌：反馈型 Hint）
+       ├─ Argument rewrite（动作变换，不一定是 Hint）
+       └─ Allow/Deny（强制控制：Policy，不是 Hint）
+```
+
+| Plugin 行为 | 正确归类 | 原因 |
+|---|---|---|
+| 订阅 `tool.completed` 并写日志 | Event / telemetry | 没有进入任何后续决策 |
+| 根据失败事件生成“检查参数 X”并注入下一轮 | Feedback Hint | 将事实提炼为可覆盖的行动建议 |
+| `SessionStart` 动态注入当前分支和相关规范 | Context Hint | 为本 session 的推理提供局部指导 |
+| `BeforeToolSelection` 给工具打分或过滤建议 | Tool-routing Hint | 改变候选排序；若直接移除则可能成为约束 |
+| `PreToolUse` 检测到越权并强制 deny | Policy / guardrail | 不允许 Agent 覆盖，不属于 Hint |
+| deny 后把原因返回给模型供其换方案 | Policy + Feedback Hint | deny 是强制控制，reason 是后续决策线索 |
+| 修改 tool args 后直接执行 | Transformation / middleware | Agent 未进行二次选择时，不是 Hint |
+
+所以 Plugin 事件体系与 Hint 体系关系密切，但不能画等号。Event 回答“何时、发生了什么”，Hook 回答“在哪里扩展”，Hint 回答“向哪个决策提供什么辅助信号”，Policy 回答“什么必须被执行”。
+
+### 十一、典型应用场景
 
 | 场景 | 合适的 Hint | 不应伪装成 Hint 的内容 | 主要指标 |
 |---|---|---|---|
@@ -302,7 +431,7 @@ flowchart LR
 | 推理服务优化 | priority、OSL、cache reuse、retry safety | 配额、租户隔离、硬 admission | TTFT、吞吐、cache hit、公平性 |
 | 自我改进 | critique、失败归因、反思、成功经验 | 离线评测和发布门槛 | 后续增益、迁移性、错误固化率 |
 
-### 八、冲突、信任与安全
+### 十二、冲突、信任与安全
 
 推荐的基本顺序：
 
@@ -333,7 +462,7 @@ Hint 冲突不应采用“最后写入者赢”。可按来源信任、适用范
 - counterfactual evaluation：与无 Hint 或替代 Hint 基线比较。
 - graceful abstention：低置信度时允许不提示，并请求澄清或重新观察。
 
-### 九、评估框架
+### 十三、评估框架
 
 #### 1. 信号质量
 
@@ -358,7 +487,7 @@ Hint 冲突不应采用“最后写入者赢”。可按来源信任、适用范
 
 最小实验包含 `no-hint`、`random/irrelevant hint`、`candidate hint` 三组，并固定模型、工具、任务和预算。候选 Hint 相对两种对照都稳定增益，才能说明其内容而非额外 token 或注意力提示产生作用。
 
-### 十、代表案例在分类框架中的位置
+### 十四、代表案例在分类框架中的位置
 
 | 案例 | Hint 来源 → 消费者 | 分类 | 关键启示 |
 |---|---|---|---|
@@ -403,6 +532,14 @@ Dynamo 案例的独特贡献是把 Agent 上层已知、推理层无法可靠猜
 - [MCP Blog: Tool Annotations as Risk Vocabulary](https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/)
 - [OpenAI: Function Calling and Other API Updates](https://openai.com/index/function-calling-and-other-api-updates/)
 - [W3C: Core Accessibility API Mappings](https://www.w3.org/TR/core-aam-1.2/)
+- [OpenAI Codex: Hooks](https://developers.openai.com/codex/hooks)
+- [OpenAI: Plugins](https://developers.openai.com/plugins)
+- [OpenAI Model Guidance: lean prompts and tool selection](https://developers.openai.com/api/docs/guides/latest-model)
+- [Claude Code: Hooks](https://code.claude.com/docs/en/hooks-guide)
+- [Gemini CLI: Hooks Reference](https://geminicli.com/docs/hooks/reference/)
+- [Cursor: Hooks](https://prod.cursor.com/docs/hooks)
+- [OpenCode: Plugins](https://dev.opencode.ai/docs/plugins/)
+- [GitHub Copilot: Customization Cheat Sheet](https://docs.github.com/en/copilot/reference/customization-cheat-sheet)
 - [NVIDIA Dynamo: Agent Hints](https://docs.nvidia.com/dynamo/agents/agent-hints)
 - [NVIDIA Dynamo: Priority Scheduling](https://docs.nvidia.com/dynamo/agents/priority-scheduling)
 - [NVIDIA Dynamo: Full-Stack Optimizations for Agentic Inference](https://docs.nvidia.com/dynamo/dev/digest/agentic-inference)
