@@ -12,7 +12,7 @@ Reusable knowledge that should remain meaningful after an individual project, de
 ## Recommended path
 
 1. [Architecture overview](architecture/overview.md)
-2. Core extension mechanisms: [Hook](concepts/hook-mechanism.md) and [Cordis](concepts/cordis-plugin-runtime.md)
+2. Core mechanisms: [Agent Hint](concepts/agent-hints.md), [Hook](concepts/hook-mechanism.md), and [Cordis](concepts/cordis-plugin-runtime.md)
 3. [Infrastructure concepts](concepts/infrastructure/README.md)
 4. [Claude Code](products/claude-code/README.md) or [OpenCode](products/opencode/README.md)
 5. [Integration patterns](integration/README.md)
