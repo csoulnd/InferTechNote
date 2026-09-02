@@ -38,5 +38,6 @@ agent/
 | [Agent OS requirements](designs/third-party-agent-agentos-requirements.md) | [Architecture overview](../knowledge/agent/architecture/overview.md), [SSH channel](../knowledge/agent/integration/ssh-channel.md), [sandbox lifecycle](../knowledge/agent/integration/sandbox-lifecycle.md) |
 | [Containerized build](designs/containerized-build.md) | [Sandbox / OCI / Docker](../knowledge/agent/concepts/infrastructure/01-sandbox-oci-docker.md) |
 | [ZCode investigation](investigations/zcode-insight.md) | [Code Agent comparison](../knowledge/agent/products/comparisons/codex-gemini-zcode.md) |
+| [Dynamo Agent Hints investigation](investigations/nvidia-dynamo-agent-hints.md) | [Agent Hints serving contract](../knowledge/agent/integration/agent-hints-serving-contract.md) |
 
 Inference services used by Agent containers are documented under [Infra](../infra/README.md).
