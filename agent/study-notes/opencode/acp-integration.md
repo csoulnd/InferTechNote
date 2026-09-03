@@ -25,7 +25,7 @@ status: draft
 
 ## 参考
 
-- [acp-mcp-bridge.md](../../knowledge/agent/integration/acp-mcp-bridge.md)
+- [acp-mcp-bridge.md](../../../knowledge/agent/integration/acp-mcp-bridge.md)
 
 ## Knowledge Extraction
 

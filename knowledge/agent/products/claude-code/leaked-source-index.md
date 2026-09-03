@@ -17,14 +17,14 @@ status: active
 | 章节 | 路径 | 重点 | 对应 notes |
 |------|------|------|------------|
 | 00 | Entry & Startup | 4 阶段启动、import 并行 | — |
-| 01 | Agent Loop | query.ts TAOR、AsyncGenerator | [cc-agent-loop.md](../../../../agent/study-notes/cc-agent-loop.md) |
+| 01 | Agent Loop | query.ts TAOR、AsyncGenerator | [agent-loop.md](../../../../agent/study-notes/claude-code/agent-loop.md) |
 | 02 | System Prompt | 静/动态区、cache hit | — |
 | 03 | Tool System | 40+ tools、BashTool | cc-agent-loop |
 | 04 | Commands | 80+ slash commands | — |
 | 05 | Context Management | compaction 流水线 | — |
-| 06 | Permission & Security | 17K LOC、deny-first | [cc-permission-model.md](../../../../agent/study-notes/cc-permission-model.md) |
+| 06 | Permission & Security | 17K LOC、deny-first | [permission-model.md](../../../../agent/study-notes/claude-code/permission-model.md) |
 | 07 | Multi-Agent | fork/coordinator | — |
-| 08 | MCP & Services | 8 transports | [cc-mcp-hooks.md](../../../../agent/study-notes/cc-mcp-hooks.md) |
+| 08 | MCP & Services | 8 transports | [mcp-hooks.md](../../../../agent/study-notes/claude-code/mcp-hooks.md) |
 
 ## 综合综述
 

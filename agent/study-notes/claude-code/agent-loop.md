@@ -1,11 +1,11 @@
 ---
-title: "CC Permission 模型"
+title: "CC Agent Loop（TAOR）"
 type: work
 domain: agent
 status: draft
 ---
 
-# CC Permission 模型
+# CC Agent Loop（TAOR）
 
 > 自研走读笔记 · 对应专题：02-claude-code
 
@@ -13,20 +13,19 @@ status: draft
 
 > 状态：尚未开始走读，以下内容为研究提纲。
 
-- [ ] 阅读 Ch.06 并梳理 deny-first 权限模型
+- [ ] 阅读 decode-claude-code Ch.01 并梳理 TAOR 循环
 
 ## 与 Agent OS 接入的关系
 
-- [ ] 对比 deny-first 与 jiuwenbox policy
+- [ ] 验证 headless `--print` 与 Gateway asyncssh exec 的对应关系
 
 ## 遗留问题
 
-- [ ] 归纳默认拒绝、用户授权和审计要求
+- [ ] 绘制 Agent Loop 时序图
 
 ## 参考
 
-- [leaked-source-index.md](../../knowledge/agent/products/claude-code/leaked-source-index.md)
-- jiuwenbox policy YAML
+- [leaked-source-index.md](../../../knowledge/agent/products/claude-code/leaked-source-index.md)
 
 ## Knowledge Extraction
 

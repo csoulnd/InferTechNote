@@ -1,11 +1,11 @@
 ---
-title: "CC Agent Loop（TAOR）"
+title: "CC MCP / Hooks"
 type: work
 domain: agent
 status: draft
 ---
 
-# CC Agent Loop（TAOR）
+# CC MCP / Hooks
 
 > 自研走读笔记 · 对应专题：02-claude-code
 
@@ -13,19 +13,19 @@ status: draft
 
 > 状态：尚未开始走读，以下内容为研究提纲。
 
-- [ ] 阅读 decode-claude-code Ch.01 并梳理 TAOR 循环
+- [ ] 阅读 Ch.08 和 Hooks 官方文档
 
 ## 与 Agent OS 接入的关系
 
-- [ ] 验证 headless `--print` 与 Gateway asyncssh exec 的对应关系
+- [ ] 对照容器 MCP 预装方案与 Gateway Hook
 
 ## 遗留问题
 
-- [ ] 绘制 Agent Loop 时序图
+- [ ] 明确 Hook 的执行边界和安全策略
 
 ## 参考
 
-- [leaked-source-index.md](../../knowledge/agent/products/claude-code/leaked-source-index.md)
+- [official-usage.md](../../../knowledge/agent/products/claude-code/official-usage.md)
 
 ## Knowledge Extraction
 

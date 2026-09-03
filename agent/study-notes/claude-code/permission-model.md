@@ -1,32 +1,32 @@
 ---
-title: "SSH 透传 vs CLI Exec"
+title: "CC Permission 模型"
 type: work
 domain: agent
 status: draft
 ---
 
-# SSH 透传 vs CLI Exec
+# CC Permission 模型
 
-> 自研走读笔记 · 对应专题：04-integration-patterns
+> 自研走读笔记 · 对应专题：02-claude-code
 
 ## 核心结论
 
 > 状态：尚未开始走读，以下内容为研究提纲。
 
-- [ ] 走读 Gateway SSH 实现
+- [ ] 阅读 Ch.06 并梳理 deny-first 权限模型
 
 ## 与 Agent OS 接入的关系
 
-- [ ] 明确 MessageHandler 双队列与字节流透传的分界
+- [ ] 对比 deny-first 与 jiuwenbox policy
 
 ## 遗留问题
 
-- [ ] 记录 TUI、CLI exec 和会话恢复的差异
+- [ ] 归纳默认拒绝、用户授权和审计要求
 
 ## 参考
 
-- [ssh-channel.md](../../knowledge/agent/integration/ssh-channel.md)
-- [00-architecture-overview.md](../../knowledge/agent/architecture/overview.md)
+- [leaked-source-index.md](../../../knowledge/agent/products/claude-code/leaked-source-index.md)
+- jiuwenbox policy YAML
 
 ## Knowledge Extraction
 

@@ -25,8 +25,8 @@ status: draft
 
 ## 参考
 
-- [05-other-codeagents](../../knowledge/agent/products/comparisons/codex-gemini-zcode.md)
-- [integration-notes.md](../../knowledge/agent/products/claude-code/integration-notes.md)
+- [05-other-codeagents](../../../knowledge/agent/products/comparisons/codex-gemini-zcode.md)
+- [integration-notes.md](../../../knowledge/agent/products/claude-code/integration-notes.md)
 
 ## Knowledge Extraction
 

@@ -12,7 +12,7 @@ updated: 2026-08-25
 
 ## 核心结论
 
-- DSH 不是“Agent 加少量 [Hook](../../knowledge/agent/concepts/hook-mechanism.md)”的插件架构，而是建立在 [Cordis](../../knowledge/agent/concepts/cordis-plugin-runtime.md) 上的插件化 Agent Runtime：工具、LLM 适配器、文件访问、会话与 Agent Loop 都可由插件提供或替换。
+- DSH 不是“Agent 加少量 [Hook](../../../knowledge/agent/concepts/hook-mechanism.md)”的插件架构，而是建立在 [Cordis](../../../knowledge/agent/concepts/cordis-plugin-runtime.md) 上的插件化 Agent Runtime：工具、LLM 适配器、文件访问、会话与 Agent Loop 都可由插件提供或替换。
 - Cordis 的核心抽象是 `Context`、Plugin、Service、Event、Effect/Fiber 与依赖注入。插件间通过 `ctx` 上的服务契约协作，而不是直接引用具体实现。
 - `cordis.yml` 描述插件树与组合关系；配置列表位置不保证启动顺序，真正的启动约束来自 `inject` 声明的服务依赖。
 - 生命周期是 DSH 的关键优势：通过 `ctx` 注册的事件、工具等效果随插件卸载自动撤销，外部资源可用 `ctx.effect()` 返回 disposer。
@@ -40,7 +40,7 @@ flowchart TB
 1. **可替换性强**：同一抽象服务可以挂接不同 provider，组合出 headless、web、minimal 等运行形态。
 2. **契约责任更重**：插件不只是“扩展功能”，还可能成为 Runtime 的关键基础设施。服务缺失、生命周期泄漏或配置错误会直接改变 Agent 行为。
 
-## 2. [Cordis](../../knowledge/agent/concepts/cordis-plugin-runtime.md) 核心抽象
+## 2. [Cordis](../../../knowledge/agent/concepts/cordis-plugin-runtime.md) 核心抽象
 
 ### 2.1 Context
 
@@ -334,8 +334,8 @@ DSH 可作为“可组合 Agent Runtime”接入 Agent OS，而不只是一个 C
 
 ## Knowledge Extraction（知识沉淀）
 
-- [x] 已抽取通用知识：[Cordis 插件运行时](../../knowledge/agent/concepts/cordis-plugin-runtime.md)
-- [x] 已关联对比概念：[Hook 扩展机制](../../knowledge/agent/concepts/hook-mechanism.md)
+- [x] 已抽取通用知识：[Cordis 插件运行时](../../../knowledge/agent/concepts/cordis-plugin-runtime.md)
+- [x] 已关联对比概念：[Hook 扩展机制](../../../knowledge/agent/concepts/hook-mechanism.md)
 - [x] 原子知识已通过“应用记录”反向链接本报告。
 
 ## 参考

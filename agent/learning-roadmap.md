@@ -27,10 +27,10 @@ flowchart LR
 |----|------|------|------|
 | **1** | 全局 + 基建 ① | [00](../knowledge/agent/architecture/overview.md) 全文 → [01/01](../knowledge/agent/concepts/infrastructure/01-sandbox-oci-docker.md) + [01/02](../knowledge/agent/concepts/infrastructure/02-vllm-multitenant.md) | 画出五层架构图；口述容器隔离与 vLLM 多租户角色 |
 | **2** | 基建 ② | [01/03](../knowledge/agent/concepts/infrastructure/03-communication-protocols.md) ~ [01/05](../knowledge/agent/concepts/infrastructure/05-auth-security.md) | 画出 Gateway→Agent→vLLM→MQ 全链路 |
-| 3 | CC ① | [02](../knowledge/agent/products/claude-code/README.md) 官方 + 泄露分析 Ch.00–03 + [notes/cc-agent-loop](study-notes/cc-agent-loop.md) | `claude` TUI + `--print` |
-| 4 | CC ② | 泄露分析 Ch.04–08 + [notes/cc-permission-model](study-notes/cc-permission-model.md)、[cc-mcp-hooks](study-notes/cc-mcp-hooks.md) | Permission/MCP 笔记初稿 |
+| 3 | CC ① | [02](../knowledge/agent/products/claude-code/README.md) 官方 + 泄露分析 Ch.00–03 + [Agent Loop](study-notes/claude-code/agent-loop.md) | `claude` TUI + `--print` |
+| 4 | CC ② | 泄露分析 Ch.04–08 + [Permission](study-notes/claude-code/permission-model.md)、[MCP/Hooks](study-notes/claude-code/mcp-hooks.md) | Permission/MCP 笔记初稿 |
 | 5 | OpenCode | [03](../knowledge/agent/products/opencode/README.md) + 源码 acp/ + [notes/oc-*](study-notes/README.md) | serve + attach + acp |
-| 6 | 接入模式 | [04](../knowledge/agent/integration/README.md) + [notes/integration-ssh-passthrough](study-notes/integration-ssh-passthrough.md) | SSH vs MessageHandler 决策图 |
+| 6 | 接入模式 | [04](../knowledge/agent/integration/README.md) + [SSH 双路径](study-notes/integration/ssh-passthrough.md) | SSH vs MessageHandler 决策图 |
 | 7 | Gateway 实战 | [04](../knowledge/agent/integration/README.md) + `agentos/jiuwenswarm/gateway/` | Web → asyncssh → opencode run |
 | 8 | Capstone | 回顾 00 + 整合 notes | CC + OC 各一种接入路径 |
 

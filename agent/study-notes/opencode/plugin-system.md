@@ -13,7 +13,7 @@ updated: 2026-08-25
 ## 核心结论
 
 - OpenCode 插件是运行在宿主进程内的 JavaScript/TypeScript 模块，不是独立进程或安全沙箱。插件拥有较强能力，应按可信代码管理。
-- 当前需要区分两代接口：稳定文档中的经典 [Hook](../../knowledge/agent/concepts/hook-mechanism.md) API，以及 V2 文档中的 `Plugin.define()` + capability/transform API。新项目可学习 V2，但生产使用必须锁版本。
+- 当前需要区分两代接口：稳定文档中的经典 [Hook](../../../knowledge/agent/concepts/hook-mechanism.md) API，以及 V2 文档中的 `Plugin.define()` + capability/transform API。新项目可学习 V2，但生产使用必须锁版本。
 - 经典插件通过返回 Hook 表扩展行为；V2 插件通过受限 `ctx` 能力注册工具、转换 catalog，并拦截工具或模型调用，生命周期与注销语义更明确。
 - 插件来源包括全局/项目配置、全局/项目插件目录和 npm 包。加载顺序确定，但多个 Hook 会依次执行，前一个插件的修改可被后一个观察到。
 - OpenCode 插件适合做工具扩展、审计、策略拦截、外部系统集成和上下文增强；它不是 MCP 的替代品，二者分别解决“宿主内扩展”和“跨进程工具协议”。
@@ -99,7 +99,7 @@ npm 插件由 OpenCode 启动时通过 Bun 安装，并缓存到 `~/.cache/openc
 
 这意味着加载顺序也是策略优先级的一部分。多个 Hook 串行运行时，后加载插件可能看到或覆盖前面插件对可变输出的修改，因此应避免多个插件无约束地写同一字段。
 
-### 2.3 常见 [Hook](../../knowledge/agent/concepts/hook-mechanism.md) 类型
+### 2.3 常见 [Hook](../../../knowledge/agent/concepts/hook-mechanism.md) 类型
 
 Hook 的准确集合应以目标版本的 `@opencode-ai/plugin` 类型定义为准，常见能力可归为：
 
@@ -251,8 +251,8 @@ OpenCode 插件不是受限扩展。一个插件可能接触源码、会话、�
 
 ## Knowledge Extraction（知识沉淀）
 
-- [x] 已抽取通用知识：[Hook 扩展机制](../../knowledge/agent/concepts/hook-mechanism.md)
-- [x] 已建立与相关机制的链接：[Cordis 插件运行时](../../knowledge/agent/concepts/cordis-plugin-runtime.md)
+- [x] 已抽取通用知识：[Hook 扩展机制](../../../knowledge/agent/concepts/hook-mechanism.md)
+- [x] 已建立与相关机制的链接：[Cordis 插件运行时](../../../knowledge/agent/concepts/cordis-plugin-runtime.md)
 - [x] 原子知识已通过“应用记录”反向链接本报告。
 
 ## 参考

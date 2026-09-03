@@ -42,4 +42,4 @@ status: active
 | Codex | ❌ | — | ✅ | ✅ |
 | Gemini CLI | ❌ | — | ✅ | ✅ |
 
-详细对比笔记：[notes/integration-comparison.md](../../../../agent/study-notes/integration-comparison.md) · 长文洞察：[../../docs/insights/zcode-insight.md](../../../../agent/investigations/zcode-insight.md)
+详细对比笔记：[产品对比](../../../../agent/study-notes/integration/product-comparison.md) · 长文洞察：[zcode-insight.md](../../../../agent/investigations/zcode-insight.md)

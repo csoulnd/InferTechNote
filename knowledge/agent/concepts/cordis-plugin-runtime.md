@@ -122,8 +122,8 @@ DSH 通过 profile、bundle、patch 与 `cordis.yml` 组合插件树。排障时
 
 ## 应用记录
 
-- [DeepSeek Harness（DSH）插件系统学习报告](../../../agent/study-notes/dsh-plugin.md)
-- [OpenCode 插件系统学习报告](../../../agent/study-notes/opencode-plugin.md)
+- [DeepSeek Harness（DSH）插件系统学习报告](../../../agent/study-notes/dsh/plugin-system.md)
+- [OpenCode 插件系统学习报告](../../../agent/study-notes/opencode/plugin-system.md)
 
 ## 相关知识
 
@@ -137,4 +137,3 @@ DSH 通过 profile、bundle、patch 与 `cordis.yml` 组合插件树。排障时
 - [Your First Harness Plugin](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/index.md)
 - [Cordis Registry API](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cordis-api/registry.md)
 - [DeepSeek Harness Packages](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/README.md)
-

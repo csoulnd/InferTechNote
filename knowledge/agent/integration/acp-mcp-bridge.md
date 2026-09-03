@@ -36,4 +36,4 @@ OpenCode 是唯一在官方文档中明确支持 **C/S 分离 + ACP** 的主流 
 - [03-opencode/standards.md](../products/opencode/standards.md)
 - [01-infrastructure/03-communication-protocols.md](../concepts/infrastructure/03-communication-protocols.md)
 
-走读笔记：[notes/oc-acp-integration.md](../../../agent/study-notes/oc-acp-integration.md)
+走读笔记：[OpenCode ACP](../../../agent/study-notes/opencode/acp-integration.md)

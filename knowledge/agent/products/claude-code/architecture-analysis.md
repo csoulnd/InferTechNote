@@ -21,5 +21,5 @@ status: active
 
 ## 读后动作
 
-- 在 [notes/cc-agent-loop.md](../../../../agent/study-notes/cc-agent-loop.md) 画 TAOR 时序图
-- 在 [notes/cc-permission-model.md](../../../../agent/study-notes/cc-permission-model.md) 对比 jiuwenbox policy
+- 在 [agent-loop.md](../../../../agent/study-notes/claude-code/agent-loop.md) 画 TAOR 时序图
+- 在 [permission-model.md](../../../../agent/study-notes/claude-code/permission-model.md) 对比 jiuwenbox policy

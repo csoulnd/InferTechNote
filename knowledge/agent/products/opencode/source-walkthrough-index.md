@@ -14,8 +14,8 @@ status: active
 | # | 路径 | 关注点 | 对应 notes |
 |---|------|--------|------------|
 | 1 | `packages/opencode/src/cli/cmd/` | serve / run / acp 入口 | — |
-| 2 | `packages/opencode/src/server/` | Hono HTTP、OpenAPI、SSE | [oc-server-architecture.md](../../../../agent/study-notes/oc-server-architecture.md) |
-| 3 | `packages/opencode/src/acp/` | Agent / Session / Server | [oc-acp-integration.md](../../../../agent/study-notes/oc-acp-integration.md) |
+| 2 | `packages/opencode/src/server/` | Hono HTTP、OpenAPI、SSE | [server-architecture.md](../../../../agent/study-notes/opencode/server-architecture.md) |
+| 3 | `packages/opencode/src/acp/` | Agent / Session / Server | [acp-integration.md](../../../../agent/study-notes/opencode/acp-integration.md) |
 | 4 | `packages/opencode/src/acp/agent.ts` | ACP 协议 v1、session/new、session/prompt | oc-acp-integration |
 | 5 | `packages/opencode/src/session/` | 会话状态、prompt 处理 | oc-server-architecture |
 | 6 | `packages/opencode/src/tool/` | ToolRegistry、权限 | — |

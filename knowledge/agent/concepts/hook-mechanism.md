@@ -93,8 +93,8 @@ Hook 的价值不只取决于“有哪些事件”，更取决于多个 Hook 如
 
 ## 应用记录
 
-- [OpenCode 插件系统学习报告](../../../agent/study-notes/opencode-plugin.md)
-- [DeepSeek Harness（DSH）插件系统学习报告](../../../agent/study-notes/dsh-plugin.md)
+- [OpenCode 插件系统学习报告](../../../agent/study-notes/opencode/plugin-system.md)
+- [DeepSeek Harness（DSH）插件系统学习报告](../../../agent/study-notes/dsh/plugin-system.md)
 
 ## 相关知识
 
@@ -106,4 +106,3 @@ Hook 的价值不只取决于“有哪些事件”，更取决于多个 Hook 如
 - [OpenCode Plugins](https://opencode.ai/docs/plugins/)
 - [OpenCode V2 Plugins](https://opencode.ai/v2/docs/build/plugins)
 - [DeepSeek Harness Cordis Tutorial](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cordis-tutorial/index.md)
-
