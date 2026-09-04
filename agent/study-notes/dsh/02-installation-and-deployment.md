@@ -147,7 +147,12 @@ Headless 创建一个新的持久会话，等待 Agent 停稳并 flush；推理�
 | 修改源码不生效 | 是否重新 `pnpm run build`；Web 客户端 watcher 是否启动 |
 | patch 修改丢字段 | patch 是整行 config 替换，不是深度合并 |
 
-## 9. 参考
+## Knowledge Extraction（知识沉淀）
+
+- [ ] 部署步骤随 DSH 版本变化，当前保留为产品学习记录。
+- [ ] 等远程部署和升级流程实测后，再提炼通用部署原则。
+
+## 10. 参考
 
 - [官方中文 README](https://github.com/deepseek-ai/deepseek-harness/blob/76fda729799fe9b3848dbe2c211d4b231032b81e/README.zh.md)
 - [开发指南](https://github.com/deepseek-ai/deepseek-harness/blob/76fda729799fe9b3848dbe2c211d4b231032b81e/docs/development.zh.md)

@@ -7,17 +7,25 @@ status: draft
 
 # DeepSeek Harness 简介与架构总览
 
+> 阅读前置：建议先读 [Cordis 插件运行时](../../../knowledge/agent/concepts/cordis-plugin-runtime.md) 的“最小模型”部分。第一次阅读只需理解 Plugin、Context、Service 和 `inject`，其余术语可以暂时跳过。
+
 ## 1. DSH 是什么
 
 DeepSeek Harness（命令名 `dsh`）是 DeepSeek AI 开源的 Agent Harness。它不是单纯的模型 API 客户端，而是把模型适配、系统提示词、工具、会话、沙箱、审批、Agent Loop 和 Web UI 组合成一个可运行 Agent 的宿主。
 
-它最鲜明的设计是“一切皆插件”：上述能力都通过 Cordis 插件向共享 `Context` 提供 Service、Event 或可逆 Effect。因此改变配置树即可替换能力实现，通常不需要修改一个特权“核心”。
+它最鲜明的设计是“一切皆插件”。可以先把 DSH 想成一台由可更换部件组装的电脑：模型、工具、会话存储和界面都是部件，Cordis 是负责识别、连接、启动和卸载这些部件的底座。
+
+更精确地说，每个部件是一个 Plugin，通过 Context 提供或使用 Service。暂时不需要理解 Event、Waterfall、Effect 和 Fiber；它们分别用于插件协作和资源清理，会在 Cordis 原子知识中逐步介绍。
 
 当前应把它视为开发者预览，而非稳定生产平台：官方明确提示会有破坏兼容的变化，且项目尚未接受安全审计。
 
-## 2. 三层心智模型
+## 2. 先看清三件事
 
-### 2.1 发行与组合层
+第一次阅读只需要分清：**DSH 怎么选择一套运行配置、Cordis 怎么把插件装起来、Agent 怎么处理一次请求。**
+
+### 2.1 DSH 怎么选择一套运行配置
+
+同一个 DSH 可以表现为浏览器应用、一次性命令或 SDK 服务，这些运行形态称为 Profile。
 
 - **Profile**：一种具名运行形态，位于 `$DSH_HOME/profiles/<name>`。官方提供 `web`、`headless`、`sdk`、`sdk-minimal`、`acp`。
 - **Bundle**：一组可分发的 Cordis 配置行与插件代码，例如 base、web-app、headless。
@@ -36,18 +44,20 @@ DeepSeek Harness（命令名 `dsh`）是 DeepSeek AI 开源的 Agent Harness。�
 
 `sdk-minimal` 是例外：它使用一棵独立的显式 SDK 配置树，不叠加 `dsh-base`。
 
-### 2.2 Cordis 运行时层
+### 2.2 Cordis 怎么把插件装起来
 
-Cordis 的四个重点：
+先只看四个基础概念：
 
-- `Context`：插件访问服务和注册扩展的入口，同时表示作用域。
-- Plugin/Service：插件提供能力，Service 形成插件之间的稳定契约。
-- Event/Waterfall：插件通过类型化事件观察或拦截流程。
-- Effect/Fiber：注册项与插件生命周期绑定，卸载时自动撤销；外部资源通过 disposer 清理。
+- Plugin：一个可装载的功能模块。
+- `Context`：插件获取和登记能力的入口。
+- Service：插件对外提供的能力接口，例如调用模型或执行工具。
+- `inject`：声明插件启动前必须有哪些 Service。
 
 配置文件中的先后顺序不应被当作服务启动顺序。插件使用 `inject` 声明依赖，Cordis 在依赖就绪后激活它。
 
-### 2.3 Agent 执行层
+Event、Waterfall、Effect 和 Fiber 是下一层知识；目前只需知道它们解决插件通信和卸载清理问题。
+
+### 2.3 Agent 怎么处理一次请求
 
 核心 Service 如下：
 
@@ -88,7 +98,9 @@ sequenceDiagram
 
 关键不变式是“模型可见即已记录”：送进模型的上下文必须能从 Session 日志重建。消息历史由日志投影得到，而不是另存一份可漂移的状态。这使恢复、回放、fork、压缩和 UI 轨迹能够基于同一真源工作。
 
-## 4. 扩展能力放在哪里
+## 4. 进阶：扩展能力放在哪里
+
+本节出现较多扩展术语，第一次阅读可以跳过，完成安装运行后再回来。
 
 | 需求 | 首选扩展点 |
 |---|---|
@@ -111,7 +123,13 @@ sequenceDiagram
 
 适合用于研究可组合 Agent Runtime、构建定制 Agent 产品或验证可替换的模型/工具/存储栈。若只需要一次简单模型调用，直接使用模型 SDK 往往更轻。
 
-## 6. 参考
+## Knowledge Extraction（知识沉淀）
+
+- [x] Cordis 的通用运行时机制已沉淀为原子知识：[Cordis 插件运行时](../../../knowledge/agent/concepts/cordis-plugin-runtime.md)。
+- [ ] Session 事件溯源在源码走读验证后再判断是否独立沉淀。
+- [ ] Profile、Bundle、Patch 仍与 DSH 产品版本强相关，暂不提升为通用知识。
+
+## 7. 参考
 
 - [官方仓库与运行说明](https://github.com/deepseek-ai/deepseek-harness/tree/76fda729799fe9b3848dbe2c211d4b231032b81e)
 - [官方架构文档](https://github.com/deepseek-ai/deepseek-harness/blob/76fda729799fe9b3848dbe2c211d4b231032b81e/docs/architecture.zh.md)

@@ -44,7 +44,7 @@ turn/start → user/message → step/start → request/header
 
 对照 `packages/core/agent-loop/src/agent.ts` 与 Session 事件目录，解释哪些事件会投影成下一请求的模型消息，哪些只用于轨迹或生命周期。
 
-## Lab 4：最小 Cordis 插件
+## Lab 4：最小 [Cordis](../../../knowledge/agent/concepts/cordis-plugin-runtime.md) 插件
 
 先完成 [插件系统专题](plugin-system.md) 的 hello 插件。随后加入一个受生命周期管理的计时器：
 
@@ -110,6 +110,11 @@ packages/core/session/src/index.ts::Session.append
 - 用 Headless 运行三类仓库分析任务，并验证退出码、持久会话与安全拒绝路径。
 
 交付物建议放在业务学习区，不提交密钥或机器绝对路径。验证稳定后，再按仓库知识沉淀流程提炼可复用结论。
+
+## Knowledge Extraction（知识沉淀）
+
+- [ ] 实验结论尚未产生；完成 Lab 后再提炼，不把预期当作验证结果。
+- [ ] 优先更新已有原子知识，避免创建内容近似的笔记。
 
 ## 参考
 

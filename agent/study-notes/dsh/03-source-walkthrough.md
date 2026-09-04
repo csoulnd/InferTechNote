@@ -45,7 +45,7 @@ apps/cli/src/bin.ts
 
 ### 2.3 `packages/boot/app-boot/src/index.ts`
 
-`boot()` 创建 Cordis `Context`，设置模块解析 `baseUrl`，挂载 Loader，再用 `mountRootInclude()` 加载配置树，等待 Loader 完全 settle，并检查配置条目是否激活。任一阶段失败都会 dispose 根 Fiber，再保留最深层错误堆栈向上抛出。
+`boot()` 创建 [Cordis](../../../knowledge/agent/concepts/cordis-plugin-runtime.md) `Context`，设置模块解析 `baseUrl`，挂载 Loader，再用 `mountRootInclude()` 加载配置树，等待 Loader 完全 settle，并检查配置条目是否激活。任一阶段失败都会 dispose 根 Fiber，再保留最深层错误堆栈向上抛出。
 
 此处体现 DSH 的“核心很薄”：启动器主要负责组合、挂载、失败收口和生命周期；产品能力来自配置树中的插件。
 
@@ -150,7 +150,13 @@ Session 是类型化、仅追加、无损 JSON 的事件日志。`append()` 先�
 - [ ] 能说明为何持久化不写在 `Session` 类中。
 - [ ] 能说明插件卸载时哪些资源由 Fiber/Effect 撤销。
 
-## 10. 参考
+## Knowledge Extraction（知识沉淀）
+
+- [x] 插件装配与生命周期机制已关联：[Cordis 插件运行时](../../../knowledge/agent/concepts/cordis-plugin-runtime.md)。
+- [ ] Session 事件溯源需要完成测试对照后再提炼。
+- [ ] Tool 执行流水线需要完成最小 Tool 实验后再提炼。
+
+## 11. 参考
 
 - [官方架构文档](https://github.com/deepseek-ai/deepseek-harness/blob/76fda729799fe9b3848dbe2c211d4b231032b81e/docs/architecture.zh.md)
 - [Agent Loop 包说明](https://github.com/deepseek-ai/deepseek-harness/blob/76fda729799fe9b3848dbe2c211d4b231032b81e/packages/core/agent-loop/README.zh.md)

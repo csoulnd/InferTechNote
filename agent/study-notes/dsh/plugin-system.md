@@ -40,7 +40,7 @@ flowchart TB
 1. **可替换性强**：同一抽象服务可以挂接不同 provider，组合出 headless、web、minimal 等运行形态。
 2. **契约责任更重**：插件不只是“扩展功能”，还可能成为 Runtime 的关键基础设施。服务缺失、生命周期泄漏或配置错误会直接改变 Agent 行为。
 
-## 2. [Cordis](../../../knowledge/agent/concepts/cordis-plugin-runtime.md) 核心抽象
+## 2. Cordis 核心抽象
 
 ### 2.1 Context
 

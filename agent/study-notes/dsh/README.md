@@ -15,7 +15,7 @@ status: active
 
 - 解释 DSH 解决的问题，以及“一切皆插件”的边界。
 - 从 npm 或源码启动 Web、Headless 等 profile，并完成模型配置。
-- 读懂 profile、bundle、patch 和 Cordis 插件树的组合关系。
+- 读懂 profile、bundle、patch 和 [Cordis 插件运行时](../../../knowledge/agent/concepts/cordis-plugin-runtime.md)的组合关系。
 - 沿一次用户请求走通 CLI、Agent Loop、LLM、Tool、Session 的核心调用链。
 - 找到新增 Tool、LLM Adapter、存储或 UI 能力的正确扩展点。
 
@@ -23,13 +23,14 @@ status: active
 
 | 阶段 | 学习资料 | 产出 |
 |---|---|---|
-| 1. 建立全局图 | [01-overview.md](01-overview.md) | 能画出运行时组件图 |
-| 2. 跑起来 | [02-installation-and-deployment.md](02-installation-and-deployment.md) | Web 与 Headless 各完成一次运行 |
+| 0. 补齐前置概念 | Cordis 插件运行时 | 能解释 Plugin、Context、Service、`inject` |
+| 1. 跑起来 | [02-installation-and-deployment.md](02-installation-and-deployment.md) | Web 与 Headless 各完成一次运行 |
+| 2. 建立全局图 | [01-overview.md](01-overview.md) | 能画出运行时组件图 |
 | 3. 读源码 | [03-source-walkthrough.md](03-source-walkthrough.md) | 能解释一次 turn 的完整链路 |
 | 4. 做实验 | [04-hands-on-labs.md](04-hands-on-labs.md) | 完成配置检查与最小插件实验 |
-| 5. 深入插件 | [plugin-system.md](plugin-system.md) | 掌握 Cordis Service、Event、Effect/Fiber |
+| 5. 深入插件 | [plugin-system.md](plugin-system.md) | 掌握 Cordis Event、Waterfall、Effect/Fiber |
 
-建议先运行再阅读实现。每读一个模块，都用三个问题约束范围：它提供哪个 `ctx` service、消费哪些依赖、卸载时撤销哪些 effect。
+不要把架构总览当成第一篇必读材料。先理解 Cordis 的四个基础概念，再实际运行 DSH，最后回头看全局架构会更容易。每读一个模块，只问三个问题：它提供什么能力、依赖什么能力、关闭时要清理什么。
 
 ## 一页导航
 
