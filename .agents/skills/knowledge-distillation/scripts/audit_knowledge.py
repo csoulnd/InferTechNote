@@ -13,6 +13,8 @@ ALLOWED_TYPES = {"moc", "concept", "architecture", "design", "implementation", "
 ALLOWED_DOMAINS = {"repository", "agent", "infra", "foundations"}
 ALLOWED_STATUSES = {"draft", "active", "evergreen", "archived"}
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+ONE_LINE_RE = re.compile(r"^## 一句话解释\s*$\n+([^\n]+)", re.M)
+EXTERNAL_LINK_RE = re.compile(r"\[[^\]]+\]\(https?://[^)]+\)")
 
 
 def find_root(start: Path) -> Path:
@@ -88,6 +90,16 @@ def main() -> int:
                 errors.append(f"{rel}: invalid status {metadata.get('status')!r}")
             stats[f"type:{metadata.get('type')}"] += 1
             stats[f"status:{metadata.get('status')}"] += 1
+            if metadata.get("type") == "concept":
+                one_line = ONE_LINE_RE.search(text)
+                if one_line is None:
+                    errors.append(f"{rel}: concept missing '## 一句话解释'")
+                else:
+                    sentence_count = len(re.findall(r"[。！？.!?](?:\s|$)", one_line.group(1)))
+                    if sentence_count != 1:
+                        errors.append(f"{rel}: atomic explanation must be exactly one sentence")
+                if not EXTERNAL_LINK_RE.search(text):
+                    warnings.append(f"{rel}: concept has no external authoritative reference")
         for raw_target in LINK_RE.findall(text):
             target = local_target(path, raw_target)
             if target is not None and not target.exists():

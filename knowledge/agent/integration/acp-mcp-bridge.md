@@ -7,7 +7,7 @@ status: evergreen
 
 # ACP / MCP 桥接
 
-## ACP（Agent Client Protocol）
+## [ACP（Agent Client Protocol）](../concepts/protocols/acp.md)
 
 - JSON-RPC over stdio（或 WebSocket）
 - 方法：`initialize`、`session/new`、`session/prompt` 等
@@ -22,7 +22,7 @@ IDE / ACP Client  ←→  Gateway ACP Channel  ←→  容器 opencode acp
 
 OpenCode 是唯一在官方文档中明确支持 **C/S 分离 + ACP** 的主流 CodeAgent。
 
-## MCP（Model Context Protocol）
+## [MCP（Model Context Protocol）](../concepts/protocols/mcp.md)
 
 - Agent 通过 MCP 连接外部工具（Git、DB、浏览器…）
 - Claude Code：`.mcp.json` + Plugin 生态

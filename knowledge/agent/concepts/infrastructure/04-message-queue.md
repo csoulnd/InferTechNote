@@ -1,6 +1,6 @@
 ---
 title: "消息队列 TDMQ / CMQ / DMQ"
-type: concept
+type: reference
 domain: agent
 status: evergreen
 ---

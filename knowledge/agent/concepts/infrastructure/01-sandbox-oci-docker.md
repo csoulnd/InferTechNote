@@ -11,9 +11,13 @@ status: evergreen
 
 Linux 容器如何通过内核隔离原语、OCI 标准和容器运行时，把一个普通进程组织成具有独立资源视图、资源配额与受限权限的容器？
 
-## 简要结论
+## 一句话解释
 
-容器本质上仍是宿主机上的进程。Linux namespace 为进程提供彼此不同的系统资源视图，cgroup 负责统计和限制资源，capabilities、seccomp 与 LSM（SELinux/AppArmor）进一步收缩权限和内核攻击面；OCI 则标准化镜像格式、运行时 bundle、配置和生命周期，使 Docker、containerd、runc、crun、Kata 等组件可以互操作。
+Linux 容器是利用 namespace、cgroup 和权限控制把宿主进程限制在独立资源视图中的运行方式，OCI 则为其镜像和运行时行为提供跨工具标准。
+
+## 详细解释
+
+Linux namespace 为进程提供彼此不同的系统资源视图，cgroup 负责统计和限制资源，capabilities、seccomp 与 LSM（SELinux/AppArmor）进一步收缩权限和内核攻击面；OCI 则标准化镜像格式、运行时 bundle、配置和生命周期，使 Docker、containerd、runc、crun、Kata 等组件可以互操作。
 
 容器隔离不是单一功能，也不等于虚拟机隔离。传统 Linux 容器与宿主共享内核，实际安全性取决于内核补丁、用户映射、挂载、设备、capability、系统调用过滤、LSM、运行时权限和外部接口是否正确配置。需要独立内核边界时，可采用 Kata Containers 等基于轻量虚拟机的 OCI 兼容运行时，但仍需根据威胁模型评估，而不能只按产品名称判断安全等级。
 

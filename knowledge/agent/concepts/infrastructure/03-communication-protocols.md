@@ -1,6 +1,6 @@
 ---
 title: "通信协议栈：HTTP / SSH / ZMQ / ACP / MCP"
-type: concept
+type: reference
 domain: agent
 status: evergreen
 ---
@@ -10,6 +10,8 @@ status: evergreen
 > 介绍级文档：建立原理认知与场景映射，深入实践见参考链接。
 
 ## 原理
+
+先读独立名词解释：[MCP](../protocols/mcp.md)、[ACP](../protocols/acp.md)；本页只负责比较多种协议在 Agent OS 中的分工。
 
 Agent OS 接入层涉及多种协议，各司其职：
 

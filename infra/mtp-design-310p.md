@@ -7,7 +7,8 @@ status: active
 
 # MTP Design on Ascend 310P
 
-> 模型场景：**Qwen3.5 + MTP**（`speculative_config.method = "mtp"` 或 E2E 中 `"qwen3_5_mtp"`）。  
+> 模型场景：**Qwen3.5 + [MTP](../knowledge/infra/concepts/mtp.md)**（`speculative_config.method = "mtp"` 或 E2E 中 `"qwen3_5_mtp"`）。
+> 内存前置：[KV Cache](../knowledge/infra/concepts/kv-cache.md)。
 > **主线一致、实现按算子能力适配**：MTP 每轮 Decode 分三步——**① Verify**（主模型验证）→ **② Rejection**（拒绝采样）→ **③ Draft**（草稿生成）——流程与 910B 等主分支相同；310P 在保持该流程的前提下，根据本设备算子支持情况调整实现，主要体现在 **Runner 输入准备**、**Attention/GDN**、**Sampler/Rejection**（无 Triton / triton-ascend）、**KV Block Zeroer**、**Graph Capture/Replay** 等环节。  
 > **实现 PR**：[vllm-ascend #10309](https://github.com/vllm-project/vllm-ascend/pull/10309)（已合入 main，merge commit `969baed`）。
 

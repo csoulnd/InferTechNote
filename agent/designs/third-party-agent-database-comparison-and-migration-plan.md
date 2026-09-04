@@ -413,3 +413,7 @@ GET 管理面 cards
 | `build_tasks` | 迁移后删除或停止使用 | `local_agent_packages` + `agent_build_history` |
 
 最终原则是：注册中心回答“现在有哪些卡片、如何展示和启动”；本机数据库回答“哪些包尚未注册成功、过去发生过哪些构建和注册尝试”。两类数据不再互相补齐或推导。
+
+## Knowledge Extraction
+
+- [ ] 迁移完成后提炼跨系统单一事实源与可恢复任务状态机的通用模式。

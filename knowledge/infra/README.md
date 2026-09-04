@@ -9,6 +9,10 @@ status: active
 
 Reusable model and implementation knowledge independent of a single delivery timeline.
 
+## Concepts
+
+- [MTP and KV Cache](concepts/README.md)
+
 ## Implementation
 
 - [MTP code walkthrough](implementation/mtp/code-walkthrough.md)

@@ -11,7 +11,11 @@ status: draft
 
 如何理解 Docker 的核心对象，并使用常用 CLI、Dockerfile 和 Compose 完成基础容器开发与排障？
 
-## 简要结论
+## 一句话解释
+
+Docker 是用镜像打包应用及其文件，并通过容器创建隔离进程运行实例的开发与交付工具。
+
+## 详细解释
 
 Docker 用镜像描述只读应用模板，用容器表示镜像的运行实例；容器的可写层随容器删除而消失，持久数据应放入 volume 或明确的 bind mount。Dockerfile 用于构建镜像，Compose 文件用于声明如何运行一个或多个服务，二者职责不同。
 
@@ -306,4 +310,3 @@ Compose 是声明式工具：修改文件后再次执行 `docker compose up`，�
 - [Dockerfile Reference](https://docs.docker.com/reference/dockerfile/)
 - [Docker Compose Quickstart](https://docs.docker.com/compose/gettingstarted/)
 - [Docker CLI Cheat Sheet](https://docs.docker.com/get-started/docker_cheatsheet.pdf)
-

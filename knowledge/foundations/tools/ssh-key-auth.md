@@ -11,9 +11,13 @@ status: draft
 
 如何正确配置 SSH 公钥认证，实现无需输入远端账户密码的登录，同时保留私钥保护和可排障性？
 
-## 简要结论
+## 一句话解释
 
-SSH“免密登录”准确地说是**免远端账户密码登录**：客户端用私钥证明身份，服务器在目标用户的 `authorized_keys` 中查找对应公钥。私钥始终留在客户端；推荐使用 Ed25519 密钥并设置 passphrase，再由 `ssh-agent` 缓存解锁结果，而不是生成完全无保护的私钥。
+SSH 公钥认证是客户端用本地私钥签名证明身份、服务器用预先登记的公钥验证，从而无需传输或输入远端账户密码的登录方式。
+
+## 详细解释
+
+私钥始终留在客户端，服务器在目标用户的 `authorized_keys` 中查找对应公钥；推荐使用 Ed25519 密钥并设置 passphrase，再由 `ssh-agent` 缓存解锁结果，而不是生成完全无保护的私钥。
 
 ```mermaid
 sequenceDiagram
@@ -241,4 +245,3 @@ ssh -G dev-server | less
 - [OpenSSH Client Configuration](https://man.openbsd.org/ssh_config)
 - [OpenSSH Server Configuration](https://man.openbsd.org/sshd_config)
 - [GitHub: Generate and add an SSH key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)
-

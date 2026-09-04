@@ -7,7 +7,7 @@ status: evergreen
 
 # MTP Code Walkthrough Guide
 
-本文档梳理 vLLM Ascend 中 **Multi-Token Prediction (MTP)** 投机解码的主线代码路径，包括走读目录、推荐阅读顺序与关键变量说明。
+本文档梳理 vLLM Ascend 中 **[Multi-Token Prediction (MTP)](../../concepts/mtp.md)** 投机解码的主线代码路径，包括走读目录、推荐阅读顺序与关键变量说明。
 
 > 设计文档：[mtp-design-310p.md](../../../../infra/mtp-design-310p.md)
 > **说明**：用户指南 `Multi_Token_Prediction.md` 中提到的 `mtp_proposer.py` / `AscendMtpProposer` 在当前代码中已并入 **`AscendEagleProposer`**（`method == "mtp"` 与 EAGLE 共用实现，通过 `self.method` 分支区分）。

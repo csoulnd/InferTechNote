@@ -1,6 +1,6 @@
 ---
 title: "AgentBox Manager Development, Build, Deployment, and Log Guide"
-type: guide
+type: implementation
 domain: agent
 status: active
 ---
@@ -371,3 +371,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env config >/dev/
 ```
 
 涉及部署行为时，还应在干净测试机验证 `install → up → status → restart → down → uninstall`，并确认普通卸载与 `--clean` 的数据保留/删除行为符合预期。
+
+## Knowledge Extraction
+
+- [ ] 本文保留产品开发与部署操作；跨项目排障规则经重复验证后再提炼。

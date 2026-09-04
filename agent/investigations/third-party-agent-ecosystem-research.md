@@ -14,7 +14,7 @@ status: active
 
 AgentOS 接入三方 Agent 生态的目的，不是简单扩充可安装的软件数量，而是以极简方式将不同来源、不同形态的 Agent 纳入统一运行体系。接入后，Agent 可复用一体机统一的身份认证、用户管理、资源分配和推理服务；同时，AgentOS 能结合 Agent、项目和会话信息进行模型路由、实例亲和调度及 KV 前缀复用，实现 Agent 与推理底座的协同优化。
 
-按 Agent Runtime 的控制权，三方 Agent 分为自主部署型、混合运行型和 SaaS 厂商托管型。自主部署型 Agent 可运行在用户控制的服务器、终端或容器中，是 AgentOS 镜像托管和推理协同优化的核心对象；混合运行型 Agent 在本地执行部分操作，但依赖厂商账号、模型或控制面，需根据自定义推理接口能力条件接入；SaaS 厂商托管型 Agent 的 Runtime 完全由厂商控制，AgentOS 主要通过开放 API、连接器、MCP 或 A2A 进行外围互操作。
+按 Agent Runtime 的控制权，三方 Agent 分为自主部署型、混合运行型和 SaaS 厂商托管型。自主部署型 Agent 可运行在用户控制的服务器、终端或容器中，是 AgentOS 镜像托管和推理协同优化的核心对象；混合运行型 Agent 在本地执行部分操作，但依赖厂商账号、模型或控制面，需根据自定义推理接口能力条件接入；SaaS 厂商托管型 Agent 的 Runtime 完全由厂商控制，AgentOS 主要通过开放 API、连接器、[MCP](../../knowledge/agent/concepts/protocols/mcp.md) 或 A2A 进行外围互操作。
 
 AgentOS 的三方 Agent 生态支持包含两个相互独立的接入维度：
 

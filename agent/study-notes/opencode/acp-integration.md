@@ -13,7 +13,7 @@ status: draft
 
 > 状态：尚未开始走读，以下内容为研究提纲。
 
-- [ ] 走读 `packages/opencode/src/acp/`
+- [ ] 先理解 [ACP](../../../knowledge/agent/concepts/protocols/acp.md)，再走读 `packages/opencode/src/acp/`
 
 ## 与 Agent OS 接入的关系
 
@@ -21,7 +21,7 @@ status: draft
 
 ## 遗留问题
 
-- [ ] 记录 session 映射和 MCP server 注入方式
+- [ ] 记录 session 映射和 [MCP](../../../knowledge/agent/concepts/protocols/mcp.md) server 注入方式
 
 ## 参考
 

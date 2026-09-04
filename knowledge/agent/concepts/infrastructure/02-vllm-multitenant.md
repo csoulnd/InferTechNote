@@ -1,6 +1,6 @@
 ---
 title: "vLLM 推理服务、多租户、API Key 流量统计"
-type: concept
+type: reference
 domain: agent
 status: evergreen
 ---

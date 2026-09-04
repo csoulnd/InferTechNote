@@ -13,7 +13,7 @@ status: draft
 
 > 状态：尚未开始走读，以下内容为研究提纲。
 
-- [ ] 阅读 decode-claude-code Ch.01 并梳理 TAOR 循环
+- [ ] 阅读 decode-claude-code Ch.01，并对照 [Agent Loop 原子知识](../../../knowledge/agent/concepts/agent-loop.md)梳理 TAOR 循环
 
 ## 与 Agent OS 接入的关系
 

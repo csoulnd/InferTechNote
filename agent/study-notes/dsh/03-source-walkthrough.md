@@ -9,6 +9,8 @@ status: draft
 
 > 基线：官方仓库 `76fda729799fe9b3848dbe2c211d4b231032b81e`。源码变化很快，先用 `git rev-parse HEAD` 确认本地版本。
 
+前置概念：[Agent Loop](../../../knowledge/agent/concepts/agent-loop.md)解释通用控制循环；本文只关注 DSH 的具体实现。
+
 ## 1. 不要从目录逐个读
 
 仓库包含大量细粒度包。更有效的读法是先跟一条运行链，再沿 Service seam 横向扩展：

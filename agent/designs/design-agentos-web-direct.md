@@ -1,3 +1,10 @@
+---
+title: "AgentOS Web 直通方案设计"
+type: design
+domain: agent
+status: draft
+---
+
 # AgentOS Web 直通方案设计文档
 
 ## 1. 背景与目标
@@ -6,7 +13,7 @@
 
 AgentOS 平台通过 YuanRong 容器管理 3rd agent 运行时。部分 3rd agent（如 OpenClaw）在容器内运行 Web 服务（HTTP + WebSocket），需要从外部浏览器直接访问。
 
-当前已实现的 Web Proxy 通道（详见 [design-agent-web-channel.md](./design-agent-web-channel.md)）解决了 **Gateway 层的 HTTP/WS 代理转发** 问题，但缺少完整的端到端方案：
+当前已实现的 Web Proxy 通道解决了 **Gateway 层的 HTTP/WS 代理转发** 问题，但缺少完整的端到端方案（原 WebProxyChannel 详细设计当前未收录在本仓库）：
 
 - 镜像注册阶段无法声明 Web 服务能力（端口、启动方式）
 - Sandbox 创建阶段无法自动暴露 Web 端口
@@ -24,7 +31,7 @@ AgentOS 平台通过 YuanRong 容器管理 3rd agent 运行时。部分 3rd agen
 
 ### 1.3 关联文档
 
-- [design-agent-web-channel.md](./design-agent-web-channel.md) — WebProxyChannel 详细设计（HTTP/WS 代理实现、路由、SPA 兼容等）
+- WebProxyChannel 详细设计（HTTP/WS 代理实现、路由、SPA 兼容等；当前仓库未收录）
 
 ***
 
@@ -194,7 +201,7 @@ sequenceDiagram
 
 #### 3.3.1 WebProxyChannel（已实现）
 
-详见 [design-agent-web-channel.md](./design-agent-web-channel.md)
+详细实现应查阅 AgentOS 源码中的 WebProxyChannel；对应设计文档当前未收录在本仓库。
 
 - 监听 19002 端口，HTTP/WS 双协议代理
 - 通过 `web_resolver` 查询上游 URL
@@ -374,3 +381,6 @@ web_resolver 在 :19002 连接建立时触发，复用同一次查询的元数�
 7. **Sandbox 生命周期**：用户退出或超时未使用时自动销毁 Sandbox
 8. **并发限制**：同一用户同一 agent\_type 仅允许一个活跃 Sandbox
 
+## Knowledge Extraction
+
+- [ ] 本文仍是具体方案设计，待实现与验证后再提炼 Web 代理和 Sandbox 生命周期的通用结论。

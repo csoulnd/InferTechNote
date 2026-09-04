@@ -8,6 +8,7 @@ status: evergreen
 # KV Cache and Page Table Management — NPUModelRunner
 
 > 基于 `vllm_ascend/worker/model_runner_v1.py`（继承 upstream `GPUModelRunner`）整理。  
+> 前置概念：[KV Cache](../../concepts/kv-cache.md)。
 > 知识粒度：**整体架构 → 分组与配置 → 页表数据结构 → 物理内存 → 每步 token 映射 → 变体与索引**。  
 > 行号随 upstream 漂移，以仓库内实际代码为准。
 

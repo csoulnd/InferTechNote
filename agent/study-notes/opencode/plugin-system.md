@@ -16,7 +16,7 @@ updated: 2026-08-25
 - 当前需要区分两代接口：稳定文档中的经典 [Hook](../../../knowledge/agent/concepts/hook-mechanism.md) API，以及 V2 文档中的 `Plugin.define()` + capability/transform API。新项目可学习 V2，但生产使用必须锁版本。
 - 经典插件通过返回 Hook 表扩展行为；V2 插件通过受限 `ctx` 能力注册工具、转换 catalog，并拦截工具或模型调用，生命周期与注销语义更明确。
 - 插件来源包括全局/项目配置、全局/项目插件目录和 npm 包。加载顺序确定，但多个 Hook 会依次执行，前一个插件的修改可被后一个观察到。
-- OpenCode 插件适合做工具扩展、审计、策略拦截、外部系统集成和上下文增强；它不是 MCP 的替代品，二者分别解决“宿主内扩展”和“跨进程工具协议”。
+- OpenCode 插件适合做工具扩展、审计、策略拦截、外部系统集成和上下文增强；它不是 [MCP](../../../knowledge/agent/concepts/protocols/mcp.md) 的替代品，二者分别解决“宿主内扩展”和“跨进程工具协议”。
 
 ## 1. 定位与边界
 

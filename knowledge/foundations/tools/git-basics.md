@@ -11,9 +11,13 @@ status: draft
 
 如何理解 Git 的基本状态模型，并安全完成日常查看、提交、分支切换和远端同步？
 
-## 简要结论
+## 一句话解释
 
-Git 的核心不是背命令，而是理解内容在四个位置之间流动：工作区、暂存区、本地仓库和远端仓库。执行命令前先判断“我要读取或修改哪一层”，就能减少误操作。
+Git 是通过内容快照和提交图记录文件历史、支持分支协作的分布式版本控制系统。
+
+## 详细解释
+
+日常使用 Git 的关键是理解内容在工作区、暂存区、本地仓库和远端仓库之间流动；执行命令前先判断要读取或修改哪一层，可以减少误操作。
 
 ```mermaid
 flowchart LR
@@ -228,4 +232,3 @@ dist/
 - [Git Reference](https://git-scm.com/docs)
 - [Git User Manual](https://git-scm.com/docs/user-manual)
 - [Git Cheat Sheet](https://git-scm.com/cheat-sheet.pdf)
-

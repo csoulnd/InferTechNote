@@ -1,6 +1,6 @@
 ---
 title: "鉴权安全：OAuth / API Key / Agent Rail"
-type: concept
+type: reference
 domain: agent
 status: evergreen
 ---
