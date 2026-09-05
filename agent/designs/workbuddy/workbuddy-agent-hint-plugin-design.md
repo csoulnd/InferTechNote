@@ -3,7 +3,9 @@
 ## 文档状态
 
 - 状态：架构重设计，待原生扩展点确认和黑盒验证
-- 调研版本：WorkBuddy 5.4.7
+- 当前调研基线：WorkBuddy `37.10.3-24`（本机 `version` 文件，安装内容更新时间
+  2026-09-04）
+- 历史验证版本：WorkBuddy 5.4.7；历史黑盒结论必须在当前版本重新验证
 - 目标：在 WorkBuddy 发出的真实模型请求体中追加 `agent_hint`
 - 主方案：公开生命周期 Hook + 原生模型请求处理器扩展
 - 保底方案：公开生命周期 Hook + 虚拟模型网关
@@ -87,27 +89,63 @@ WorkBuddy Electron
 因此安装到外部 `~/.codebuddy/plugins` 的插件不会自动生效，但通过 WorkBuddy 本地市场
 安装到 `~/.workbuddy/plugins` 的插件会被桌面内部 CLI Host 加载。
 
-### 3.2 公开插件能力
+### 3.2 Hook 事件全集与公开级别
 
-WorkBuddy 5.4.7 安装包内 `plugins-reference.md` 声明插件由 Skills、Agents、Hooks、
+WorkBuddy `37.10.3-24` 安装包内 `plugins-reference.md` 声明插件由 Skills、Agents、Hooks、
 MCP 和 LSP 等组件组成。Hook 支持 `command`、`http`、`prompt`、`agent` 四种执行方式。
 
-与本项目直接相关的公开事件包括：
+公开级别采用以下口径：
 
-| 事件 | 触发点 | 对 Hint 的价值 |
-| --- | --- | --- |
-| `SessionStart` | 会话创建或恢复 | 建立主会话生命周期状态 |
-| `UserPromptSubmit` | 用户消息进入 Agent 前 | 辅助请求关联和首轮识别 |
-| `SubagentStart` | 子 Agent 启动 | 候选子会话 start 信号 |
-| `SubagentStop` | 子 Agent 完成 | 候选子会话 stop 信号 |
-| `PreCompact` | 上下文压缩前 | 设置 compact 待消费状态 |
-| `PostCompact` | 压缩完成后 | 校验/清理 compact 状态 |
-| `Stop` | AI 完成一轮响应 | 回合结束，不等于会话销毁 |
-| `StopFailure` | 一轮因 API 错误结束 | 失败恢复和待消费状态回滚 |
-| `SessionEnd` | 运行会话终止 | 不保证等于用户归档 |
+- **公开（P1）**：WorkBuddy `37.10.3-24` 随安装包发布的 `plugins-reference.md` 在“可用事件”表中
+  明确列出，可作为插件配置依据；
+- **有限公开（P2）**：随安装包发布的 `hooks.md` 提及，但插件参考表没有给出完整契约，
+  上线前必须用当前版本探针验证；
+- **非公开（I）**：只在打包后的内部运行时代码中出现，没有公开插件契约，禁止生产依赖。
 
-完整文档实际列出 27 类事件。缓存中旧版 `plugin-dev` 文档只列九类，不能再作为完整
-事件清单依据。
+WorkBuddy `37.10.3-24` 可核对到的 **27 类文档 Hook** 如下。其中 26 类为 P1，`Setup` 为
+P2；表后的 `FinalStop` 是额外发现的内部事件，不计入这 27 类。
+
+| # | Hook | 发生点 | 典型匹配/说明 | 对 Agent Hint 的作用 | 公开级别 |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | `SessionStart` | 新会话建立，或既有会话以 `resume`、`clear`、`compact` 等来源重新进入运行态时 | matcher 可按启动来源过滤；来源值必须以实测 payload 为准 | `start` 的主要候选信号；不能仅凭事件名区分新建与恢复 | 公开（P1） |
+| 2 | `UserPromptSubmit` | 用户提交的 Prompt 进入 Agent 处理之前 | 内部命令等非普通用户消息可能不触发 | 辅助确认下一次会话业务请求；不能直接改顶层请求体 | 公开（P1） |
+| 3 | `PreToolUse` | Agent 已生成工具名和参数、工具真正执行之前 | matcher 通常匹配工具名；可阻止或修改工具输入 | 只能在“启动子 Agent 的工具调用”路径上提供前置信号；此时通常尚无权威 child session ID | 公开（P1） |
+| 4 | `PermissionRequest` | WorkBuddy 准备向用户展示工具权限确认时 | 与需要审批的工具调用关联 | 与 Hint 注入无直接关系 | 公开（P1） |
+| 5 | `PermissionDenied` | 自动权限判定拒绝某次工具调用时 | 可返回重试等决策，具体字段依当前 schema | 与 Hint 注入无直接关系 | 公开（P1） |
+| 6 | `PostToolUse` | 工具成功完成并产生结果之后 | matcher 通常匹配工具名 | 可观测子 Agent 启动工具是否成功，但不能替代 `SubagentStart` | 公开（P1） |
+| 7 | `PostToolUseFailure` | 工具执行失败之后 | 提供工具及失败上下文 | 可用于回滚由 `PreToolUse` 建立的候选状态 | 公开（P1） |
+| 8 | `Notification` | WorkBuddy 产生通知时 | 文档涉及权限提示、空闲提示、认证成功等类型；部分类型支持度需实测 | 不代表模型请求或会话生命周期 | 公开（P1） |
+| 9 | `SubagentStart` | 子 Agent 实例已经创建并开始运行时 | 应探针确认 `session_id`、`agent_id`、`parent_session_id` 的真实字段和稳定性 | 子会话 `start` 的正确候选信号，优于 `PreToolUse` | 公开（P1） |
+| 10 | `SubagentStop` | 子 Agent 完成或停止时 | 必须区分正常完成、失败及取消（若 payload 提供） | 子 Agent `stop` 的候选信号；子 Agent 不设计 `pause/resume` | 公开（P1） |
+| 11 | `TaskCreated` | Agent 通过任务机制创建任务记录时 | 对应任务系统，不等同于新 Agent 会话 | 不可当作 session `start` | 公开（P1） |
+| 12 | `TaskCompleted` | 任务记录被标记完成时 | 对应任务系统状态 | 不可当作 session `stop` | 公开（P1） |
+| 13 | `Stop` | 主 Agent 完成当前一轮响应并准备停止本轮生成时 | 是 turn 结束，不是会话销毁 | 可作回合观测；**不能映射为 `session_control.stop`** | 公开（P1） |
+| 14 | `StopFailure` | 当前 Agent 轮次因模型/API 等失败而终止时 | 普通脚本退出码不一定代表该事件 | 可用于保留或回滚尚未消费的 Hint | 公开（P1） |
+| 15 | `TeammateIdle` | 团队模式成员即将进入空闲态时 | 仅团队/多 Agent 协作场景 | 不等于主会话 `pause` | 公开（P1） |
+| 16 | `InstructionsLoaded` | `CODEBUDDY.md`、rules 等指令文件被装载时 | matcher/输入可能包含指令来源 | 与请求生命周期无直接关系 | 公开（P1） |
+| 17 | `ConfigChange` | 会话运行期间配置发生变化时 | 具体配置范围和敏感字段需按文档/schema处理 | 可观测模型配置变化，不产生 Hint | 公开（P1） |
+| 18 | `CwdChanged` | 当前工作目录发生切换时 | 输入包含新旧目录的程度需实测 | 与 Hint 注入无直接关系 | 公开（P1） |
+| 19 | `FileChanged` | WorkBuddy 监控到目标文件变化时 | matcher 可按文件名/路径匹配 | 与 Hint 注入无直接关系 | 公开（P1） |
+| 20 | `WorktreeCreate` | `--worktree` 或隔离执行创建 Git worktree 时 | 是执行环境生命周期，不是会话生命周期 | 不可当作 session `start` | 公开（P1） |
+| 21 | `WorktreeRemove` | 会话退出或隔离任务完成后移除 worktree 时 | 是执行环境清理 | 不可当作 session `stop` | 公开（P1） |
+| 22 | `PreCompact` | 上下文压缩动作开始、原上下文被压缩之前 | matcher 可区分 `manual`/`auto`（以实测值为准） | `compact` 的主要前置信号；仍需与实际模型请求精确关联 | 公开（P1） |
+| 23 | `PostCompact` | 上下文压缩动作完成之后 | 可检查压缩是否完成 | 用于确认、清理或回滚 `compact` 待消费状态 | 公开（P1） |
+| 24 | `Elicitation` | MCP Server 在工具调用过程中请求用户补充输入时 | 属于 MCP 用户交互链 | 不能修改模型请求体 | 公开（P1） |
+| 25 | `ElicitationResult` | 用户对 MCP elicitation 作答后、结果返回 MCP Server 之前 | 与对应 elicitation 关联 | 不能修改模型请求体 | 公开（P1） |
+| 26 | `SessionEnd` | 当前运行会话结束时 | 文档原因包括 `clear`、`logout`、`prompt_input_exit`、`other` 等 | 只能作为运行会话终止候选；不保证等于 UI“归档”，不能直接映射 `stop` | 公开（P1） |
+| 27 | `Setup` | 启动/维护类初始化阶段；`hooks.md` 提及该事件 | 插件参考事件表未给 matcher、payload 和稳定触发契约 | 当前不用于 Hint；必须先通过探针确认 | **有限公开（P2，契约不完整）** |
+
+#### 3.2.1 非公开内部事件
+
+内部运行时枚举还包含 `FinalStop`。它未出现在 `plugins-reference.md` 的可用事件表，也未
+形成公开 Hook 配置契约，因此标记为 **非公开（I）**，且不计入上述 27 类文档 Hook。
+虽然名称看起来像“最终停止”，也不得据此推断它等于用户归档或将其映射为
+`session_control.type=stop`。除非 WorkBuddy 官方公开其触发语义、payload 和兼容性保证，
+本方案不会注册、监听或依赖该事件。
+
+缓存中的旧版 `plugin-dev` 文档只列九类事件，是过时的不完整子集，不能作为事件全集
+依据。上述“公开”仅表示随产品安装包发布了插件契约，不表示 Hook 能修改模型请求；
+所有 Hook 仍受第 3.3 节所述输出边界约束。
 
 ### 3.3 Hook 输出边界
 
@@ -126,8 +164,10 @@ MCP 和 LSP 等组件组成。Hook 支持 `command`、`http`、`prompt`、`agent
 ### 3.4 模型配置边界
 
 安装包内 `models.md` 公开字段包括 `id/name/vendor/apiKey/url/temperature`、token 上限和
-能力标记，没有任意请求体扩展字段。此前针对 WorkBuddy 5.4.7 的黑盒测试也确认，
-在自定义模型配置中添加 `extraBody.agent_hint` 不会出现在模型服务收到的请求中。
+能力标记，没有任意请求体扩展字段。此前针对 WorkBuddy 5.4.7 的黑盒测试确认，
+在自定义模型配置中添加 `extraBody.agent_hint` 不会出现在模型服务收到的请求中；由于
+软件已经更新，该结果只能作为历史证据，必须在 `37.10.3-24` 上重新执行同一测试，
+不能直接推断新版本行为完全一致。
 
 ### 3.5 内部 ModelRequestProcessor
 
@@ -361,7 +401,7 @@ WorkBuddy 模型请求 ───────────> 虚拟模型网关
 | Hook 单独 POST 控制请求 | 不属于原模型请求，改变了协议语义 |
 | `additionalContext` 注入 JSON 文本 | 进入 messages，不是顶层 body 字段 |
 | MCP Elicitation | 是工具交互协议，不是模型传输拦截器 |
-| `models.json.extraBody` | 非公开字段，5.4.7 黑盒测试未透传 |
+| `models.json.extraBody` | 非公开字段；5.4.7 黑盒测试未透传，`37.10.3-24` 尚待复测 |
 | 读取“最近会话” | 并发下串会话 |
 | 直接调用内部 DI 容器 | 依赖 bundle 私有符号，侵入且升级易失效 |
 | 修改 `app.asar` | 破坏签名/升级兼容性，不符合非侵入要求 |
@@ -370,6 +410,7 @@ WorkBuddy 模型请求 ───────────> 虚拟模型网关
 
 ### Phase 0：证据探针
 
+- 在 `37.10.3-24` 重新验证 `models.json.extraBody` 和模型请求 headers/body，淘汰旧版本假设；
 - 通过本地市场安装最小 Hook 探针；
 - 捕获 27 类相关 Hook 的真实 payload；
 - 用 Mock 模型服务捕获请求 body 和 headers；
@@ -446,7 +487,7 @@ Mock 模型服务必须直接收到：
 
 ## 12. 调研依据
 
-- WorkBuddy 5.4.7 安装包内 CLI 文档：
+- WorkBuddy `37.10.3-24` 安装包内 CLI 文档：
   `resources/app.asar.unpacked/cli/dist/web-ui/docs/cn/cli/hooks.md`
 - WorkBuddy 插件参考：
   `resources/app.asar.unpacked/cli/dist/web-ui/docs/cn/cli/plugins-reference.md`
