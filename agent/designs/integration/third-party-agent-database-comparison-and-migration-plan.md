@@ -11,7 +11,7 @@ status: draft
 > 适用范围：AgentOS Control Panel 三方智能体管理、Agent 注册中心  
 > 代码基线：管理面 `master` 分支  
 > 注册中心契约：`registry_openapi.yaml`，OpenAPI 0.1.0  
-> 关联设计：`third-party-agent-artifact-image-factory-design-v2.md`
+> 关联设计：[`third-party-agent-artifact-image-factory-design-v2.md`](../image-factory/third-party-agent-artifact-image-factory-design-v2.md)
 
 ## 1. 结论
 

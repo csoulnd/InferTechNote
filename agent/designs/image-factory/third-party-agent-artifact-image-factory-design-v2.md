@@ -10,7 +10,7 @@ status: active
 > 文档状态：评审稿，未定稿  
 > 适用范围：AgentOS Control Panel 三方 Agent 管理模块、`image_process` 镜像处理服务  
 > 代码基线：`refactor/image_process`，`86f565d`（不含其后的 openclaw/node 安装模式改动）  
-> 历史参考：`containerized-build.md`、`third-party-agent-integration-guide.md`  
+> 历史参考：`containerized-build.md`、[`third-party-agent-integration-guide.md`](../integration/third-party-agent-integration-guide.md)  
 > 上传门禁参考：OWASP [File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html)（实践清单，非代码依赖）  
 > 说明：本文是面向后续扩展的新版本总体设计，不替代或覆盖旧版设计文档。
 

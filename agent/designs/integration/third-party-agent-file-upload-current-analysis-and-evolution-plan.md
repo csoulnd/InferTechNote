@@ -60,9 +60,9 @@ date: 2026-09-03
 
 本文主要对照：
 
-- `third-party-agent-database-comparison-and-migration-plan.md`
-- `third-party-agent-artifact-image-factory-design-v2.md`
-- `third-party-agent-integration-guide.md`
+- [`third-party-agent-database-comparison-and-migration-plan.md`](./third-party-agent-database-comparison-and-migration-plan.md)
+- [`third-party-agent-artifact-image-factory-design-v2.md`](../image-factory/third-party-agent-artifact-image-factory-design-v2.md)
+- [`third-party-agent-integration-guide.md`](./third-party-agent-integration-guide.md)
 
 其中数据库迁移文档状态为 `draft`。正式开发前仍需冻结新版注册中心 OpenAPI、字段含义和幂等语义。
 

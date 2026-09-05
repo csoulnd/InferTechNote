@@ -48,4 +48,4 @@ Claude Code 无 HTTP Server，SSH + CLI 是通用方案。
 - `jiuwenswarm/gateway/` — SSH channel 实现
 - 对照 [00 全局架构](../architecture/overview.md) 路径 A/B 时序图
 
-走读笔记：[SSH 双路径](../../../agent/study-notes/integration/ssh-passthrough.md) · 需求深读：[third-party-agent-agentos-requirements.md](../../../agent/designs/third-party-agent-agentos-requirements.md)
+走读笔记：[SSH 双路径](../../../agent/study-notes/integration/ssh-passthrough.md) · 需求深读：[third-party-agent-agentos-requirements.md](../../../agent/designs/requirements/third-party-agent-agentos-requirements.md)
