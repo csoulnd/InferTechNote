@@ -1,6 +1,12 @@
-# WorkBuddy 原生 Hook 生命周期控制详细设计
+# WorkBuddy Agent Hint 插件端到端设计
 
-[English](./native-hook-lifecycle-design.md)
+## 文档状态
+
+- 设计状态：第一阶段已实现，待 WorkBuddy 桌面端黑盒验收
+- 适用版本：WorkBuddy 5.4.7
+- 插件版本：0.2.0
+- 实现目录：`AgentBox-Platform/AgentBox-Boost/WorkBuddy`
+- 正式能力：主会话 `start`、主会话 `compact`
 
 ## 1. 方案结论
 
@@ -26,10 +32,41 @@ WorkBuddy 公开 Hook
 - Electron 注入、UI 自动化或内部数据库写入；
 - 根据最近活动会话、窗口标题或随机 UUID 猜测会话身份。
 
-仓库中的 `proxy/` 只保留为早期请求体兼容性探针，不属于正式部署架构，也不得在
-安装说明中要求用户启用。
+正式实现不包含任何代理服务。实现仓库若仍存在早期代理探针，发布、安装、启动和
+验收流程均不得引用它，后续代码清理时应将其删除。
 
-## 2. 控制接口
+## 2. WorkBuddy 桌面端接入依据
+
+本方案不是把插件安装到外部 CodeBuddy CLI 的 `~/.codebuddy/plugins` 后期待桌面端
+复用。插件通过 WorkBuddy 自己的本地市场安装到 `~/.workbuddy/plugins`。
+
+WorkBuddy 5.4.7 本机运行证据包括：
+
+- 桌面端启动内部 `__workbuddy_cli_host__`；
+- 内部 Host 日志显示 `PluginManager` 加载 `.workbuddy/plugins` 下的 marketplaces
+  和 installed plugins；
+- `~/.workbuddy/settings.json` 使用 `enabledPlugins` 管理启用状态；
+- WorkBuddy 内置 `sheetagent` 和 `tencent-docx` 插件已经通过 `hooks/hooks.json`
+  注册 `SubagentStop`、`SessionStart` 等命令 Hook。
+
+因此预期加载链为：
+
+```text
+WorkBuddy Electron
+        ↓
+WorkBuddy 内部 CLI Host
+        ↓
+~/.workbuddy/plugins 中的市场和插件
+        ↓
+插件 hooks/hooks.json
+        ↓
+hooks/lifecycle.mjs
+```
+
+这些证据证明桌面端具备插件与 Hook 加载链，但第三方本地插件仍必须通过第 10 节的
+黑盒验收，才能标记为已完成桌面兼容验证。
+
+## 3. 控制接口
 
 插件通过环境变量读取接口地址：
 
@@ -61,7 +98,7 @@ Content-Type: application/json
 强制要求 `agent_hint` 附着于原始模型推理请求，则公开 Hook 无法在上述非侵入约束
 下完成接入，需要修改上游协议，而不是引入本地网关装饰器。
 
-## 3. 目标 type 与接入能力
+## 4. 目标 type 与接入能力
 
 业务目标包含五种 `session_control.type`：
 
@@ -86,19 +123,19 @@ start / pause / resume / compact / stop
 未接入：pause、resume、stop
 ```
 
-## 4. 不能完整实现的核心原因
+## 5. 不能完整实现的核心原因
 
 不能完整实现五种 type 的原因不是插件代码量或工程复杂度，而是 WorkBuddy 当前
 公开扩展契约没有提供足够的权威信号和身份信息：
 
-### 4.1 缺少桌面对话激活状态 Hook
+### 5.1 缺少桌面对话激活状态 Hook
 
 公开 Hook 面向 Agent 运行过程，不面向桌面 UI 导航。当前没有公开的
 `ConversationActivated`、`ConversationDeactivated`、`WindowFocus` 或等价事件。
 因此插件无法准确知道用户何时切出某个对话，也无法据此发送 `pause`；同样无法
 知道用户何时切回原对话并开始继续，从而不能精准发送桌面语义的 `resume`。
 
-### 4.2 相似事件的语义层级不同
+### 5.2 相似事件的语义层级不同
 
 - `Stop` 表示当前 Agent 回合准备结束，一个会话中可以多次发生，不表示会话销毁；
 - `SessionEnd` 表示 Agent 运行会话结束，可能由退出、清空、关闭或异常触发，没有
@@ -109,21 +146,21 @@ start / pause / resume / compact / stop
 将这些相似信号强行映射会产生错误的资源管理操作，例如每次回答完成都销毁 KV，
 或把应用重启后的恢复错误解释为用户切回窗口。
 
-### 4.3 子 Agent 身份没有完整公开
+### 5.3 子 Agent 身份没有完整公开
 
 `PreToolUse(tool_name=Agent)` 发生在子 Agent 实际创建之前，只能取得父会话 ID；
 此时真实子会话 ID 可能尚未生成。`SubagentStop` 虽能证明子 Agent 已结束，但公开
 `session_id` 可能仍被解析为父会话 ID，且 `agent_id` 没有契约保证等于子会话 ID。
 因此无法同时精确填写子 Agent 的 `sessionid` 与 `parent_sessionid`。
 
-### 4.4 Hook 没有原模型请求体修改权
+### 5.4 Hook 没有原模型请求体修改权
 
 公开 Hook 可以执行命令、发送独立请求、返回上下文或决策，但没有公开能力修改
 WorkBuddy 已构造的模型 HTTP 请求体。在已经明确不接受本地网关装饰器、也不侵入
 WorkBuddy 的条件下，只能要求 AgentBox 提供独立生命周期控制接口，不能把 Hint
 强行追加到原始推理请求。
 
-### 4.5 精准性要求排除了推断方案
+### 5.5 精准性要求排除了推断方案
 
 窗口标题、最近活动会话、日志时间顺序、随机 UUID、`agent_id` 或“最近一次 Hook”
 都不是权威关联字段。在并发对话、子 Agent 或重试场景下，这些推断会串会话。
@@ -132,9 +169,9 @@ WorkBuddy 的条件下，只能要求 AgentBox 提供独立生命周期控制接
 插件不得把 `Stop` 映射为 `stop`。`Stop` 是一次 Agent 执行回合准备结束，同一个
 会话可重复触发；`SessionEnd` 是运行会话结束，也没有公开保证其原因是用户归档。
 
-## 5. 精确事件映射
+## 6. 精确事件映射
 
-### 5.1 start
+### 6.1 start
 
 输入必须同时满足：
 
@@ -160,7 +197,7 @@ WorkBuddy 的条件下，只能要求 AgentBox 提供独立生命周期控制接
 
 `source=resume` 或 `source=compact` 不得错误发送 `start`。
 
-### 5.2 compact
+### 6.2 compact
 
 输入必须同时满足：
 
@@ -185,7 +222,7 @@ WorkBuddy 的条件下，只能要求 AgentBox 提供独立生命周期控制接
 
 采用 `PreCompact` 而非压缩后的信号，保证控制请求在上下文被压缩之前到达。
 
-## 6. 子 Agent 边界
+## 7. 子 Agent 边界
 
 当前版本不发送子 Agent 生命周期控制：
 
@@ -198,7 +235,7 @@ WorkBuddy 的条件下，只能要求 AgentBox 提供独立生命周期控制接
 在 WorkBuddy 公开稳定的 `child_session_id` 和 `parent_session_id` 之前，不得用候选
 字段发送子 Agent 的 `start` 或 `stop`。
 
-## 7. 失败、安全和幂等
+## 8. 失败、安全和幂等
 
 - Hook 缺少非空 `session_id` 时不发送请求；
 - 未配置控制接口时记录原因并允许 WorkBuddy 继续；
@@ -209,7 +246,17 @@ WorkBuddy 的条件下，只能要求 AgentBox 提供独立生命周期控制接
 - 服务端应以 `(sessionid, type, event-id/time-window)` 实现幂等，防止 Hook 重试造成重复创建或压缩；
 - 客户端不得自动重试 `start` 或 `compact`，除非协议提供明确幂等键。
 
-## 8. 安装与运行
+## 9. 实现、安装与运行
+
+实现文件：
+
+| 文件 | 职责 |
+| --- | --- |
+| `.codebuddy-plugin/plugin.json` | 插件清单和版本 |
+| `marketplace/.codebuddy-plugin/marketplace.json` | 本地市场注册 |
+| `hooks/hooks.json` | 注册 `SessionStart` 和 `PreCompact` |
+| `hooks/lifecycle.mjs` | 校验事件、构造 Hint、调用控制接口 |
+| `Tests/lifecycle.test.mjs` | 生命周期映射与 HTTP 请求单元测试 |
 
 本地市场安装：
 
@@ -222,9 +269,10 @@ WorkBuddy 的条件下，只能要求 AgentBox 提供独立生命周期控制接
 插件通过 `hooks/hooks.json` 注册 `SessionStart` 和 `PreCompact`，二者调用同一个
 `hooks/lifecycle.mjs`。脚本按事件运行，不是常驻服务。
 
-## 9. 验收标准
+## 10. 端到端验收
 
-使用本地 Mock 控制接口分别验收：
+在 WSL 或本机启动只记录请求的 Mock 控制接口，然后从 WorkBuddy 桌面端完成本地
+市场安装和真实操作，分别验收：
 
 1. 新建会话触发一次 `start`，`sessionid` 等于 Hook 的 `session_id`；
 2. 恢复会话不会被误报为 `start`；
@@ -234,7 +282,19 @@ WorkBuddy 的条件下，只能要求 AgentBox 提供独立生命周期控制接
 6. WorkBuddy 自定义模型 URL 在安装前后保持完全不变；
 7. 不存在需要长期运行的本地代理进程。
 
-## 10. 后续扩展门槛
+验收必须保存以下证据：插件安装成功信息、内部 CLI Host 的插件加载日志、Mock
+服务收到的请求时间和 JSON。单元测试通过只能证明映射逻辑正确，不能代替桌面端
+Hook 实际触发证明。
+
+## 11. 发布与回滚
+
+- 发布物只包含插件清单、Hook、脚本和必要说明，不包含代理服务；
+- 升级通过本地市场版本完成，不修改 WorkBuddy 安装目录；
+- 禁用或卸载插件后不再产生控制请求；
+- 控制接口故障不影响原模型请求；
+- 回滚不需要恢复模型 URL，因为本方案从未修改模型配置。
+
+## 12. 后续扩展门槛
 
 只有满足以下条件才增加新 type：
 
