@@ -135,7 +135,7 @@ class ExtensionRegistry:
 
 ### 2.3 ExtensionLoader — 加载器
 
-文件：`extensions/loader.py`
+文件：`extensions/loader.py`。这里的 `extension.yaml` 是扩展的 [Manifest 清单](../../knowledge/agent/concepts/manifest.md)，供加载器在导入实现代码前解析声明信息。
 
 加载器负责将磁盘上的扩展目录变成内存中的可执行模块。核心流程：
 
@@ -411,5 +411,5 @@ async def register_extensions(registry):
 ## Knowledge Extraction
 
 - [ ] Review which conclusions remain valid outside this task or release.
-- [ ] Update existing atomic knowledge before creating a new note.
-- [ ] Link extracted knowledge here and add this document under its `Applied In` section.
+- [x] Update existing atomic knowledge before creating a new note.
+- [x] 已抽取通用知识：[Manifest 清单](../../knowledge/agent/concepts/manifest.md)

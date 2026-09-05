@@ -201,7 +201,7 @@ Cursor已有 Headless Agent CLI及 JSON输出能力，适合 CI，但认证对�
 
 ### 4.3 推荐镜像公共约定
 
-不同 Coding Agent镜像应尽量暴露统一约定：
+不同 Coding Agent镜像应尽量暴露统一约定，并通过结构化 [Manifest 清单](../../knowledge/agent/concepts/manifest.md)描述 Agent 能力与协议：
 
 ```text
 /workspace                 用户项目卷
@@ -222,7 +222,7 @@ AGENTOS_WORKSPACE=/workspace
 AGENTOS_SESSION_DIR=/agent-home
 ```
 
-镜像 Manifest至少声明：交互模式、启动命令、Headless命令、PTY需求、健康检查、模型协议、工具调用要求、配置目录、会话目录和许可证来源。
+镜像 Manifest 至少声明：交互模式、启动命令、Headless命令、PTY需求、健康检查、模型协议、工具调用要求、配置目录、会话目录和许可证来源。
 
 ## 5. 通用 Agent 与 Agent 平台
 
@@ -369,5 +369,5 @@ AgentOS的三方生态不应简单等同于“支持多少个 Agent名称”，�
 ## Knowledge Extraction
 
 - [ ] Review which conclusions remain valid outside this task or release.
-- [ ] Update existing atomic knowledge before creating a new note.
-- [ ] Link extracted knowledge here and add this document under its `Applied In` section.
+- [x] Update existing atomic knowledge before creating a new note.
+- [x] 已抽取通用知识：[Manifest 清单](../../knowledge/agent/concepts/manifest.md)

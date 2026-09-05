@@ -12,7 +12,7 @@ Reusable knowledge that should remain meaningful after an individual project, de
 ## Recommended path
 
 1. [Architecture overview](architecture/overview.md)
-2. Core mechanisms: [Agent Loop](concepts/agent-loop.md), [Agent Hint](concepts/agent-hints.md), [Hook](concepts/hook-mechanism.md), and [Cordis](concepts/cordis-plugin-runtime.md)
+2. Core mechanisms: [Agent Loop](concepts/agent-loop.md), [Agent Hint](concepts/agent-hints.md), [Manifest](concepts/manifest.md), [Hook](concepts/hook-mechanism.md), and [Cordis](concepts/cordis-plugin-runtime.md)
 3. Protocol terms: [MCP and ACP](concepts/protocols/README.md)
 4. [Infrastructure concepts](concepts/infrastructure/README.md)
 5. [Claude Code](products/claude-code/README.md) or [OpenCode](products/opencode/README.md)
