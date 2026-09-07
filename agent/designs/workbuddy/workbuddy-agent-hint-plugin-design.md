@@ -1,15 +1,53 @@
-# WorkBuddy Agent Hint 插件端到端设计
+# WorkBuddy Agent Hint 插件端到端设计与穿刺总结
+
+> 文档入口：[WorkBuddy Agent Hint 穿刺总结](./workbuddy-agent-hint-spike-summary.md)。
+> 前置产品与安装调研见
+> [WorkBuddy 桌面版模型与 Hint 插件调研](./workbuddy-overview-installation-and-web-model-support.md)。
 
 ## 文档状态
 
-- 状态：架构重设计，待原生扩展点确认和黑盒验证
+- 状态：第一阶段穿刺完成；`start` 已通过真实 WorkBuddy → Mock 模型服务端到端验证，
+  `compact` 已完成代码穿刺和路径分析但尚未覆盖全部真实分支
 - 当前调研基线：WorkBuddy `37.10.3-24`（本机 `version` 文件，安装内容更新时间
   2026-09-04）
 - 历史验证版本：WorkBuddy 5.4.7；历史黑盒结论必须在当前版本重新验证
 - 目标：在 WorkBuddy 发出的真实模型请求体中追加 `agent_hint`
-- 主方案：公开生命周期 Hook + 原生模型请求处理器扩展
+- 当前穿刺方案：本地 Marketplace + 版本锁定的 CLI Host 请求链补丁；`start` 在请求发送点
+  直接判定，`compact` 结合 Hook 队列和内部 request purpose
+- 产品化目标：公开生命周期 Hook + 官方原生模型请求处理器扩展
 - 保底方案：公开生命周期 Hook + 虚拟模型网关
 - 明确废弃：Hook 单独向控制接口发送 `agent_hint` 不能替代修改模型请求
+
+### 0.1 代码与提交基线
+
+- 开发目录：`AgentBox-Platform/WorkBuddy/`，不依赖 `AgentBox-Boost` 子模块；
+- 开发分支：`feature/support_wb_hint`；
+- 穿刺总结提交：`fc9c43f`（`feat: add root-level WorkBuddy agent hint spike`）；
+- 本机安装目录：`C:\Users\dai\AppData\Local\Programs\WorkBuddy`；
+- 运行时补丁目标：`resources/app.asar.unpacked/cli/dist/codebuddy.js`；
+- 外置请求处理器：同目录下的 `agentbox-agent-hint-processor.cjs`。
+
+### 0.2 穿刺结论摘要
+
+本轮穿刺已经证明：在不修改自定义模型 URL、不运行代理服务的前提下，可以在 WorkBuddy
+内部 CLI Host 构造模型请求之后、执行原有 processor 之前，为真实请求 JSON body 追加
+顶层 `agent_hint`。Mock 服务已经直接收到带真实会话 ID 的 `start` 请求。
+
+同时也证明：公开 Hook 并不是模型请求拦截器，且不同压缩策略对 Hook 的调用并不一致。
+因此本轮实现不是“纯插件”，而是“公开 Marketplace 负责可用生命周期信号 + 版本锁定补丁
+负责请求装饰”的穿刺组合。该实现适合验证协议和产品价值，不适合作为无需维护的长期发布形态。
+
+### 0.3 修改边界
+
+| 类别 | 仓库内容 | 是否修改 WorkBuddy 后台 |
+| --- | --- | --- |
+| 本地 Marketplace | `.codebuddy-plugin/marketplace.json`、插件 manifest、`hooks.json`、`lifecycle.mjs` | 不修改原始文件，但由内部 CLI Host 加载并执行 Node Hook |
+| 请求链穿刺 | `runtime-patch/agent-hint-processor.cjs` | **是**，在模型请求发送前修改 `request.data` |
+| 安装与卸载 | `runtime-patch/install.ps1`、`uninstall.ps1`、`signatures.json` | **是**，对已安装的 `codebuddy.js` 插入/移除一处版本锁定调用，并复制外置 processor |
+| 测试与说明 | `Tests/`、`README.md`、`README.zh.md` | 否 |
+
+没有修改 WorkBuddy 渲染层、页面组件或 Electron UI；侵入点仅位于内部 CLI Host 的模型
+请求链。安装脚本保留原 bundle 备份，卸载脚本只识别带明确 marker 的穿刺代码。
 
 ## 1. 需求与验收口径
 
@@ -194,7 +232,8 @@ for processor by priority:
 
 这个位置具备修改 `request.data` 的能力，正是追加顶层 `agent_hint` 的正确扩展点。但
 它通过 WorkBuddy 内部依赖注入容器注册，当前插件 manifest、Hook、MCP 和公开 SDK
-均没有暴露注册入口。直接引用 bundle 内部模块属于侵入式实现，不作为正式方案。
+均没有暴露注册入口。直接引用 bundle 内部模块属于侵入式实现，不作为长期正式方案；
+但在当前穿刺开发阶段允许采用版本锁定、可校验、可回滚的最小补丁验证端到端能力。
 
 ## 4. 现有插件调研
 
@@ -231,16 +270,17 @@ start / pause / resume / compact / stop
 
 | type | 目标语义 | 可用信号 | 当前精度 |
 | --- | --- | --- | --- |
-| `start` | 新主会话第一次模型请求 | `SessionStart(source=startup|clear)` | 可识别，待与请求处理器连接 |
-| `compact` | 上下文压缩对应模型请求 | `PreCompact` + `PostCompact` | 可识别，待与请求处理器连接 |
+| `start` | 新主会话第一次模型请求 | 请求发送点的 `X-Conversation-ID` + `X-Agent-Purpose=conversation` | **已实现并通过端到端验收**；不再依赖存在竞态的 `SessionStart/UserPromptSubmit` 队列 |
+| `compact` | 上下文压缩关联的模型请求 | `PreCompact` 队列；`conversation:compact` 内部 purpose | **部分实现**；Blocking 路径可用 Hook，PreMessage 路径可能绕过 Hook 且完全不请求模型 |
 | `pause` | 用户切出当前桌面对话 | 无公开桌面失活 Hook | 不可精准实现 |
 | `resume` | 用户切回并继续原桌面对话 | runtime `source=resume` 不保证等于 UI 切回 | 不可精准实现 |
 | `stop` | 用户归档并销毁会话 | `Stop` 是回合结束；`SessionEnd` 不保证归档 | 不可精准实现 |
 
-第一阶段只承诺主会话 `start` 和 `compact`。子 Agent 要求同时取得真实 child session
-ID 与 parent session ID，必须经过 payload 黑盒验证后再启用。
+第一阶段已经完成主会话 `start` 穿刺；`compact` 保留为实验能力，不宣称全路径验收完成。
+子 Agent 要求同时取得真实 child session ID 与 parent session ID，必须经过 payload 黑盒
+验证后再启用。
 
-## 6. 主方案：公开 Hook + 原生请求处理器扩展
+## 6. 产品化目标：公开 Hook + 原生请求处理器扩展
 
 ### 6.1 方案定位
 
@@ -290,7 +330,7 @@ interface PreModelRequestOutput {
 安全要求：插件只能追加 allowlist 字段，默认不能修改 URL、Authorization、messages、
 tools 或模型参数；WorkBuddy 负责结构校验、超时和冲突处理。
 
-### 6.3 start 时序
+### 6.3 产品化方案中的 start 时序
 
 ```text
 SessionStart(startup|clear)
@@ -303,7 +343,7 @@ UserPromptSubmit
 
 必须排除 hook evaluator、标题生成、摘要等后台模型请求，避免 `start` 被错误消费。
 
-### 6.4 compact 时序
+### 6.4 产品化方案中的 compact 时序
 
 ```text
 PreCompact(session_id)
@@ -348,6 +388,94 @@ PostCompact
 5. 在 Windows/macOS WorkBuddy 桌面内部 CLI Host 中保持一致。
 
 在这些条件满足前，主方案处于“架构可行、公开接口缺失”状态，不能声称已经实现。
+
+### 6.7 当前穿刺实现：本地 Marketplace + CLI Host 补丁
+
+在暂时无法推动官方 `PreModelRequest`/`ModelRequestProcessor` 扩展的情况下，当前阶段
+直接对 WorkBuddy `37.10.3-24` 的 unpacked CLI Host bundle 做最小补丁。该方案不修改
+模型 URL、不引入代理，并且仍保留本地 Marketplace 作为生命周期接入方式。
+
+```text
+                         start 路径
+模型请求对象 eR 创建 ──────────────────────────────────────────┐
+  │ 读取 X-Conversation-ID / X-Agent-Purpose                  │
+  │ purpose=conversation 且该 session 尚无 marker             │
+  └───────────────────────> 生成 start ───────────────────────┤
+                                                               ▼
+PreCompact（仅调用 Hook 的策略）                      eR.data.agent_hint
+  │ 按 session_id 写 JSONL                                   │
+  └──> pending/<session-hash>.jsonl ──> 精确匹配并消费 ───────┤
+                                                               │
+PreMessage 本地压缩                                           │
+  └──> 后续 purpose=conversation:compact ──> 生成 compact ─────┤
+                                                               ▼
+                                      原有 processors → gzip → 原 URL
+```
+
+实际修改内容限定为：
+
+1. Marketplace 插件：当前仅注册 `PreCompact`；Hook 不独立发送 HTTP，而是写入按 session
+   分区的待消费队列；
+2. 外置请求处理模块：只修改 `request.data.agent_hint`，不修改 URL、鉴权、messages、
+   tools 或模型参数；
+3. `codebuddy.js`：在唯一锚点插入一条外置处理模块调用；
+4. 安装/卸载脚本：校验 WorkBuddy 版本、原 bundle SHA-256、唯一锚点和补丁标记，备份
+   原文件并支持幂等安装与精确回滚；
+5. 审计日志：只记录 request/session/parent/purpose/type，不记录凭证、Prompt 或完整 body。
+
+当前版本可在 processor 执行时读取 `X-Conversation-ID`、`X-Session-ID`、
+`X-Parent-Conversation-ID`、`X-Agent-Type`、`X-Conversation-Request-ID`、`X-Request-ID` 和
+`X-Agent-Purpose`。自定义模型请求在 processor 执行后才清理这些内部 Header，因此补丁
+可以先完成权威关联，再让原链路继续发送。处理器以 `X-Conversation-ID` 作为主会话 ID；
+消费 Hook 队列时也会尝试 `X-Session-ID`，但从不使用“最近事件”推断。
+
+`start` 的最终穿刺实现有意不依赖 Hook。测试发现 `UserPromptSubmit`/`SessionStart` 产生的
+文件事件可能晚于目标请求，导致第一条请求没有 Hint、下一条请求才消费 start。处理器现
+在对 `purpose=conversation` 的首个请求原子创建 session marker 并立即注入；标题生成使用
+`purpose=conversation_topic`，已明确排除。
+
+`compact` 存在三种实现分支：
+
+1. `PreMessage` 工程压缩结果足够小时完全在本地完成，不产生模型请求；
+2. `PreMessage` 结果仍过大时调用上下文摘要模型；
+3. `Blocking` 兜底策略调用 `executePreCompactHooks` 后运行 Compact Agent。
+
+实测手动 `/compact` 被路由到 `PreMessage`，生成 `<cb_summary>`，但没有执行公开
+`PreCompact` Hook；本地压缩成功时也没有当次模型请求。代码已实验性支持后续请求的
+`purpose=conversation:compact`，但“附着下一次请求”是否符合最终协议语义仍需产品确认。
+
+穿刺补丁绑定以下基线：
+
+```text
+WorkBuddy version: 37.10.3-24
+codebuddy.js SHA-256: 458598ED06E7083F754E6D555245BA2FDA1E2D807F7D244F6C3B206001E4C2B2
+```
+
+软件升级、哈希变化或锚点不唯一时安装器必须拒绝执行。该补丁用于证明能力和完成穿刺
+验收，不改变第 6.1—6.6 节所述长期产品化方向。
+
+### 6.8 穿刺过程中发现并修复的问题
+
+| 问题 | 根因 | 修正 |
+| --- | --- | --- |
+| 新会话首条请求 `agent_hint=null`，第二条才出现 `start` | Hook 与模型请求之间存在文件队列时序竞态 | `start` 改为请求发送点直接判定 |
+| 特定测试文本反复出现 `start` | 测试过程中实际创建了不同 session，旧实现又依赖 Hook 到达时机 | 使用稳定 request header，并按 session 原子去重；测试文本不参与逻辑 |
+| 每条消息的辅助请求也得到 `start` | WorkBuddy 会发送 `purpose=conversation_topic` 的标题请求 | 仅允许 `purpose=conversation` 自动生成 `start` |
+| `/compact` 前端无模型回复，Hook 日志为空 | `PreMessage` 工程压缩可本地完成，且该策略绕过 `PreCompact` Hook | 明确区分压缩策略；增加 `conversation:compact` 实验路径，不把“无请求”误判为失败 |
+| 本地 Marketplace 重复加载 Hook | manifest 显式 hooks 与约定目录自动扫描同时生效 | 移除 manifest 的重复 hooks 声明，只保留约定目录 |
+
+### 6.9 已取得的验证证据
+
+- WorkBuddy 内部 Host 日志确认从 `~/.workbuddy/plugins` 加载
+  `agentbox-agent-hint@agentbox-local`；
+- Mock 服务直接收到主会话首个 `conversation` 请求中的顶层 `agent_hint.start`；
+- 同一 `conversation_id` 的后续请求收到 `agent_hint=null`；
+- `conversation_topic` 辅助请求被排除；
+- 实测会话 `bbc6099b-713b-4edf-9078-53b507f945ac` 的 first/second 请求保持同一 ID，
+  且只在 first 请求注入 start；
+- 代码仓 13 项单元测试通过，覆盖 start 去重、purpose 过滤、parent header、队列隔离和
+  compact 周期；
+- 安装器刷新后，仓库 processor 与安装目录 processor 的 SHA-256 一致。
 
 ## 7. 保底方案：公开 Hook + 虚拟模型网关
 
@@ -403,28 +531,37 @@ WorkBuddy 模型请求 ───────────> 虚拟模型网关
 | MCP Elicitation | 是工具交互协议，不是模型传输拦截器 |
 | `models.json.extraBody` | 非公开字段；5.4.7 黑盒测试未透传，`37.10.3-24` 尚待复测 |
 | 读取“最近会话” | 并发下串会话 |
-| 直接调用内部 DI 容器 | 依赖 bundle 私有符号，侵入且升级易失效 |
+| 直接调用内部 DI 容器 | 当前补丁无需调用私有 DI；直接绑定私有符号比单点请求链补丁更脆弱 |
 | 修改 `app.asar` | 破坏签名/升级兼容性，不符合非侵入要求 |
 
 ## 9. 分阶段实施计划
 
-### Phase 0：证据探针
+### Phase 0：证据探针（已完成核心项）
 
-- 在 `37.10.3-24` 重新验证 `models.json.extraBody` 和模型请求 headers/body，淘汰旧版本假设；
-- 通过本地市场安装最小 Hook 探针；
-- 捕获 27 类相关 Hook 的真实 payload；
-- 用 Mock 模型服务捕获请求 body 和 headers；
-- 验证 `SessionStart`、`PreCompact`、`SubagentStart` 的身份字段；
-- 验证请求是否已有稳定 conversation/request header。
+- 已通过本地市场安装最小 Hook 插件；
+- 已用 Mock 模型服务捕获真实请求 body；
+- 已确认请求处理器阶段存在稳定的 conversation/request/purpose header；
+- 已确认桌面手动 `/compact` 的 PreMessage 路径与公开 `PreCompact` Hook 存在覆盖缺口；
+- 27 类 Hook 已完成文档级清单，尚未逐类完成真实 payload 捕获；
+- `SubagentStart` 和 parent session 的真实桌面场景仍待验证。
 
-### Phase 1：推动原生扩展
+### Phase 1：完成穿刺补丁（start 已完成，compact 部分完成）
+
+- 已安装本地 Marketplace Hook；
+- 已对 `37.10.3-24` 安装版本锁定的 CLI Host 补丁；
+- 已用 Mock 模型服务验收主会话 `start`；
+- 已验证同会话重复请求和标题辅助请求不会重复/错误注入 start；
+- 已保存原 bundle 哈希、备份和精确卸载逻辑；
+- compact 多策略、并发会话、真实子 Agent parent header、gzip/失败重试仍需补充验收。
+
+### Phase 2：推动原生扩展
 
 - 向 WorkBuddy 提交 `PreModelRequest`/`ModelRequestProcessor` 扩展需求；
 - 提供本设计中的最小接口、allowlist 和安全策略；
 - 获得带该扩展的测试版本后实现插件 processor；
 - 验收 `start` 和 `compact` 精确注入。
 
-### Phase 2：保底网关
+### Phase 3：保底网关
 
 仅在原生扩展短期无法提供且业务接受 URL 变化时实施：
 
@@ -433,7 +570,7 @@ WorkBuddy 模型请求 ───────────> 虚拟模型网关
 - 完成本地服务管理和回滚；
 - 通过真实 WorkBuddy → 虚拟网关 → Mock 模型端到端验收。
 
-### Phase 3：扩展生命周期
+### Phase 4：扩展生命周期
 
 只有 WorkBuddy 提供权威事件/身份后，才依次评估子 Agent、`pause`、`resume` 和
 归档 `stop`，不以相似事件替代。
@@ -460,7 +597,8 @@ Mock 模型服务必须直接收到：
 2. 没有本地代理进程；
 3. 首个主会话业务请求只出现一次 `start`；
 4. resume、标题生成和 hook evaluator 不误消费 `start`；
-5. compact 请求只出现一次 `compact`；
+5. 对确实产生模型请求的 compact 分支只出现一次 `compact`；纯本地压缩按最终协议决定
+   附着下一请求或不发送；
 6. 两个并发会话不会串 ID；
 7. 插件失败时行为符合约定且不泄露请求内容。
 
@@ -475,15 +613,23 @@ Mock 模型服务必须直接收到：
 5. 禁用后能恢复原模型 URL；
 6. 不记录 Authorization、Cookie 或 Prompt。
 
-## 11. 当前结论
+## 11. 当前结论与下一阶段建议
 
-- Hook 与模型发送点当前没有公开连接，Hook 不能直接修改原请求；
-- WorkBuddy 内部已有位置正确的 `ModelRequestProcessor` 管线，但尚未对插件开放；
-- 最佳方案是将该能力正式开放，并由 Hook 状态与请求 processor 在进程内精确关联；
-- GuanceCloud 等现有插件证明 Hook 可用，但没有证明请求体可修改；
-- 在官方扩展缺失期间，虚拟模型网关是唯一能实际装饰原请求的保底路径，但只有解决
-  权威会话关联后才满足精准性要求；
-- 现有“Hook 单独发送控制请求”的实现不满足需求，应降级为废弃实验，不进入发布。
+- **穿刺目标已经达到**：已证明 WorkBuddy 原模型 URL 不变且无代理服务时，可以修改真实
+  模型请求 body，并精准完成主会话首请求 `start` 注入；
+- Hook 与模型发送点仍没有公开连接，Hook 不能直接修改原请求；当前成功依赖版本锁定的
+  CLI Host 补丁，不应包装成“纯公开插件能力”；
+- `start` 最可靠的信号不是生命周期 Hook，而是请求发送点的稳定 conversation ID、purpose
+  和首次请求状态；
+- compact 不能只看事件名：PreMessage、MaxToken、Blocking 的 Hook 行为和是否调用模型均
+  不同，必须先定义“本地压缩无模型请求时 Hint 应附着何处”；
+- GuanceCloud 等现有插件证明 Hook 可用于观测和 session 关联，但没有证明请求体可修改；
+- 长期最佳方案仍是官方开放 `PreModelRequest`/`ModelRequestProcessor`，让 lifecycle 与
+  request purpose 在同一进程、同一事务中关联；
+- 虚拟模型网关继续保留为兼容方案，但本项目当前明确不采用；
+- `pause/resume/stop` 缺少与 UI 语义一致且必然伴随模型请求的信号，暂不实现；
+- 下一阶段优先级应为：明确 compact 协议语义 → 验证模型摘要/Blocking 分支 → 验证子
+  Agent 的 child/parent ID → 再评估产品化 API，而不是继续扩展模糊生命周期映射。
 
 ## 12. 调研依据
 

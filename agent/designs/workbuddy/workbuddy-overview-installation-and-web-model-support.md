@@ -2,11 +2,16 @@
 title: "WorkBuddy 桌面版模型与 Hint 插件调研"
 type: work
 domain: agent
-status: draft
-last_updated: 2026-09-04
+status: completed
+last_updated: 2026-09-07
 ---
 
 # WorkBuddy 桌面版模型与 Hint 插件调研
+
+> 本文是 2026-09-04 的前置调研记录，用于说明 WorkBuddy 的安装、模型配置和早期 Hook
+> 假设。后续穿刺已经修正了其中“通过 `additionalContext` 实现顶层 `agent_hint`”的判断。
+> 当前结论请先阅读 [穿刺总结](./workbuddy-agent-hint-spike-summary.md)，技术细节见
+> [端到端设计](./workbuddy-agent-hint-plugin-design.md)。
 
 ## 1. 简介
 
