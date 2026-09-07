@@ -29,6 +29,7 @@ status: active
 | 3. 读源码 | [03-source-walkthrough.md](03-source-walkthrough.md) | 能解释一次 turn 的完整链路 |
 | 4. 做实验 | [04-hands-on-labs.md](04-hands-on-labs.md) | 完成配置检查与最小插件实验 |
 | 5. 深入插件 | [plugin-system.md](plugin-system.md) | 掌握 Cordis Event、Waterfall、Effect/Fiber |
+| 6. 评估 Hint 接入 | [agent-hint-integration-assessment.md](agent-hint-integration-assessment.md) | 判断生命周期、身份关联与请求体扩展能力 |
 
 不要把架构总览当成第一篇必读材料。先理解 Cordis 的四个基础概念，再实际运行 DSH，最后回头看全局架构会更容易。每读一个模块，只问三个问题：它提供什么能力、依赖什么能力、关闭时要清理什么。
 
