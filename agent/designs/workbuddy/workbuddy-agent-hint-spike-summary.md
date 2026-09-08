@@ -363,3 +363,4 @@ body，则需要在 OpenCode 的 provider 请求序列化处增加一个小范�
 
 - [WorkBuddy 桌面版模型与 Hint 前置调研](./workbuddy-overview-installation-and-web-model-support.md)
 - [WorkBuddy Agent Hint 端到端详细设计](./workbuddy-agent-hint-plugin-design.md)
+- [WorkBuddy 原生模型请求与 Agent Hint 线索分析](./workbuddy-native-request-lifecycle-analysis.md)
