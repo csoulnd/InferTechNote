@@ -32,6 +32,7 @@ agent/
 | Understand the reusable architecture | [Agent knowledge](../knowledge/agent/README.md) |
 | Implement third-party Agent requirements | [Agent OS requirements](designs/requirements/third-party-agent-agentos-requirements.md) |
 | Review ecosystem findings | [Investigations](investigations/) |
+| Research Hint-driven inference acceleration | [Agent Hint acceleration and NVIDIA Dynamo](investigations/agent-hint-inference-acceleration-and-nvidia-dynamo.md) |
 | Continue an unfinished study | [Study notes](study-notes/README.md) |
 | Develop and deploy AgentOS | [AgentOS development and deployment guide](dev-guides/agentos-development-deployment.md) |
 

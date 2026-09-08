@@ -184,3 +184,9 @@ parent session ID 可以从同一条请求精确获得。
 WorkBuddy 原生请求没有携带 `agent_hint` 一级 body 字段，但 Header 已经提供当前会话、父会话、
 Agent 类型、请求用途和根调用链等关键原材料。`sessionid`、`parent_sessionid`、子 Agent start 和
 模型 compact 可以在模型请求发送点构造；pause、resume 和 stop 仍需要真实 Hook/Event 补齐。
+
+## 6. 后续调研
+
+这些原生线索如何转化为 KV 复用、路由、预填充和生命周期调度，见
+[基于 Agent Hint 的推理加速原理与 NVIDIA Dynamo 实践](../../investigations/agent-hint-inference-acceleration-and-nvidia-dynamo.md)。
+该调研区分本仓库 `agent_hint` 与 Dynamo 协议，并给出已有实践、支持边界和 WorkBuddy 验证方案。
