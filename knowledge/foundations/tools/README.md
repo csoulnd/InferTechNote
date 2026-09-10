@@ -22,6 +22,11 @@ status: active
    - 理解镜像、容器、卷、网络和 Registry。
    - 掌握 `docker run`、Dockerfile 与 Compose 的基本工作流。
 
+## 进程与服务管理
+
+- [nohup：忽略挂断信号运行命令](nohup.md)
+- [systemd：Linux 系统与服务管理器](systemd.md)
+
 ## 维护规则
 
 ### Git 命令如何逐步添加
@@ -66,4 +71,3 @@ status: active
 
 - [底层隔离与 OCI/Docker](../../agent/concepts/infrastructure/01-sandbox-oci-docker.md)
 - [SSH Channel 接入](../../agent/integration/ssh-channel.md)
-
