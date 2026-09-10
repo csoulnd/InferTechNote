@@ -58,6 +58,95 @@ cost(worker) = 预计等待时间
 
 Dynamo 实际结合 cache overlap 与活跃 prefill/decode 负载；后端 KV 创建和释放事件更新索引。因此，缓存最多的 worker 也可能因为负载过高而落选。路由选择和 NIXL 等传输机制是不同职责。[KV-aware routing](https://docs.dynamo.nvidia.com/dynamo/dev/knowledge-base/concepts/system-architecture/kv-aware-routing)
 
+#### 2.1.1 除普通最长前缀命中外，还有哪些 Agent 相关算法
+
+目前没有一个统一标准叫“Agent 前缀命中算法”。需要先区分“怎样判定 KV 可复用”和“怎样让可复用 KV 更可能在需要时存在”。后者是当前 Agent serving 的主流创新。
+
+| 算法族 | 是否改变命中判定 | Agent 信号怎样参与 | 代表工作 |
+|---|---|---|---|
+| KV-aware / prefix-aware routing | 否，仍是精确 token block overlap | 在多个 worker 间联合比较前缀重叠、prefill/decode 负载 | Dynamo KV Router、Preble |
+| Session affinity / streaming session | 绕过部分重复匹配 | 用 session 将连续 Agent turn 路由到原 worker 或专用 KV slot | Dynamo SGLang session control |
+| Workflow-aware retention | 否 | 根据 Agent 图中的 steps-to-execution/reuse probability 保护共享前缀节点 | KVFlow、SAGA |
+| Learned transition caching | 否 | 从 Agent/阶段转移学习下一个可能使用的固定前缀 | CacheScout、PBKV 类方法 |
+| Tool-aware TTL | 否 | 依据工具耗时分布在暂停期保留当前前缀 | Continuum、SAGA |
+| Predictive prefetch/warmup | 否 | 预测下一个 Agent/节点，将 KV 搬入 GPU 或重建固定前缀 | KVFlow、SAGA、CacheScout、Dynamo speculative prefill |
+| Modular segment reuse | 是，不要求整个复用块位于全局开头 | Harness 显式标记稳定 system、tool schema、memory/document 模块 | Prompt Cache |
+| Non-prefix / cross-position reuse | 是 | 复用移动、重排或插入动态工具输出后的稳定 chunk，并修正位置与跨块影响 | CacheBlend、CacheSlide、Irminsul |
+| Edit-aware KV reuse | 是 | compact、retry、删除旧 observation 后声明 splice/trim，修复位置 | Leyline |
+
+这张表中前六类提高“命中机会”和“物理可用率”，底层仍可能是 radix tree 或 block hash 的最长公共前缀；后三类才真正放宽普通 prefix caching 的复用条件。
+
+##### A. KV-aware 路由：在所有 worker 中寻找“最便宜的命中”
+
+普通本地缓存只回答当前 worker 命中多少。分布式 Agent serving 还要决定请求送到哪个 worker。Dynamo 把每个 worker 的 KV overlap 与在途 prefill/decode 负载合并评分；[Preble](https://arxiv.org/abs/2407.00023) 同样面向分布式 prompt sharing，联合优化 KV 复用与负载均衡。
+
+这不是简单 sticky：同 session 的热 worker 如果拥堵，冷一点但空闲的 worker 可能更快。`session_id` 可以作为路由先验，真正可复用的 token 数仍应由最终序列计算。
+
+##### B. 工作流感知的树节点保留：共享祖先的优先级传播
+
+[KVFlow](https://arxiv.org/abs/2507.07400) 把多 Agent 工作流建模为 Agent Step Graph，计算每个 Agent 的 steps-to-execution。它只给固定 prompt 节点分配保留优先级，动态 suffix 优先淘汰；多个 Agent 共用的 radix-tree 祖先节点取最保守的优先级，只要任一近期 Agent 仍需要，共享 system/tool prefix 就继续保留。
+
+这里“命中算法”本身仍是精确前缀，创新在 replacement policy：它使用未来执行距离代替纯 LRU recency。对于 `main → 多个同类型 subagent`，公共工具定义和 system prompt 比每个子 Agent 的私有历史更值得保护。
+
+##### C. 学习下一次 Agent 转移：从静态 DAG 扩展到动态工作流
+
+[CacheScout](https://arxiv.org/html/2608.14624) 不要求 Harness 提供完整 DAG，而是从 prompt-prefix fingerprint 识别 Agent，以在线一阶 Markov 转移矩阵估计下一个 Agent。它把复用概率、最近使用时间和重建成本组合成 survival score，并按可预测性决定是否后台 warmup。
+
+这适合动态 Agent 路由，但只能预测局部转移。实验消融显示 survival-guided eviction 是主要收益，单独 warmup 很弱：预热 block 若很快又被普通 LRU 淘汰，逻辑上“预测正确”也不会形成物理命中。
+
+##### D. 模块化命中：把稳定 Prompt 片段声明成可复用模块
+
+[Prompt Cache](https://proceedings.mlsys.org/paper_files/paper/2024/hash/a66caa1703fe34705a4368c3014c1966-Abstract-Conference.html) 使用 schema 声明 prompt modules，为模块预计算 attention state，并通过 schema 保证位置正确。对 Agent，模块可以是 system instruction、固定工具 schema、角色示例或稳定知识片段。
+
+它比最长公共前缀更灵活，但要求 Harness 与 serving runtime 共享模块边界和版本。模块 ID 只是查找键；tokenizer、模型、模板或模块文本变化时，必须进入不同 cache namespace。
+
+##### E. 非前缀与跨位置复用：复用被工具输出隔开的稳定片段
+
+[CacheBlend](https://www.microsoft.com/en-us/research/publication/you-only-prefill-once-combining-cached-knowledge-for-large-language-model-serving-with-cacheblend/) 面向由多个 chunk 组成的输入，复用不在开头的预计算 KV，并选择性重算少量 token 来恢复前序 chunk 带来的 cross-attention 影响。它最初面向 RAG，但 Agent 的检索结果、文件片段和工具输出同样具有 chunk 结构。
+
+[CacheSlide](https://www.usenix.org/conference/fast26/presentation/liu-yang) 针对 Agent prompt 中固定段相对顺序不变、绝对位置随动态段长度变化的模式，称为 Relative-Position-Dependent Caching（RPDC）。它处理位置漂移并选择性修正 attention，而不是把移动后的文本误判为普通精确 KV 命中。
+
+[Irminsul](https://arxiv.org/abs/2605.05696) 针对 MLA 模型利用可分离的位置无关 latent KV 与可修正位置分量，做 content-addressed、position-independent reuse。该方法依赖模型 attention 架构，不能直接推广到所有 MHA/GQA 模型。
+
+这些方法的关键不是“语义相似度匹配”。embedding 相近不能证明 KV 等价；它们需要位置修正、选择性重算或模型结构提供的数学条件。
+
+##### F. 编辑感知复用：Agent compact、retry 和轨迹改写
+
+[Leyline](https://arxiv.org/abs/2606.01065) 关注 Agent 删除失败工具调用、替换旧 observation、compact 或 pivot 后，如何通过显式 edit directive 对 KV 做 splice 或 trimmed re-prefill，并使用 RoPE 修正恢复位置正确性。它解决的是“旧轨迹中间变了”，而不是传统 append-only 多轮对话。
+
+这一方向与 WorkBuddy 的 `conversation:compact` 最接近，但必须知道精确编辑范围和新旧 token 映射。只有一个 compact 生命周期枚举不足以安全拼接 KV。
+
+##### G. 需要单独保护的失败场景：多 Agent judge
+
+跨 chunk 复用通常是近似或部分重算，不能默认保持所有任务行为。[ACL 2026 的多 Agent judge 研究](https://aclanthology.org/2026.acl-long.327/) 发现，削弱候选之间的 cross-attention 会使 judge 选择相对 dense prefill 明显不一致，即使最终任务准确率表面变化不大。
+
+因此，执行 Agent 的固定 system/tool 模块可以积极复用；需要联合比较多个候选、证据或工具结果的 judge/synthesizer，应使用更高的重算比例，或直接 dense prefill，并单独测量 judge consistency。
+
+#### 2.1.2 对 WorkBuddy 最现实的组合
+
+按实现风险和收益，建议顺序是：
+
+```text
+精确 block-prefix matching
+  + KV-aware routing
+  + session/parent/context_epoch 关联
+  + tool-aware TTL
+  + workflow-aware shared-node retention
+  + 有置信度门控的 prefetch
+```
+
+这套组合不改变模型数学，适合先用现有 Header 与生命周期事件验证。之后若观测到大量“内容相同但因工具输出插入、compact 或重排而失配”，再评估 Prompt Cache、CacheBlend/CacheSlide 或 Leyline 一类跨位置和编辑感知方案。
+
+评价时至少分开记录：
+
+- `logical_match_tokens`：索引判定存在多少可复用 token；
+- `resident_hit_tokens`：请求执行时仍在 GPU、无需搬运的 token；
+- `loaded_hit_tokens`：从 CPU/NVMe/远端取回后复用的 token；
+- `corrected_reuse_tokens`：跨位置复用且经过修正/选择性重算的 token；
+- `recomputed_tokens`：最终仍做 prefill 的 token。
+
+只报告一个 cache hit rate 会把路由命中、物理驻留和近似复用混在一起，无法判断 Agent Hint 究竟优化了哪个环节。
+
 ### 2.2 预测：把未知工作量变成可校准的估计
 
 Dynamo 的 `osl` 是预计输出 token 数；启用 `--router-track-output-blocks` 后参与输出 block 跟踪和路由估计。它不是 `max_tokens`，不会要求模型恰好输出对应长度。[Agent Hints](https://docs.dynamo.nvidia.com/dynamo/dev/agents/agent-hints)
@@ -72,11 +161,118 @@ KV prefetch 则把已经计算、存于低层存储的 KV 提前搬到 GPU；两
 
 **本文的启用判断：** 预计命中概率 × 可隐藏延迟，应超过额外计算、缓存污染和带宽竞争的成本。WorkBuddy 若本轮结束后即 compact、取消，或者下一轮模板变更，则预热可能失效。
 
+#### 2.3.1 “预测工具返回并提前算 KV”应该怎样命名
+
+这句话可能指五种不同技术。建议按被预测的对象命名，避免统称为 TTL：
+
+| 被预测或控制的对象 | 推荐名称 | 是否预测工具返回内容 | 实际动作 |
+|---|---|---|---|
+| 工具完成时间 | tool-call-aware KV TTL / tool-aware cache retention | 否 | 暂时保留已有 KV，超时后允许淘汰 |
+| 下一次会用哪个 Agent/前缀 | workflow-aware / predictive KV prefetch | 否 | 把已有 KV 从 CPU/存储搬回 GPU |
+| 下一轮已知的公共前缀 | speculative prefill / proactive KV warmup | 否 | 提前对已知 token 做 forward，构造 KV |
+| 下一次工具名和参数 | speculative tool calling / speculative tool execution | 否，提前执行后得到真实结果 | 并行执行候选工具，确认命中后复用结果 |
+| 工具返回的具体 token | speculative continuation / speculative branch prefill（本文建议的描述性名称） | 是 | 对猜测结果后的分支提前计算 KV，之后校验或丢弃 |
+
+最后一种目前不是 Dynamo 的公开 Hint，也不是本文检索到的生产主路径。“speculative continuation”在此只是清晰描述概念，不能当作已形成统一含义的标准术语。
+
+#### 2.3.2 为什么通常不直接猜工具输出
+
+设下一轮序列为：
+
+```text
+P = 历史 + assistant tool_call + tool_result + 下一轮模板
+```
+
+在自回归 Transformer 中，`tool_result` 之前的 KV 可以直接保留或预取；`tool_result` 自身以及它之后 token 的 KV 依赖实际的前序 token。因而：
+
+- 只要工具结果的内容、序列化、空白、截断或模板有一个 token 不同，猜测分支从第一个差异处起就不能作为精确前缀缓存复用。
+- 不能把“语义相近”当作 KV 相同；普通 prefix cache 按 token 前缀复用。[vLLM APC](https://docs.vllm.ai/en/v0.22.1/features/automatic_prefix_caching/)
+- 即使结果完全命中，投机计算也占用 GPU 和 KV 空间；多候选分支会放大成本。
+
+所以更稳健的顺序是：保留确定前缀 → 预测/提前执行无副作用工具 → 使用真实工具输出补算 suffix。只有返回值空间很小、输出确定、命中率很高且空闲算力充足时，才值得直接投机多个结果分支。
+
+#### 2.3.3 已有的“提前执行工具”实践
+
+[Speculative Tool Calls](https://arxiv.org/html/2512.15834) 用较小的 speculator 预测工具名和参数，并与主模型并行执行。主模型最终请求相同工具时复用已经完成或正在执行的 future；engine-side 方案还尝试让序列留在引擎内，并在真实工具输出到达后直接继续。论文明确把适用范围限制在便宜、无状态的工具；有副作用工具需要 undo/rollback，错误投机会浪费费用和资源。
+
+[PASTE](https://arxiv.org/html/2603.18897) 使用历史轨迹中的控制流模式和参数映射预测后续工具调用。候选必须具备完整可规范化的工具名与参数、通过无副作用或 safe speculative variant 检查，并满足置信度、收益和预算门槛。它预测的是可执行调用，而不是凭空生成一个“可能的返回文本”。
+
+可把这类方案的准入条件写成：
+
+```text
+expected_gain
+  = P(工具名和规范化参数命中) × 可隐藏的工具时延
+    - 投机模型成本
+    - 错误工具调用成本
+    - 对正式请求的资源干扰
+```
+
+对 `Read/Search/GET` 一类只读工具可以评估；对写文件、发消息、创建资源、交易等调用，不能因为预测置信度高就直接执行。dry-run、隔离环境或可验证的幂等读取需要由工具权限层保证，不能只依赖 Hint。
+
+#### 2.3.4 已有的“预测下一步并准备 KV”实践
+
+- [KVFlow](https://arxiv.org/abs/2507.07400) 用 Agent Step Graph 估计某个 Agent 离下一次执行还有多少步，据此保留 KV，并在后台线程把下一步所需 KV 从 CPU 预取到 GPU。它搬运已有 KV，不预测工具输出。
+- [SAGA](https://arxiv.org/html/2605.00528v2) 用 Agent Execution Graph 预测最可能的 successor，在工具执行期间通过独立 CUDA stream 预取该节点的 prefix KV。论文消融中，移除 speculative prefetch 使其 SWE-bench 实验的任务完成时间增加 19%；该数字来自论文系统整体中的单项消融。
+- [CacheScout](https://arxiv.org/html/2608.14624) 在线学习一阶 Markov Agent 转移，以复用概率、recency 和重建成本指导淘汰，并在空闲期 warm up 预测的 Agent 固定前缀。其消融显示预测淘汰是主要收益，单独 prefetch 很弱；只有预热出的 block 后续也被保护时才更有效。
+
+这三项工作预测的是“下一 Agent/图节点/固定前缀会不会使用”，不是自由文本工具结果。对 WorkBuddy 来说，`x-agent-type`、`x-agent-purpose`、parent 和工具事件适合构造转移特征；只有会话 Header 时，能识别当前链，但还不足以知道下一个图节点。
+
 ### 2.4 缓存保留：优化未来价值，而非单看最近使用时间
 
 LRU 只看 recency。业务如果知道固定系统前缀反复使用、某段临时上下文即将结束，就能更合理地保留或淘汰。TensorRT-LLM 已有 token 范围级 retention 配置，支持优先级及持续时间，是“应用知识指导缓存策略”的明确实践。[TensorRT-LLM reuse optimizations](https://developer.nvidia.com/blog/introducing-new-kv-cache-reuse-optimizations-in-nvidia-tensorrt-llm/)
 
 **一个设计用价值模型：** `未来复用概率 × 重算代价 − 持有内存的机会成本`。这不是现成 Dynamo API。pause 不应无条件 pin，stop 不应无条件删除所有同前缀 block；共享 block 仍可能被其他请求引用。thinking 是否不再复用，也必须依据下一轮实际序列化结果判断。
+
+#### 2.4.1 TTL 的准确含义
+
+TTL 是 **保留期限**，不是结果预测算法。工具开始后，系统预测或查询该类工具的延迟分布，在一段时间内 pin 当前 session 的 KV；工具若及时返回就直接复用，超过 TTL 后缓存重新进入可淘汰集合，从而给错误预测设置资源上限。
+
+[Continuum](https://arxiv.org/html/2511.02230v6) 把 TTL 选择写成期望净收益最大化：
+
+```text
+TTL* = argmax_t
+       P(tool 在 t 内完成)
+       ×（避免 reload/prefill 与重新排队的收益）
+       - 持有 KV t 时间的机会成本
+```
+
+它用历史工具调用分布估计完成概率，并指出分布漂移、外部 API 抖动会导致次优 TTL。TTL 到期意味着“允许淘汰”，不一定表示立即删除，也不表示工具调用取消。
+
+[SAGA](https://arxiv.org/html/2605.00528v2) 给出更直接的 tool-type 方案：维护每类工具的历史延迟，以默认 P95 作为基础 TTL，并随 GPU 内存压力缩短，另设 300 秒上限。两种算法体现了同一原则：**TTL 应由命中收益、工具延迟分布和实时内存压力共同决定，不能固定写成工具平均时延。**
+
+#### 2.4.2 TTL 与 Dynamo 的关系
+
+Dynamo 当前公开 `nvext.agent_hints` 没有通用 `ttl` 字段。`speculative_prefill` 负责预热，`priority` 在部分后端影响调度或淘汰顺序；它们都不等同于“将这段 KV pin 10 秒”。Dynamo 架构文章也明确把统一 TTL/per-token-range retention 描述为后续 API 方向。[Dynamo agentic inference](https://docs.dynamo.nvidia.com/dynamo/dev/digest/agentic-inference)
+
+实验性的 SGLang `nvext.session_control` 更接近硬生命周期：`open` 后的 session KV 不参与普通淘汰，通过显式 `close` 或 inactivity timeout 释放。这里的 timeout 是兜底释放时间，不是基于成本收益动态计算的 soft TTL；长工具超过 timeout 会导致下一轮重新打开并 prefill。[SGLang agent workloads](https://docs.dynamo.nvidia.com/dynamo/dev/knowledge-base/modular-components/backends/sg-lang/agents-on-sg-lang)
+
+### 2.5 对 Agent Hint 协议的建议
+
+首版不建议让 WorkBuddy 发送“KV TTL=5s”或预测工具输出。客户端更适合提供它掌握的事实和业务意图，推理服务根据缓存大小、重算成本和当前压力决定实际 TTL：
+
+```text
+Harness / WorkBuddy 提供：
+  session_id、parent_session_id、context_epoch
+  tool_call started/completed/failed/cancelled
+  tool_name 或稳定的 tool_class
+  side_effect_class、可否安全投机
+  可选 expected_duration_ms / duration_quantile / confidence
+
+Serving runtime 决定：
+  保留、offload、prefetch、warmup 或淘汰
+  实际 TTL、目标存储层、worker 和投机预算
+```
+
+原因是 TTL 同时依赖实时 GPU 压力和该前缀的重算成本；这些信息 Harness 通常不知道。若上游只想传一个跨实现 Hint，`expected_tool_duration_ms + confidence` 比 `kv_ttl_ms` 更稳定。工具完成、失败和取消事件可让服务提前终止 TTL，避免一直等到计时器到期。
+
+首轮最值得验证的命名与能力是：
+
+1. `tool-aware KV retention`：等待工具时保留确定的历史 KV。
+2. `tool-aware KV prefetch`：若已 offload，在预计返回前搬回 GPU。
+3. `speculative prefill`：只预填已知、token 稳定的下一轮公共前缀。
+4. `speculative tool execution`：仅对无副作用且高置信的工具预测调用并提前执行。
+
+第 4 项成功后，拿到的是提前完成的真实工具结果，可以再触发 suffix prefill；不需要额外引入“猜工具输出文本”的高风险分支。
 
 ## 3. NVIDIA Dynamo：公开接口与启用条件
 
