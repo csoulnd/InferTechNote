@@ -1,0 +1,7 @@
+interface:
+  display_name: "原子知识"
+  short_description: "用简短指令新增或更新仓库中的原子知识点"
+  default_prompt: "Use $atomic-knowledge to add or update a concise atomic knowledge note in this repository."
+
+policy:
+  allow_implicit_invocation: true
