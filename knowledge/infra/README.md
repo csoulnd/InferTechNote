@@ -11,7 +11,7 @@ Reusable model and implementation knowledge independent of a single delivery tim
 
 ## Concepts
 
-- [MTP and KV Cache](concepts/README.md)
+- [Inference concepts](concepts/README.md) — MTP、KV Cache、Agentic 工作负载、缓存路由与 P/D 速率匹配
 
 ## Implementation
 

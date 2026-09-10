@@ -50,7 +50,7 @@ MCP `ToolAnnotations` 明确把 `readOnlyHint`、`destructiveHint`、`idempotent
 |---|---|---|
 | 1960s：启发式搜索 | A* 等 informed search | 用成本/距离估计引导状态空间搜索 |
 | 2010s：交互式学习 | human advice、policy shaping | 用人类建议影响策略或当前动作选择 |
-| 2023 起：LLM Agent | ReAct、Reflexion、Voyager | 用自然语言反馈、反思和检索技能指导多步决策 |
+| 2023 起：LLM Agent | [ReAct](../../knowledge/agent/concepts/react.md)、Reflexion、Voyager | 用自然语言反馈、反思和检索技能指导多步决策 |
 | 2025：协议化工具 Hint | MCP Tool Annotations | 用结构化注解向 Agent client 表达工具风险与行为性质 |
 | 2026：基础设施 Agent Hints | NVIDIA Dynamo | 将 Agent harness 掌握的意图显式传给 router/backend |
 
@@ -507,6 +507,7 @@ Dynamo 案例的独特贡献是把 Agent 上层已知、推理层无法可靠猜
 - [x] 已将原有 Dynamo 条目改写为通用原子知识，未创建近似重复笔记。
 - [x] 原子笔记只回答“如何理解和设计 Agent Hint”这一独立问题。
 - [x] 业务文档、原子知识和知识地图已建立双向链接。
+- [x] 已抽取通用知识：[ReAct 推理与行动模式](../../knowledge/agent/concepts/react.md)
 
 提炼条目：[Agent Hint 的通用模型、分类与设计原则](../../knowledge/agent/concepts/agent-hints.md)
 

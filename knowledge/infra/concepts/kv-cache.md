@@ -41,6 +41,8 @@ vLLM 的 PagedAttention 把每个请求的 KV Cache 切成固定大小 block，�
 ## 相关知识
 
 - [MTP](mtp.md)
+- [Agentic 推理工作负载](agentic-serving-workload.md)
+- [会话感知的 KV Cache 路由](session-aware-kv-cache-routing.md)
 - [GPU 架构](../../foundations/hardware/gpu-architecture.md)
 
 ## 参考资料

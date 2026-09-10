@@ -87,7 +87,7 @@ flowchart LR
 **建议作为第一个深入学习的仓库。** 这是整个平台的引擎，定义了：
 
 - **两种 Agent 范式**：
-  - [ReActAgent](https://arxiv.org/abs/2210.03629)（`core/single_agent/`）——思考→行动→观察的迭代循环，适合对话式交互
+  - [ReActAgent](../../knowledge/agent/concepts/react.md)（`core/single_agent/`）——思考→行动→观察的迭代循环，适合对话式交互
   - `WorkflowAgent`（`core/workflow/`）——预定义工作流的多步骤自动化，适合业务流程
 - **执行引擎**（`core/graph/`）——基于 [Pregel](https://dl.acm.org/doi/10.1145/1807167.1807184) 模型的异步并行图执行器，支持流式处理、状态中断与恢复
 - **Runner**（`core/runner/`）——统一的 Agent 执行入口
@@ -102,7 +102,7 @@ flowchart LR
 
 agent-core 的 Java 实现，设计上与 Python 版保持一致：
 
-- **双 Agent 模式**：`LlmAgent`（[ReAct](https://arxiv.org/abs/2210.03629)）和 `WorkflowAgent`
+- **双 Agent 模式**：`LlmAgent`（[ReAct](../../knowledge/agent/concepts/react.md)）和 `WorkflowAgent`
 - **[Pregel](https://dl.acm.org/doi/10.1145/1807167.1807184) 图执行引擎**：`core/graph/pregel/`
 - **Controller 层**：`core/controller/` 管理 Agent 生命周期
 
@@ -472,5 +472,5 @@ flowchart LR
 ## Knowledge Extraction
 
 - [ ] Review which conclusions remain valid outside this task or release.
-- [ ] Update existing atomic knowledge before creating a new note.
-- [ ] Link extracted knowledge here and add this document under its `Applied In` section.
+- [x] Update existing atomic knowledge before creating a new note.
+- [x] 已抽取通用知识：[ReAct 推理与行动模式](../../knowledge/agent/concepts/react.md)

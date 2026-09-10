@@ -48,6 +48,7 @@ Agent Loop 是反复执行“组装上下文、调用模型、执行工具、记
 
 ## 相关知识
 
+- [ReAct 推理与行动模式](react.md)
 - [Hook 扩展机制](hook-mechanism.md)
 - [Cordis 插件运行时](cordis-plugin-runtime.md)
 
@@ -55,4 +56,3 @@ Agent Loop 是反复执行“组装上下文、调用模型、执行工具、记
 
 - [DeepSeek Harness Agent Lifecycle](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/agent-lifecycle.zh.md)
 - [Anthropic: Building Effective Agents](https://www.anthropic.com/research/building-effective-agents)
-- [ReAct 论文](https://arxiv.org/abs/2210.03629)

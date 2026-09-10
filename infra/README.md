@@ -16,5 +16,6 @@ Infrastructure business work for vLLM Ascend on Atlas 310P, including MTP, KV ca
 | MTP | [MTP Design on 310P](mtp-design-310p.md) | [Code walkthrough](../knowledge/infra/implementation/mtp/code-walkthrough.md) → [KV cache](../knowledge/infra/implementation/mtp/kv-cache-model-runner-v1.md) → [ModelRunner](../knowledge/infra/implementation/mtp/npu-model-runner-v1-walkthrough.md) |
 | Qwen3-VL | [Ascend adaptation design](qwen3-vl-ascend-adaptation-design.md) | [ViT and visual-prefill analysis](../knowledge/infra/models/qwen3-vl/vit-analysis.md) |
 | Platform coverage | [310P CI coverage](ci-coverage-matrix-310p.md) | Extract stable capability rules when they are no longer release-specific |
+| Agentic serving | [vLLM × AgentX learning report](vllm-agentx-agentic-serving-study.md) | [Workload](../knowledge/infra/concepts/agentic-serving-workload.md) → [KV-aware routing](../knowledge/infra/concepts/session-aware-kv-cache-routing.md) → [P/D rate matching](../knowledge/infra/concepts/pd-disaggregation-rate-matching.md) |
 
 Agent containers that consume inference services are documented under [Agent](../agent/README.md).
