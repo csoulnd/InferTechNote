@@ -286,7 +286,7 @@ model: <MODEL_NAME>
 
 不是所有 Agent 都直接使用 OpenAI 协议：
 
-- Claude Code 原生使用 Anthropic Messages API；
+- Claude Code 原生使用 [Anthropic Messages API](../../../knowledge/agent/concepts/protocols/anthropic-messages-api-message-format.md)；
 - Gemini CLI 原生使用 Google Gemini API；
 - Codex CLI、OpenCode、Aider 等可配置自定义 Provider，但配置字段和模型能力要求不同。
 
@@ -383,5 +383,5 @@ flowchart TB
 ## Knowledge Extraction
 
 - [ ] Review which conclusions remain valid outside this task or release.
-- [ ] Update existing atomic knowledge before creating a new note.
-- [ ] Link extracted knowledge here and add this document under its `Applied In` section.
+- [x] Update existing atomic knowledge before creating a new note.
+- [x] 已抽取协议知识：[OpenAI Responses API](../../../knowledge/agent/concepts/protocols/openai-responses-api-message-format.md)、[OpenAI Chat Completions](../../../knowledge/agent/concepts/protocols/openai-chat-completions-message-format.md) 与 [Anthropic Messages API](../../../knowledge/agent/concepts/protocols/anthropic-messages-api-message-format.md) 消息格式。

@@ -298,8 +298,8 @@ AutoGen官方同时提供 AgentChat、Core、Studio和 `GrpcWorkerAgentRuntime`�
 
 若希望同时服务 Linux镜像和 Windows本地 Agent，推理网关至少应考虑：
 
-1. **OpenAI-compatible**：`/v1/models`、Chat Completions；根据目标 Agent补充 Responses API。
-2. **Anthropic-compatible**：Messages、流式事件、Tool Use、System Prompt和 Token统计，用于 Claude Code、CodeBuddy等。
+1. **OpenAI-compatible**：`/v1/models`、[Chat Completions](../../knowledge/agent/concepts/protocols/openai-chat-completions-message-format.md)；根据目标 Agent补充 [Responses API](../../knowledge/agent/concepts/protocols/openai-responses-api-message-format.md)。
+2. **Anthropic-compatible**：[Messages](../../knowledge/agent/concepts/protocols/anthropic-messages-api-message-format.md)、流式事件、Tool Use、System Prompt和 Token统计，用于 Claude Code、CodeBuddy等。
 3. **模型别名**：允许把第三方 Agent期望的模型名映射到 AgentOS实际模型。
 4. **工具调用一致性**：不能只兼容纯文本；Coding Agent高度依赖并行工具调用、工具结果、长上下文和流式增量。
 5. **自定义Header和租户信息**：支持用户、Agent实例、项目和计费标签透传。
@@ -371,3 +371,4 @@ AgentOS的三方生态不应简单等同于“支持多少个 Agent名称”，�
 - [ ] Review which conclusions remain valid outside this task or release.
 - [x] Update existing atomic knowledge before creating a new note.
 - [x] 已抽取通用知识：[Manifest 清单](../../knowledge/agent/concepts/manifest.md)
+- [x] 已抽取协议知识：[OpenAI Responses API](../../knowledge/agent/concepts/protocols/openai-responses-api-message-format.md)、[OpenAI Chat Completions](../../knowledge/agent/concepts/protocols/openai-chat-completions-message-format.md) 与 [Anthropic Messages API](../../knowledge/agent/concepts/protocols/anthropic-messages-api-message-format.md) 消息格式。

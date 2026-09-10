@@ -112,7 +112,7 @@ flowchart TB
 |------|------|
 | **职责** | Agent 主循环、任务拆解、工具选择、多轮路由、子 Agent 调度 |
 | **Claude Code** | 官方称 **Agentic Loop**，每轮任务经历 *gather context → take action → verify results* 三阶段，工具结果反馈驱动下一轮决策；扩展点（Skills、Hooks、MCP、Subagents）挂载在循环各阶段 |
-| **Codex CLI** | **Agent Loop** 是核心协调层：将用户输入组装为 prompt → 调用 Responses API → 处理流式事件 → 执行工具 → 将结果追加到 input → 循环直至产出 assistant message；支持 `/responses/compact` 自动压缩上下文 |
+| **Codex CLI** | **Agent Loop** 是核心协调层：将用户输入组装为 prompt → 调用 [Responses API](../../knowledge/agent/concepts/protocols/openai-responses-api-message-format.md) → 处理流式事件 → 执行工具 → 将结果追加到 input → 循环直至产出 assistant message；支持 `/responses/compact` 自动压缩上下文 |
 | **OpenCode** | **Agent Engine** 编排内置 **Build**（全权限开发）与 **Plan**（只读分析）双主 Agent，支持 Tab 切换；另可通过配置定义子 Agent（如 `code-reviewer`、`@general`） |
 | **可安装性** | Claude Code / Codex：编排层为内核，**不独立安装**。OpenCode：随服务端一起部署，无单独分发包 |
 
@@ -336,5 +336,5 @@ ZCode Agent 与 Claude CLI 各走一套目录约定，设置页用来源切换�
 ## Knowledge Extraction
 
 - [ ] Review which conclusions remain valid outside this task or release.
-- [ ] Update existing atomic knowledge before creating a new note.
-- [ ] Link extracted knowledge here and add this document under its `Applied In` section.
+- [x] Update existing atomic knowledge before creating a new note.
+- [x] 已抽取协议知识：[OpenAI Responses API 消息格式](../../knowledge/agent/concepts/protocols/openai-responses-api-message-format.md)。

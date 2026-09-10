@@ -13,7 +13,7 @@ Reusable knowledge that should remain meaningful after an individual project, de
 
 1. [Architecture overview](architecture/overview.md)
 2. Core concepts and mechanisms: [AGI](concepts/agi.md), [Agent Loop](concepts/agent-loop.md), [ReAct](concepts/react.md), [Agent Hint](concepts/agent-hints.md), [Manifest](concepts/manifest.md), [Hook](concepts/hook-mechanism.md), and [Cordis](concepts/cordis-plugin-runtime.md)
-3. Protocol terms: [MCP and ACP](concepts/protocols/README.md)
+3. Protocol terms: [MCP、ACP and model API message formats](concepts/protocols/README.md)
 4. [Infrastructure concepts](concepts/infrastructure/README.md)
 5. [Claude Code](products/claude-code/README.md) or [OpenCode](products/opencode/README.md)
 6. [Integration patterns](integration/README.md)
