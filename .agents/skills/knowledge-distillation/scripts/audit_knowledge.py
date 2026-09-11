@@ -105,7 +105,11 @@ def main() -> int:
             if target is not None and not target.exists():
                 errors.append(f"{rel}: broken local link {raw_target!r}")
         in_work = rel.startswith(("agent/", "infra/")) and "/assets/" not in f"/{rel}"
-        exempt = path.name == "README.md" or path.name == "learning-roadmap.md"
+        exempt = (
+            path.name == "README.md"
+            or path.name == "learning-roadmap.md"
+            or "/designs/" in f"/{rel}"
+        )
         if in_work and not exempt and "## Knowledge Extraction" not in text:
             warnings.append(f"{rel}: missing Knowledge Extraction section")
         if in_work:

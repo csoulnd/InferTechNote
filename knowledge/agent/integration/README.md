@@ -16,6 +16,7 @@ status: active
 | [ssh-channel.md](ssh-channel.md) | SSH TUI 透传 vs CLI exec |
 | [acp-mcp-bridge.md](acp-mcp-bridge.md) | ACP / MCP 与 Gateway 桥接 |
 | [sandbox-lifecycle.md](sandbox-lifecycle.md) | 容器实例六步拉起 |
+| [model-request-body-extension.md](model-request-body-extension.md) | 模型请求顶层字段的扩展边界 |
 
 ## 依赖的基础设施（先读 01）
 

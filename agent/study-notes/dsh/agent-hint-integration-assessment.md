@@ -120,6 +120,11 @@ DSH 具备正规实现 Hint 的关键条件：模型 Adapter 属于公开插件�
 LLM Adapter”。当前结论属于源码架构可行性判断，完成 PoC 前不承诺 pause/resume、parent
 传递和重试语义已经开箱可用。
 
+## Knowledge Extraction
+
+- [x] [模型请求体扩展的正确边界](../../../knowledge/agent/integration/model-request-body-extension.md)：与 OpenCode 评估共同提炼 provider/adapter 序列化边界和端到端验证要求。
+- [ ] 完成 PoC 后再更新 DSH 特有的生命周期、parent 传递与重试语义；当前保留为待验证产品结论。
+
 ## 7. 参考
 
 - [DSH 插件系统学习报告](plugin-system.md)

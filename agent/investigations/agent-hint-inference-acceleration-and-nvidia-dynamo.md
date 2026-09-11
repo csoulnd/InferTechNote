@@ -423,3 +423,8 @@ flowchart LR
 - 本次没有验证 WorkBuddy 自带 Dynamo 原生适配，也没有证据证明 pause/resume/stop 已能从现有模型请求完整恢复。
 
 继续阅读入口：[Dynamo Agent Hints](https://docs.dynamo.nvidia.com/dynamo/dev/agents/agent-hints)、[Dynamo routing configuration](https://docs.dynamo.nvidia.com/dynamo/knowledge-base/modular-components/router/configuration-and-tuning)、[NAT 可复现集成](https://github.com/NVIDIA/NeMo-Agent-Toolkit/tree/develop/examples/dynamo_integration)、[ThunderAgent 原始实现](https://github.com/Agentic-Kinetics/ThunderAgent)。
+
+## Knowledge Extraction
+
+- [x] [Agent Hint 如何驱动推理服务优化](../../knowledge/agent/concepts/agent-hint-serving-optimization.md)：提炼信号与运行时决策的映射、容易混淆的机制、实施顺序和评估边界。
+- [ ] 完成受控回放后，把实际收益、目标版本支持情况与失败案例更新到本文；当前不将调研中的厂商数字当作本项目结论。

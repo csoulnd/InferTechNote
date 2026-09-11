@@ -48,6 +48,7 @@ Split a candidate when its parts have different readers, lifecycle, or independe
 - An atomic note links back through `Applied In`.
 - `Related` contains only direct conceptual or implementation relationships.
 - Update the nearest README/MOC; do not rely on Obsidian Graph for navigation.
+- The extraction audit queues investigations, reports, and study notes. Design documents are excluded from this queue unless their review is explicitly requested; they remain subject to metadata and link validation.
 
 ## Templates
 

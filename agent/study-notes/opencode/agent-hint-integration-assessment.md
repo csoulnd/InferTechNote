@@ -106,6 +106,11 @@ OpenCode 在生命周期观测与请求身份关联方面比 WorkBuddy 的独立
 但现有公开 Hook 尚缺少确定的最终 body 修改契约。因此它“可以通过开源 provider 层接入
 Hint”，但是否能做成零源码修改的常规插件仍待 PoC 评估。
 
+## Knowledge Extraction
+
+- [x] [模型请求体扩展的正确边界](../../../knowledge/agent/integration/model-request-body-extension.md)：与 DSH 评估共同提炼 Hook、SDK option 与最终 wire body 的职责边界。
+- [ ] 完成 PoC 后再更新 OpenCode 对未知 option 的透传行为、compact 请求分类和零源码修改可行性。
+
 ## 7. 参考
 
 - [OpenCode 插件系统学习报告](plugin-system.md)

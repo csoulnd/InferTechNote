@@ -209,10 +209,12 @@ flowchart LR
 ## 应用记录
 
 - [Agent Hint 通用概念、分类与应用场景调研](../../../agent/investigations/agent-hints-concept-taxonomy.md)
+- [基于 Agent Hint 的推理加速原理与 NVIDIA Dynamo 实践](../../../agent/investigations/agent-hint-inference-acceleration-and-nvidia-dynamo.md)
 
 ## 相关知识
 
 - [Hook 扩展机制](hook-mechanism.md)
+- [Agent Hint 如何驱动推理服务优化](agent-hint-serving-optimization.md)
 - [ACP 与 MCP 桥接模式](../integration/acp-mcp-bridge.md)
 - [通信协议](infrastructure/03-communication-protocols.md)
 
