@@ -15,7 +15,7 @@ DeepSeek Harness（命令名 `dsh`）是 DeepSeek AI 开源的 Agent Harness。�
 
 它最鲜明的设计是“一切皆插件”。可以先把 DSH 想成一台由可更换部件组装的电脑：模型、工具、会话存储和界面都是部件，Cordis 是负责识别、连接、启动和卸载这些部件的底座。
 
-更精确地说，每个部件是一个 Plugin，通过 Context 提供或使用 Service。暂时不需要理解 Event、Waterfall、Effect 和 Fiber；它们分别用于插件协作和资源清理，会在 Cordis 原子知识中逐步介绍。
+更精确地说，每个部件是一个 <abbr title="Cordis 中可装载、可卸载的功能模块">Plugin</abbr>，通过 <abbr title="插件访问运行时能力和生命周期作用域的入口">Context</abbr> 提供或使用 <abbr title="插件提供或消费的具名能力契约">Service</abbr>。暂时不需要理解 <abbr title="向多个插件广播已经发生的事情">Event</abbr>、<abbr title="让多个处理者依次传递或变换结果的处理链">Waterfall</abbr>、<abbr title="一次带清理动作的资源注册">Effect</abbr> 和 <abbr title="承载一组 Effect 的生命周期作用域">Fiber</abbr>；它们分别用于插件协作和资源清理，详细解释见 [Cordis 插件运行时](../../../knowledge/agent/concepts/cordis-plugin-runtime.md)。
 
 当前应把它视为开发者预览，而非稳定生产平台：官方明确提示会有破坏兼容的变化，且项目尚未接受安全审计。
 
