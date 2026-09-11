@@ -48,7 +48,7 @@ Cordis 把这些问题转换成“插件提供什么、需要什么、何时清�
 
 ## 最小模型：先掌握四个概念
 
-初学时只需要理解 Plugin、Context、Service 和 `inject`。Event、Effect、Fiber 可以稍后学习。
+初学时只需要理解 Plugin、Context、Service 和依赖声明。Event、Effect、Fiber 可以稍后学习。
 
 ### 1. Plugin：一个功能模块
 
@@ -94,7 +94,7 @@ Tool Consumer → tools 接口 ← Local Tool Provider
 
 只要两个 Provider 实现同一个契约，就可以替换，而 Consumer 无须知道背后的类名或包名。
 
-### 4. `inject`：声明插件需要哪些 Service
+### 4. 依赖声明：用 `inject` 指定插件需要哪些 Service
 
 如果插件需要工具服务，可以声明：
 
@@ -228,7 +228,7 @@ Loader 读取配置并把插件挂载成一棵树。配置描述“要装哪些�
 | Plugin | 模型适配器、工具、会话持久化、Web UI、Agent Loop |
 | Context | 插件访问 `ctx.llm`、`ctx.tools`、`ctx.sessions` 的入口 |
 | Service | LLM、Tool、Session、Filesystem、Sandbox 等能力契约 |
-| `inject` | Tool 插件等待 `tools` Service，Consumer 等待 Provider |
+| 依赖声明 | Tool 插件通过 `inject` 等待 `tools` Service，Consumer 等待 Provider |
 | Event | `session/event`、`agent/*` 生命周期通知 |
 | Waterfall | 模型请求或工具执行的拦截与变换链 |
 | Effect/Fiber | 插件热更新、依赖替换和关闭时的资源清理 |
