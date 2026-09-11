@@ -27,6 +27,14 @@ status: active
 - [nohup：忽略挂断信号运行命令](nohup.md)
 - [systemd：Linux 系统与服务管理器](systemd.md)
 
+## 软件包与发布
+
+| 名词 | 所属层次 | 知识入口 |
+| --- | --- | --- |
+| npm | JavaScript 包管理工具与仓库生态 | [npm](npm.md) |
+| whl | Python 已构建分发包格式 | [Wheel](wheel.md) |
+| Debian / deb | 操作系统发行版及其软件包格式 | [Debian 与 deb](deb.md) |
+
 ## 维护规则
 
 ### Git 命令如何逐步添加

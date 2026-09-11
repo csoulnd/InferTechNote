@@ -127,6 +127,7 @@ ps -ef | grep '[p]ython3 -m http.server 18080'
 
 ## 已有知识入口
 
+- [Debian 与 deb：发行版及其软件包格式](../tools/deb.md)：理解发行版、软件仓库与安装包的关系。
 - [SSH 公钥免密登录](../tools/ssh-key-auth.md)：远程操作入口。
 - [nohup](../tools/nohup.md)：临时任务与挂断信号。
 - [systemd](../tools/systemd.md)：长期服务管理。
