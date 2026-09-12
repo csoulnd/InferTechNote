@@ -35,6 +35,10 @@ status: active
 | whl | Python 已构建分发包格式 | [Wheel](wheel.md) |
 | Debian / deb | 操作系统发行版及其软件包格式 | [Debian 与 deb](deb.md) |
 
+## 建模与表达
+
+- [UML：统一建模语言](uml.md) — UML 的定位、14 种图的分类、元模型层次与适用边界。
+
 ## 维护规则
 
 ### Git 命令如何逐步添加
