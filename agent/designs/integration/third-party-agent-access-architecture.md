@@ -9,28 +9,25 @@ status: draft
 
 ## 1. 结论与设计目标
 
-设计目标已经足够清晰，可以进入架构设计。本文将其收敛为五点：
+AgentBox当前的三方智能体入能力的总体设计目标为：
 
-1. 保留多租户，任何实例、路由、会话、密钥和审计记录都必须归属于明确的租户和主体。
-2. 保留 Gateway 规定的公开接入路径 `/{agent}/...`，不以改成独立域名或独立端口作为前提。
-3. 对第三方 Agent 同时支持 HTTP、WebSocket，以及 SSH 进入实例后分配 PTY 的原生 TUI 体验。
-4. Manager 负责控制面；请求数据流在首次授权后不再经过 Manager。
-5. 平台提供稳定的接入契约，不再为每个第三方 Agent 持续注入前端补丁。
+1. 保留多租户，任何实例、路由、会话、密钥和审计记录都必须归属于明确的租户和主体（多组隔离以及用户数据持久化）。
+2. 保留 Gateway 规定的公开接入路径 `/{agent}/...`，不以改成独立域名或独立端口作为前提（Gateway的接口定义，北向接口）。
+3. 对第三方 Agent 同时支持 HTTP、WebSocket，以及 SSH 进入实例后分配 PTY 的原生 TUI 体验（南向多协议支持）。
+4. Manager 负责控制面；请求数据流在首次授权后不再经过 Manager（仅上架服务依赖Manager;个人工作台剥离）。
+5. 平台提供稳定的接入契约，不再为每个第三方 Agent 持续注入前端补丁（尽量避免前端补丁或者避免频繁修改补丁）。
 
-这里唯一需要消除歧义的是“Agent 直连”。本文把它拆成两个层次：
+对于第三方的企业级部署是“Agent 直连”，我们采用的是逻辑直连的方式。
 
-- **必选的逻辑直连**：客户端的数据流不经过 Manager，由 Gateway 直接连接目标实例；这是默认模式。
-- **可选的网络直连**：Gateway 完成授权后，客户端凭短期凭证直接连接实例或节点中继；这是后续性能优化，不能绕过租户隔离和审计。
+- **逻辑直连**：客户端连接 Gateway，由 Gateway 解析目标实例并持续代理 HTTP、WebSocket 或 SSH/PTTY 流量。该方案隐藏实例网络，便于集中实施多租户隔离、协议适配、限流和审计，并能够保持现有 /{agent}/... 接入路径。
+- **网络直连**：Manager、IAM 或 Gateway 完成授权和实例解析后，向客户端签发限定租户、实例、Endpoint、协议和有效期的连接描述及短期凭证。客户端随后直接连接实例或节点中继，中心 Gateway 不再承载数据流。
 
-因此，终态不是让 Manager 或 Gateway 二选一，而是明确分工：**Manager 管“谁可以使用什么”，Gateway 管“这次连接如何安全、完整地到达实例”**。
-
-本文不定义具体数据库表、API 字段名称和部署编排实现；它定义概念模型、责任边界、协议不变量和演进顺序。
 
 ## 2. 当前架构
 
 ### 2.1 现场快照
 
-以下内容来自 2026-09-21 对 `118.195.209.130` 的只读核对以及当前 `AgentBox-Manager` 分支。端口是这套部署的现场值，不应固化为平台协议常量。
+以下内容来自 2026-09-21 对DSH接入穿刺工程的只读核对以及当前 `AgentBox-Manager` 分支。
 
 | 组件 | 当前地址或版本 | 当前作用 |
 |---|---|---|
@@ -42,9 +39,8 @@ status: draft
 | YuanRong SSH Bastion | `:2222` | 按实例和端口建立南向 TCP/SSH 隧道 |
 | DSH Runtime | `dsh:0.1.5-rc.2`，Web `:3081` | 第三方 Agent Web 服务；实例内另有 sshd 接入能力 |
 
-当前 Manager 分支为 `feature/thirdparty-access-mode-image`。远端 Gateway 的 `web_proxy_connect.py` 存在现场热补丁：为规避 YuanRong Frontend 在复用连接时第二个请求返回空 404，HTTP client 临时使用 `TCPConnector(force_close=True)`。该修改尚不能视为正式产品能力。
+当前 Manager 分支为 `feature/thirdparty-access-mode-image`。远端 Gateway 的 `web_proxy_connect.py` 存在现场热补丁：为规避 YuanRong Frontend 在复用连接时第二个请求返回空 404，HTTP client 临时使用 `TCPConnector(force_close=True)`。
 
-当前对外 Web 入口仍是明文 HTTP，主机 `:80` 未提供统一入口。生产终态应在 Gateway/Ingress 终止 TLS，并避免继续把可复用 Token 放在 query 中。
 
 ### 2.2 当前组件职责
 
@@ -74,9 +70,9 @@ flowchart TB
     Manager -->|"303 到 /{agent}/?user_id&token"| WebGateway
     Browser -->|"HTTP / WS"| WebGateway
     Terminal -->|"SSH"| SshGateway
-    WebGateway -->|"查询或创建 Runtime"| Registry
-    SshGateway -->|"ssh.relay，经 Router 查询或创建"| Registry
-    WebGateway -->|"HTTP/WS 代理"| YuanRong
+    WebGateway -->|"查询或注册 Runtime"| Registry
+    SshGateway -->|"ssh.relay，经 Router 查询或注册"| Registry
+    WebGateway -->|"创建 Sandbox / HTTP/WS 代理"| YuanRong
     SshGateway -->|"南向 SSH"| YuanRong
     YuanRong --> Sandbox
     Home -->|"挂载并覆盖镜像内同路径"| Sandbox
@@ -85,7 +81,7 @@ flowchart TB
 | 层 | 当前实际职责 | 不应承担的职责 |
 |---|---|---|
 | Manager | 登录、用户和租户管理、Agent/镜像元数据、`access_mode`、用户配置、生成启动跳转 | 代理 HTTP/WS/SSH 数据流；理解第三方页面内部 URL |
-| Registry | 保存 Agent 定义、版本、Runtime 和实例定位信息 | 处理用户协议流量；替代鉴权策略引擎 |
+| Registry | 保存 Agent 定义、版本、Runtime、Endpoint 和实例状态，提供注册与发现 | 仅根据 `owner/user_id` 等元数据独立作出访问授权；向非可信客户端暴露实例地址或允许客户端指定路由目标 |
 | Gateway | 接收公开请求、认证、按用户和 Agent 解析实例、按协议转发 | 保存第三方 Agent 的业务状态；用 Agent 专属补丁污染通用代理 |
 | YuanRong | 创建和销毁 Sandbox，提供到实例端口的代理/隧道 | 决定用户是否有权访问某实例 |
 | Agent 镜像 | 启动服务，声明端口，提供 HTTP/WS/SSH 能力 | 猜测平台路由；持有平台长期凭证 |
@@ -331,7 +327,9 @@ flowchart TB
 
 - 保存声明事实：定义、版本、EndpointSpec、实例、健康状态和租约。
 - 所有主键和查询都带 `tenant_id`；Instance 状态由 Runtime 负责更新。
-- 不承担流量代理，也不把 Registry 中的 owner 字段当作唯一授权判断。
+- 只向受信任的 Manager、Broker 和 Runtime 提供注册与发现能力，不直接面向终端客户端。
+- Registry 回答“实例在哪里、状态如何、有哪些 Endpoint”；Identity & Policy 回答“主体是否有权访问”；Broker 决定“本次连接应路由到哪个实例”。
+- `owner` 等字段可以作为授权输入，但不能直接等价于授权结果；Registry 不独立作出访问授权，也不允许调用方提交任意实例地址改变路由目标。
 
 #### Agent Adapter / Sidecar
 
@@ -515,19 +513,19 @@ tenant + principal + instance + endpoint + protocol
 - direct 建链失败可回退 Gateway relay。
 - HTTP 浏览器场景受同源、Cookie 和证书约束，默认仍使用 Gateway relay；网络直连更适合 SSH、服务到服务或 Agent-to-Agent。
 
-## 6. Manager、Gateway 与 Adapter 的责任边界
+## 6. 各层责任边界
 
-| 能力 | Manager | Gateway | Broker/Registry | Adapter | Runtime |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Tenant、用户、Agent 目录 | 主责 | 只消费 | 存运行态索引 | 否 | 否 |
-| AgentVersion / EndpointSpec 发布 | 主责 | 校验支持度 | 保存/发现 | 声明兼容能力 | 校验并执行 |
-| AccessPolicy / AccessGrant | 主责 | 消费并建立会话 | 否 | 否 | 否 |
-| `/{agent}/` 公开路由 | 生成入口 | 主责 | 返回目标 | 处理内外路径差异 | 否 |
-| HTTP/WS/SSH 协议正确性 | 否 | 主责 | 选目标 | 应用边界适配 | 提供隧道 |
-| 实例冷启动与路由租约 | 发意图/查询 | 请求 | 主责 | 否 | 执行 |
-| 第三方应用 Cookie/base path | 否 | 提供通用机制 | 否 | 主责 | 否 |
-| Sandbox、卷、UID/GID、网络 | 声明策略 | 否 | 记录状态 | 否 | 主责 |
-| 审计 | 管理操作 | 连接操作 | 路由决策 | 适配错误 | 资源操作 |
+| 能力 | Manager | Gateway | Broker | Registry | Adapter | Runtime |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Tenant、用户、Agent 目录 | 主责 | 只消费 | 消费授权范围 | 保存 Agent/Runtime 索引 | 否 | 否 |
+| AgentVersion / EndpointSpec 发布 | 主责 | 校验协议支持度 | 消费 | 保存/发现 | 声明兼容能力 | 校验并执行 |
+| AccessPolicy / AccessGrant | 主责 | 消费并建立会话 | 消费授权后的目标范围 | 否 | 否 | 否 |
+| `/{agent}/` 公开路由 | 生成入口 | 主责 | 选择目标实例 | 提供候选实例和 Endpoint 状态 | 处理内外路径差异 | 否 |
+| HTTP/WS/SSH 协议正确性 | 否 | 主责 | 只协调连接 | 否 | 应用边界适配 | 提供隧道 |
+| 实例冷启动与路由租约 | 发意图/查询 | 请求 | 主责 | 记录实例状态和租约 | 否 | 执行 |
+| 第三方应用 Cookie/base path | 否 | 提供通用机制 | 否 | 否 | 主责 | 否 |
+| Sandbox、卷、UID/GID、网络 | 声明策略 | 否 | 发起运行时操作 | 记录状态 | 否 | 主责 |
+| 审计 | 管理操作 | 连接操作 | 路由决策 | 元数据变更 | 适配错误 | 资源操作 |
 
 近期修复重点应放在 Gateway，因为当前失败发生在请求/响应语义和协议边界；长期模型中 Manager 仍需升级为真正的控制面，提供 EndpointSpec、AccessGrant 和租户策略，但不要把路径重写、Cookie 转换或 PTY 中继放入 Manager。
 
