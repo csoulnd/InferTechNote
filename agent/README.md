@@ -32,6 +32,7 @@ agent/
 | Understand the reusable architecture | [Agent knowledge](../knowledge/agent/README.md) |
 | Implement third-party Agent requirements | [Agent OS requirements](designs/requirements/third-party-agent-agentos-requirements.md) |
 | Design third-party Agent access | [Current and ideal access architecture](designs/integration/third-party-agent-access-architecture.md) |
+| Inspect the third-party Agent listing data model | [Management-plane database schema](designs/integration/third-party-agent-management-plane-database-schema.md) |
 | Review ecosystem findings | [Investigations](investigations/) |
 | Research Hint-driven inference acceleration | [Agent Hint acceleration and NVIDIA Dynamo](investigations/agent-hint-inference-acceleration-and-nvidia-dynamo.md) |
 | Continue an unfinished study | [Study notes](study-notes/README.md) |
