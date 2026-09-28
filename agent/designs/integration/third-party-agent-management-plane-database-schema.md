@@ -23,8 +23,6 @@ status: active
 | `local_agent_packages` | `LocalAgentPackage` | 本地包与上架状态，一行一个包 | `content_digest` | `state` |
 | `build_tasks` | `BuildTask` | 镜像构建任务，一行一次尝试 | `task_id` | `status` |
 
-字段表中的缩写：`PK` 主键、`UK` 唯一、`IDX` 普通索引、`UK(部分)` 带 `WHERE` 条件的部分唯一索引；类型列带 `NOT NULL` 表示非空，未标注默认可空；默认值由应用层写入（见 §7）。正文只写列级索引信息，PostgreSQL 自动生成的对象名按惯例即可推出（主键 `{表名}_pkey`、唯一 `{表名}_{列名}_key`、外键 `{表名}_{列名}_fkey`、普通索引 `ix_{表名}_{列名}`）。
-
 ## 2. 表关系
 
 ```text
@@ -134,28 +132,7 @@ local_agent_packages ──1:N──> build_tasks   package_path = installer_pat
 
 **状态**：`pending → building → done`；失败或被新任务取代 → `failed`。
 
-## 7. 建表方式
-
-无 Alembic 迁移，全部在应用启动时幂等执行：`ensure_thirdparty_agent_tables()` 做 `create_all`，再用 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 补列（`description`、`registration_name`、`card_version`、`registration_payload`），同时创建上述两个部分唯一索引并废弃旧索引 `uq_local_pkg_registry_identity`。
-
-两点需要留意：
-
-1. 默认值都在应用层写入，DDL 里没有 `DEFAULT` 子句；只有 `description` 与 `registration_name` 因 `ADD COLUMN` 语句携带 `DEFAULT ''`，**升级库**有数据库默认值而**全新建库**没有，写库脚本不要依赖默认值。
-2. 两个唯一约束都是**部分索引**（带 `WHERE`），只在活跃状态内生效，历史行（已注册的旧版本、已失败的任务）不参与冲突判定。
-
-## 8. 生命周期与清理
-
-| 数据 | 保留策略 |
-|---|---|
-| `thirdparty_upload_parts` | 会话结束时删行；合并完成、取消、过期时触发 |
-| `thirdparty_upload_sessions`（未完成） | TTL 3600 秒、清理周期 600 秒，置 `expired` 后删会话行与分片行 |
-| `thirdparty_upload_sessions`（`completed`/`consumed`） | 保留会话行（持有权威整文件摘要），仅删分片；分片清理失败会重试 |
-| `thirdparty_upload_sessions`（`canceled`） | 立即删会话行与分片行 |
-| `local_agent_packages` / `build_tasks` | 无 TTL，随卡片删除一并清理，含磁盘文件 |
-
-过期清理使用 `SELECT ... FOR UPDATE SKIP LOCKED` 抢占待清理会话，多实例并发安全。
-
-## 9. 参考位置
+## 7. 参考位置
 
 - 表定义：`backend/app/models/thirdparty_agent.py`；表注册：`backend/app/models/__init__.py`
 - 建表与补列：`backend/app/thirdparty_agent/engine.py`；启动调用点：`backend/app/main.py`
