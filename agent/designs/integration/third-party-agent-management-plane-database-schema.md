@@ -12,7 +12,7 @@ status: active
 > 数据库：PostgreSQL 18（`AGENTOS_DATABASE_URL`，与 LiteLLM 共享 `agentos` 库）；表定义：`backend/app/models/thirdparty_agent.py`  
 > 关联文档：[新旧数据库对比与变更计划](third-party-agent-database-comparison-and-migration-plan.md)、[第三方 Agent 接入架构](third-party-agent-access-architecture.md)
 
-管理面只保存**未注册成功的包与构建历史**，卡片与实例的权威数据在注册中心（管理面经 `image_process_client` 读写）；启动模板与模型 API Key 分别位于包同目录 sidecar `{digest}.metadata.json` 与用户家目录下由模板 `relative_path` 指向的 `.env`，都不落库。
+管理面只保存**未注册成功的包与构建历史**，卡片与实例的权威数据在注册中心（管理面经 `image_process_client` 读写）。
 
 ## 1. 表清单
 
@@ -151,7 +151,7 @@ local_agent_packages ──1:N──> build_tasks   package_path = installer_pat
 | `thirdparty_upload_sessions`（未完成） | TTL 3600 秒、清理周期 600 秒，置 `expired` 后删会话行与分片行 |
 | `thirdparty_upload_sessions`（`completed`/`consumed`） | 保留会话行（持有权威整文件摘要），仅删分片；分片清理失败会重试 |
 | `thirdparty_upload_sessions`（`canceled`） | 立即删会话行与分片行 |
-| `local_agent_packages` / `build_tasks` | 无 TTL，随卡片删除一并清理，含磁盘文件与 sidecar |
+| `local_agent_packages` / `build_tasks` | 无 TTL，随卡片删除一并清理，含磁盘文件 |
 
 过期清理使用 `SELECT ... FOR UPDATE SKIP LOCKED` 抢占待清理会话，多实例并发安全。
 
@@ -161,5 +161,5 @@ local_agent_packages ──1:N──> build_tasks   package_path = installer_pat
 - 建表与补列：`backend/app/thirdparty_agent/engine.py`；启动调用点：`backend/app/main.py`
 - 会话与分片、过期清理：`backend/app/services/chunked_upload_service.py`
 - 上架状态机、构建与注册编排：`backend/app/services/thirdparty_agent_service.py`
-- 启动模板与模型 API Key 文件读写：`backend/app/thirdparty_agent/launch_config.py`；落盘门禁与 sidecar：`backend/app/thirdparty_agent/upload_gate.py`
+- 包落盘门禁与摘要校验：`backend/app/thirdparty_agent/upload_gate.py`
 - 参数（上传上限、TTL、清理周期）：`backend/app/config.py` 的 `THIRDPARTY_AGENT_*`
