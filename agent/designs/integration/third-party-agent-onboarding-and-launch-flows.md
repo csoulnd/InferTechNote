@@ -20,7 +20,7 @@ date: 2026-09-29
 
 关联文档：
 
-- 上架的字段模型与镜像工厂设计见 [image-factory v2](third-party-agent-artifact-image-factory-design-v2.md) §5.1 / §6.1 / §8.3 / §8.4；本文补的是**实际调用链、制品状态机与落卡契约**。
+- 上架的字段模型与镜像工厂设计见 [image-factory v2](third-party-agent-artifact-image-factory-design-v2.md) §5.1 / §6.1 / §8.3 / §8.4；本文补的是**实际调用链、制品状态机，以及两条链路的耦合点与变动点分析**。
 - 跳转的协议缺口与理想模型见 [接入架构](third-party-agent-access-architecture.md) §2.3 / §2.4；本文画的是**实测时序**，含隐藏 iframe 预热与 `launch-status` 轮询这两个前端行为。
 
 ## 2. 组件与关键Tag
@@ -145,22 +145,43 @@ stateDiagram-v2
     end note
 ```
 
-### 3.4 落卡契约（上架后什么变得"可启动"）
+### 3.4 耦合点与变动点分析
 
-`POST /api/images` 的请求体由镜像工厂的构建结果组装，字段与来源一一对应：
+> 判断规则：跨进程边界且无显式契约 = 耦合点，要做接口抽象；有外部升级驱动力 = 变动点，要做契约版本化与兼容窗口；两者交叉处优先；单进程内单一 owner 的高频点不解耦。
 
-| 注册中心字段 | 来源 | 启动时的消费方与用途 |
+**耦合点**
+
+| # | 位置 | 耦合双方 | 现状靠什么对齐 | 类型 | 风险爆发点 |
+|---|---|---|---|---|---|
+| C1 | `access_mode[]` | 管理面 → 工厂 → 卡片 | 只对齐形状 `{name,port,cmd}`；语义由工厂单侧解释：`tui` 决定是否注入 sshd 与端口，其余翻成 `rootfs.ports` | 接口 + 语义 | 新增一种 access_mode 时卡片已落、镜像能力不对应，要到运行时才暴露（消费端见 §4.4 C13） |
+| C2 | `runtime_spec` | 工厂 → 卡片 | JSON blob 透传：工厂改 `rootfs.user/ports`，管理面只覆盖 `rootfs.imageurl` | 接口（无版本） | RuntimeSpec 升级后无校验点，坏值在建沙箱时才暴露 |
+| C3 | 制品身份 `{digest}.artifact` | 管理面 ↔ 卡片 `package_path` | 注册中心不认识 digest：管理面用正则 `([0-9a-f]{64})\.artifact` 从卡片路径反解 | **语义** | 路径或命名规则一改，反解静默返回 None——已注册判重失效、删卡找不到本地台账 |
+| C4 | `name` = `framework` | 管理面写卡 → Gateway 消费 | 写入时强制同值，无校验点 | **语义** | 任一侧改名或做归一化，`launch-spec` 即 404 |
+| C5 | 本机路径 `package_path` / `image_archive_path` | 管理面 → 卡片 | 卡片里存了管理面的文件系统布局（launch sidecar 也按它定位） | 接口 | 管理面多副本或迁移后，卡片找得到、sidecar 读不到 |
+| C6 | 删卡级联 | 管理面 → 注册中心 → 工厂 | 固定顺序：查实例 → 升默认版本 → 删注册记录 → 删本机包与归档 → 工厂卸镜像 | 接口（无补偿） | 中途失败留孤儿（记录没了镜像还在，或反之），无回滚 |
+
+**变动点**
+
+| # | 变动点 | 驱动力 | 现状 | 影响半径 |
+|---|---|---|---|---|
+| V1 | `access_mode` 取值集合 | 产品需求（新 agent 形态） | 无集中解析器，两侧各自判 `web` / `tui` | 管理面 + 工厂（+ Gateway） |
+| V2 | Recipe 集合 | 产品需求（新包类型） | `RecipeRegistry` 插件化 | 仅工厂 —— 已解耦，不必再动 |
+| V3 | 注入层 `yrsdk`、`inject_ssh`、`_DEFAULT_RUNTIME=python3.11` | 上游底座升级 | 工厂内 Dockerfile 片段 | 仅工厂，但产物语义影响 Gateway 探针 |
+| V4 | `runtime_spec` 语义 | 上游 openYuanRong | 无版本协商 | 工厂 + Gateway |
+| V5 | 卡片字段集与 sidecar schema | 上游 a2x-registry | sidecar 已 v1 → v2 → v3 | 三方 |
+| V6 | 管理面本地台账状态机 | 自身实现 | 单进程单 owner | 仅管理面 —— 不解耦 |
+
+**优先级与处理方向**
+
+| 优先级 | 项 | 处理方向 |
 |---|---|---|
-| `name` / `framework` | 管理员填写的卡片名（两者同值） | Gateway `3rdagent.list` 列为 `agent_type`；URL `/{agent}/` 路径段 |
-| `version` | 镜像工厂解析 | 实例行 `framework_version`；管理面按默认版本启动 |
-| `description` | 管理员填写 | 仅展示（用户视图与管理员视图） |
-| `access_mode[{name,port,cmd}]` | 管理员填写，工厂校验并转成端口 | Gateway：`web` 行决定 `web_port` 与 `cmds[0]`；`tui` 行决定 SSH 探针端口 |
-| `runtime_spec` | 镜像工厂 `apply_runtime_spec` + `rootfs.imageurl = image_ref` | Gateway `GET /api/images/{framework}/launch-spec` 直接作为 YuanRong `POST /api/agent` 的 inline spec |
-| `image_module_version` | 镜像工厂配置 | 版本兼容标识 |
-| `uploaded_by` | 管理员账号 | 归属与审计 |
-| `package_path` / `image_archive_path` | 管理面落盘路径 | 管理员详情展示；删卡时按它级联清本机文件 |
-
-对应地，**启动链路的三个前置**都由这张卡片决定：有没有 web 端口（决定浏览器跳转是否可行）、`runtime_spec` 是否完整（决定沙箱能否创建）、`access_mode` 里有没有 `tui`（决定镜像里有没有 sshd 层）。
+| P0 | C1 / V1 access_mode | 定义 access_mode 契约（取值、每段语义由谁解释），收口到单一解析器 + 契约测试 |
+| P0 | C3 制品身份 | digest 升为卡片一等字段（或独立制品注册表），禁止从路径反解 |
+| P1 | C2 / V4 runtime_spec | 声明为带版本的外部契约，落卡前校验必需字段 |
+| P1 | C5 本机路径 | 卡片只存逻辑 locator，物理路径由管理面内部解析 |
+| P1 | C6 删卡级联 | 定义幂等、可重试的拆除契约，补齐补偿 |
+| P2 | C4 name / framework | 落卡时加一致性校验，成本低 |
+| 不动 | V2 Recipe、V6 台账 | 已解耦 / 单侧自持 |
 
 ## 4. 图二：从管理面开始的启动跳转
 
@@ -267,23 +288,50 @@ sequenceDiagram
     I-->>T: 交互式 PTY（整个会话期间持有实例，不被回收）
 ```
 
-## 5. 关键不变量与易错点
+### 4.4 耦合点与变动点分析
 
-1. **上架的唯一成功判据是落卡**：构建成功不等于上架成功；状态只有到 `registered` 才出现在用户视图。构建/注册失败都不进用户视图，只在"未注册"列表可重试。
-2. **`name` 三处同值**：卡片 `name`、注册中心 `framework`、Gateway 的 `agent_type`（也是 URL 路径段）必须一致，否则 `launch-spec` 查不到、跳转 404。
-3. **`access_mode` 是上架与启动之间的唯一契约**：web 端口决定能不能浏览器跳转，`tui` 决定镜像里有没有 sshd 层（漏了就只能 `3rdagent.switch` 失败，实例建出来也连不上）。
-4. **实例键是 (用户, 框架) 而不是卡片版本**：`service_id` 由 `user + framework` 派生，一个用户对一个框架只有一个实例行；版本切换不会新建第二行。
-5. **注册是异步的、`address` 先占位**：`3rdagent.switch` / 首次跳转返回时，注册中心里的 `address` 可能还是 `instance_id` 占位值，真实 `node_ip` / `sandbox_ip` 要等后台轮询到 `running` 后 PATCH 上去。监控侧此刻看到的是占位地址。
-6. **就绪判定只读注册中心**：`launch-status` 按 `framework + kind=三方 + user + status=运行` 判断，不会去探测实例，也不会触发创建；因此它既不会误建实例，也不能代替真实连通性验证。
-7. **Token 只做门禁**：Web 反代路径会校验"声称的 `user_id` 必须等于 IAM 的 `user_id` 或 `username`"（否则 403），但 Web/TUI 的 WS 握手路径只拒绝非法 token，**不把 IAM 身份回写连接**，业务身份取自客户端声明的 `X-User-Id` / `?user_id=`。上架/启动链路上的鉴权强度不等价。
-8. **管理面不创建用户 home**：Gateway 只校验 `/home/agentos/users/{user}` 已存在（不存在按可重试错误处理），目录的创建与属主由管理面负责，否则实例创建会一直失败。
-9. **卡片删除有实例闸门**：注册中心里还剩实例（含其它用户的实例）就整卡不能删；删除顺序是先删本机文件与镜像、再删注册记录，中途失败会留下需要人工清理的孤儿。
-10. **一次性 SSH 私钥是内存态**：Gateway 重启后 KeyRegistry 清空，之前签发的私钥全部失效，需要重新 `3rdagent.switch`。
+> 判断规则同 §3.4；本链路额外看一类"最终一致性依赖"——管理面读到的就绪状态完全取决于 Gateway 是否完成实例注册。
 
-## 6. 依据与联动
+**耦合点**
+
+| # | 位置 | 耦合双方 | 现状靠什么对齐 | 类型 | 风险爆发点 |
+|---|---|---|---|---|---|
+| C7 | `service_id = generic_{sha256(user\0framework)[:8]}` | Gateway 派生 → 注册中心 → 管理面反查 | 管理面按 `framework` + `kind` + `user` 查实例、自己判就绪 | **语义** | 派生算法一改，历史实例被判成"不是我的"：就绪判定与删卡闸门同时失效 |
+| C8 | 字面量 `"三方"` / `"运行"` / `"异常"` | 管理面 ↔ 注册中心 ↔ Gateway | 三处硬编码同一批中文字符串 | **语义** | 注册中心换状态词汇表即三处同时坏，无编译期保护 |
+| C9 | 跳转 URL 与 `AGENTBOX_WEB_PORT=19000` | 管理面 → Gateway | 两侧常量与注释对齐：`{origin}/{agent}/?user_id=&token=` | 接口 | 端口或参数语义一调整即断链，只在浏览器侧暴露 |
+| C10 | 身份口径 | 管理面 → Gateway → IAM | 管理面用 username；Gateway 要求声称 `user_id` 等于 IAM 的 `user_id` 或 `username` | **语义** | 口径不一致表现为 403；WS 握手路径不做该校验，两条路强度不等价 |
+| C11 | launch 模板的占位符与 `relative_path` | 管理面 → 用户 home → agent 镜像 | 单侧实现：白名单只约束占位符，模板内容与 agent 实际配置结构的一致性无校验 | 接口（跨"人"） | 卡片能启动但 agent 读不到期望配置，无任何报错 |
+| C12 | 实例就绪的最终一致性 | Gateway → 注册中心 → 管理面 | Gateway 建沙箱后**异步**注册（先占位后 PATCH），管理面轮询 `launch-status` 判断 | 接口 + 时序 | 注册失败或延迟时，管理面判"未就绪"而实例其实可用（或反之），两侧无对账 |
+| C13 | `access_mode` 的运行时解释 | 卡片 → Gateway | 与 §3.4 C1 同一契约的消费端：按 `web` 取 `web_port` 与 `cmds[0]`，按 `tui` 选探针端口并走 SSH 接入 | 接口 + 语义 | 生产端加了新模式而消费端不认识，静默走默认分支 |
+
+**变动点**
+
+| # | 变动点 | 驱动力 | 现状 | 影响半径 |
+|---|---|---|---|---|
+| V7 | 实例注册协议与状态词汇 | 上游 a2x-registry | 无版本协商 | Gateway + 管理面（= C8） |
+| V8 | Gateway 的 registry 客户端与 launch-spec 解析 | 上游 jiuwenswarm | 随包升级 | Gateway 单侧，契约另一头是注册中心 |
+| V9 | YR `/api/agent`、`/serverless/v1/*` 与实例状态机 | 上游 openYuanRong | 无版本协商 | 工厂 + Gateway |
+| V10 | IAM 校验契约 | 上游 IAM | 只看 `data.valid`，资源级授权未用 | Gateway |
+| V11 | 前端启动预热与轮询策略（iframe 预热、1s / 30s） | 交互与浏览器兼容 | 前端自持 | 仅前端 —— 不解耦 |
+
+**优先级与处理方向**
+
+| 优先级 | 项 | 处理方向 |
+|---|---|---|
+| P0 | C7 实例查找 | 收口为"按用户 + 框架查实例状态"的接口，派生规则不再被外部依赖 |
+| P0 | C12 就绪判定 | 明确就绪的唯一来源与重试、对账机制，去掉"是否已注册"的隐式依赖 |
+| P1 | C8 / V7 状态与 kind 词汇 | 与注册中心共同定义枚举，双方引用同一事实源 |
+| P1 | C10 身份口径 | 统一 user_id 口径（username 与 IAM 主体二选一），两条接入路径强度对齐 |
+| P1 | C9 跳转 URL | 端口与参数纳入部署配置，写进契约测试 |
+| P1 | V8 / V9 / V10 上游依赖 | 用契约测试锁住依赖字段，跟随升级并保留兼容窗口 |
+| P2 | C11 模板一致性 | 校验模板必需键与路径，或提供样例校验 |
+| P2 | C13 access_mode 消费端 | 与 C1 同一契约；消费端遇到未知值应显式失败 |
+| 不动 | V11 前端策略 | 单侧自持 |
+
+## 5. 依据与联动
 
 - 上架：`backend/app/api/v1/thirdparty_agent.py`（`/uploads*`、`/cards*`）、`services/thirdparty_agent_service.py`（`publish*`、`_publish_accepted`、`_run_build`、`_register_payload`、`_normalize_access_mode`）、`services/image_process_client.py`、`sandbox-manager/image_process/app/factory/{service,recipe,inject}.py`、`app/factory/recipes/oci_archive.py`
 - 跳转：`thirdparty_agent/launch_config.py`（`gateway_origin`、`render_launch_config`、`env_path_for`）、`frontend/src/views/resources/agent/PersonalAgentLaunchingPage.vue`、`frontend/src/api/framework.ts`（`submitLaunchForm`）
 - Gateway：`jiuwenswarm 0.2.4b4` 的 `web_proxy_connect.py`（`_authenticate_web_proxy`、`_forward_headers`）、`agentos_router/router_client.py`（`resolve_web_endpoint`、`_create_agent`、`_register_agent`、`thirdagent_switch`）、`yuanrong_frontend_client.py`
 
-**图需要随代码更新而更新的触发点**：`access_mode` 的语义（§3.4 / §4.3）、`service_id` 的派生规则（§2 / §5.4）、跳转端点与 `launch-status` 的就绪判据（§4.2）、以及 Gateway 侧鉴权与身份传递方式（§5.7）。
+**图需要随代码更新而更新的触发点**：`access_mode` 的生产与消费语义（§3.4 C1 / §4.3 / §4.4 C13）、实例身份与就绪判据（§4.4 C7 / C12）、跳转端点契约（§4.2 / §4.4 C9）、以及 Gateway 侧鉴权与身份口径（§4.2 / §4.4 C10）。
