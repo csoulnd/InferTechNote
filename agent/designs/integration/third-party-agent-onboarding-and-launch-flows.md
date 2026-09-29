@@ -1,35 +1,31 @@
 ---
-title: "第三方智能体上架与启动跳转流程：流程图与时序图"
+title: "第三方智能体上架与启动跳转流程"
 type: design
 domain: agent
 status: draft
 date: 2026-09-29
 ---
 
-# 第三方智能体上架与启动跳转流程：流程图与时序图
+# 第三方智能体上架与启动跳转流程
 
 ## 1. 范围与依据
 
-本文只画两条链路的**当前实现**，不包含理想模型与改造建议：
+**当前实现**：
 
 | 图组 | 链路 | 起点 | 终点 |
 |---|---|---|---|
 | 图一 | **上架** | 管理员拿到制品（npm tgz / OCI 镜像归档） | 注册中心上出现一张可查询、可启动的卡片 |
 | 图二 | **启动跳转** | 用户在管理面点击启动 | 浏览器进入实例内的 Web 服务（或经 SSH 进入实例 PTY） |
 
-依据（2026-09-29 只读核对）：
 
-- **管理面** `AgentBox-Manager`（`feature/thirdparty-access-mode-image` 分支）：`backend/app/api/v1/thirdparty_agent.py`、`backend/app/services/thirdparty_agent_service.py`、`backend/app/services/agent_register_client.py`、`backend/app/thirdparty_agent/launch_config.py`、`sandbox-manager/image_process/app/factory/`
-- **Gateway** `jiuwenswarm 0.2.4b4`：`extensions/agentos/agentos_router/`（`router_client` / `registry_client` / `agent_manager` / `stale_cleanup`）、`extensions/yuanrong_frontend_client.py`、`gateway/channel_manager/protocol/web_proxy/web_proxy_connect.py`
-
-与既有文档的关系（避免重复阅读）：
+关联文档：
 
 - 上架的字段模型与镜像工厂设计见 [image-factory v2](third-party-agent-artifact-image-factory-design-v2.md) §5.1 / §6.1 / §8.3 / §8.4；本文补的是**实际调用链、制品状态机与落卡契约**。
 - 跳转的协议缺口与理想模型见 [接入架构](third-party-agent-access-architecture.md) §2.3 / §2.4；本文画的是**实测时序**，含隐藏 iframe 预热与 `launch-status` 轮询这两个前端行为。
 
-## 2. 参与方与关键标识
+## 2. 组件与关键Tag
 
-| 参与方 | 地址 | 本文中的角色 |
+| 组件 | 地址 | 职责 |
 |---|---|---|
 | 管理面 Manager | `:8090` | 制品的通用门禁与台账、launch 配置渲染、卡片查询转发、返回 303 |
 | 镜像工厂 image-process | `:8091` | 解析制品、选 Recipe 与 Base、构建镜像、产出 `runtime_spec` |
@@ -51,6 +47,19 @@ date: 2026-09-29
 ## 3. 图一：第三方智能体上架
 
 ### 3.1 上架流程图
+
+**简略流程**
+
+```mermaid
+flowchart LR
+    A["管理员上传制品<br/>tgz / OCI 归档"] --> B["管理面通用门禁<br/>落盘 packages/{digest}.artifact"]
+    B --> C["镜像工厂构建<br/>image_ref + runtime_spec"]
+    C --> D["注册中心落卡<br/>POST /api/images"]
+    D --> E["卡片可查询、可启动"]
+    E -.->|"无实例时"| F["删卡"]
+```
+
+**完整流程**
 
 ```mermaid
 flowchart TD
@@ -82,7 +91,7 @@ flowchart TD
     J --> M["删卡：先查实例，有实例则拒绝<br/>无实例才按卡片路径拆：本机文件 + 已 load 镜像 + 注册记录"]
 ```
 
-**这张图的读法**：上架的"成功"定义只有一个——`POST /api/images` 返回 `registered` / `updated`。构建产物（镜像、`runtime_spec`）只是注册的输入；管理面本地的 `LocalAgentPackage` 只是构建与注册的台账，卡片本身不落管理面库（卡片信息必须来自注册中心）。
+**Tips**：上架的"成功"定义：`POST /api/images` 返回 `registered` / `updated`。构建产物（镜像、`runtime_spec`）只是注册的输入；管理面本地的 `LocalAgentPackage` 只是构建与注册的台账，卡片本身不落管理面库（卡片信息必须来自注册中心,保证数据唯一性）。
 
 ### 3.2 上架时序图
 
