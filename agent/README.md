@@ -35,6 +35,7 @@ agent/
 | Inspect the third-party Agent listing data model | [Management-plane database schema](designs/integration/third-party-agent-management-plane-database-schema.md) |
 | Trace onboarding and launch end to end | [Onboarding and launch flows](designs/integration/third-party-agent-onboarding-and-launch-flows.md) |
 | Review ecosystem findings | [Investigations](investigations/) |
+| Audit the AgentBox-Manager management plane | [Management-plane feature list](investigations/agentbox-manager-management-plane-feature-list.md) |
 | Research Hint-driven inference acceleration | [Agent Hint acceleration and NVIDIA Dynamo](investigations/agent-hint-inference-acceleration-and-nvidia-dynamo.md) |
 | Continue an unfinished study | [Study notes](study-notes/README.md) |
 | Develop and deploy AgentOS | [AgentOS development and deployment guide](dev-guides/agentos-development-deployment.md) |
