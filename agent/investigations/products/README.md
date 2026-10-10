@@ -15,7 +15,7 @@ status: active
 |---|---|---|
 | 1 | [阿里云 AgentCore](alibaba-agentcore/README.md) | 文档调研完成 |
 | 2 | [Amazon Bedrock AgentCore](amazon-agentcore/README.md) | 文档调研完成 |
-| 3 | Dify | 待研究 |
+| 3 | [Dify](dify/README.md) | 文档与部署结构调研完成 |
 | 4 | Pi Agent | 待研究 |
 | 5 | LangChain | 待研究 |
 
@@ -25,6 +25,7 @@ status: active
 |---|---|
 | 阿里云 AgentCore | 创建 [product-research 技能](../../../.agents/skills/product-research/SKILL.md)，强调部署模式分开、官方架构与研究视图区分、历史恢复与任务恢复分开 |
 | Amazon AgentCore | 增补历史七项服务／七维分析／当前模块区分，Harness 与 Runtime 关系，以及计算模式边界 |
+| Dify | 增补 Community／Cloud／Enterprise 责任与许可检查；历史 Agent Node 与当前新 Agent 子系统交叉核验 |
 
 ## Knowledge Extraction
 
