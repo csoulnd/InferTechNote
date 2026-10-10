@@ -39,3 +39,7 @@ Agenton 的图配置、逐次调用配置和可序列化运行状态分开；存
 Go runtime 文档说明 Landlock 文件访问限制，并指出内核支持条件。Compose 清单还注明 local sandbox 与 backend 的网络通道存在已知限制。[D3][D7] 官方新 Agent 文章描述 Enterprise 的每会话专用容器及网络策略；这项 Enterprise 描述不能直接充当 Community 默认部署的隔离保证。[D5]
 
 [来源](sources.md) · [产品概览](README.md)
+
+## Knowledge Extraction
+
+来源与机制用于支撑本产品调研；可复用流程已归入产品调研技能，本页不独立生成原子知识。

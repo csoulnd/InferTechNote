@@ -47,3 +47,7 @@ flowchart TD
 Runtime 提供 microVM 和 Instances 两种计算方式；专属 microVM 的会话隔离表述不能无条件推广到共享实例模式。Instances 支持长时会话、GPU 与多 Agent 协作，资源和隔离评估须按模式重新开展。[B3]
 
 [来源](sources.md) · [产品概览](README.md)
+
+## Knowledge Extraction
+
+来源与机制用于支撑本产品调研；可复用流程已归入产品调研技能，本页不独立生成原子知识。

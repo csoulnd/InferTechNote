@@ -21,3 +21,7 @@ status: active
 | B8 | [Pricing](https://aws.amazon.com/bedrock/agentcore/pricing/) | 计费维度 |
 
 [返回产品](README.md)
+
+## Knowledge Extraction
+
+来源与机制用于支撑本产品调研；可复用流程已归入产品调研技能，本页不独立生成原子知识。
