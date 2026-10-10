@@ -17,7 +17,7 @@ status: active
 | 2 | [Amazon Bedrock AgentCore](amazon-agentcore/README.md) | 文档调研完成 |
 | 3 | [Dify](dify/README.md) | 文档与部署结构调研完成 |
 | 4 | [Pi Agent](pi-agent/README.md) | 文档与包结构调研完成 |
-| 5 | LangChain | 待研究 |
+| 5 | [LangChain](langchain/README.md) | 官方生态与托管调研完成 |
 
 ## 流程迭代记录
 
@@ -27,6 +27,7 @@ status: active
 | Amazon AgentCore | 增补历史七项服务／七维分析／当前模块区分，Harness 与 Runtime 关系，以及计算模式边界 |
 | Dify | 增补 Community／Cloud／Enterprise 责任与许可检查；历史 Agent Node 与当前新 Agent 子系统交叉核验 |
 | Pi Agent | 增补仓库迁移核验、独立 durable 库的实验性边界、扩展钩子与宿主权限区分 |
+| LangChain | 增补框架／Harness／无代码／部署产品区分，内存后端与持久化、节点重执行和遥测位置检查 |
 
 ## Knowledge Extraction
 
