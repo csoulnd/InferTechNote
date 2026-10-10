@@ -2,7 +2,7 @@
 title: "WorkBuddy 桌面版模型与 Hint 插件调研"
 type: work
 domain: agent
-status: completed
+status: archived
 last_updated: 2026-09-07
 ---
 

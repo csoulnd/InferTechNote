@@ -2,7 +2,7 @@
 title: "WorkBuddy 开放能力与 Agent Hint 适配穿刺总结"
 type: work
 domain: agent
-status: completed
+status: active
 last_updated: 2026-09-07
 ---
 

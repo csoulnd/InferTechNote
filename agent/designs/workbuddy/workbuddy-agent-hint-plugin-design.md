@@ -1,3 +1,10 @@
+---
+title: "WorkBuddy Agent Hint 插件端到端设计与穿刺总结"
+type: design
+domain: agent
+status: active
+---
+
 # WorkBuddy Agent Hint 插件端到端设计与穿刺总结
 
 > 文档入口：[WorkBuddy Agent Hint 穿刺总结](./workbuddy-agent-hint-spike-summary.md)。

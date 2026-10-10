@@ -20,7 +20,7 @@ date: 2026-09-29
 
 关联文档：
 
-- 上架的字段模型与镜像工厂设计见 [image-factory v2](third-party-agent-artifact-image-factory-design-v2.md) §5.1 / §6.1 / §8.3 / §8.4；本文补的是**实际调用链、制品状态机，以及两条链路的耦合点与变动点分析**。
+- 上架的字段模型与镜像工厂设计见 [image-factory v2](../image-factory/third-party-agent-artifact-image-factory-design-v2.md) §5.1 / §6.1 / §8.3 / §8.4；本文补的是**实际调用链、制品状态机，以及两条链路的耦合点与变动点分析**。
 - 跳转的协议缺口与理想模型见 [接入架构](third-party-agent-access-architecture.md) §2.3 / §2.4；本文画的是**实测时序**，含隐藏 iframe 预热与 `launch-status` 轮询这两个前端行为。
 
 ## 2. 组件与关键Tag
