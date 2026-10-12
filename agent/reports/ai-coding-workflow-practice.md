@@ -1,11 +1,11 @@
 ---
-title: "AI Coding 的工作流实践"
+title: "AI Coding 提效实践：工作流与人的成长"
 type: work
 domain: agent
 status: active
 ---
 
-# AI Coding 的工作流实践
+# AI Coding 提效实践：工作流与人的成长
 
 > 写作日期：2026-10-08
 
@@ -15,7 +15,7 @@ AI Coding 的效率提升，可以分成两个层次：**任务内的效率提�
 
 本文以任务内的实践为主体，展开计划、上下文、执行、验收和复用的方法，再进一步讨论人的学习与长期能力。两部分不必等长：前一部分回答“这次怎么做得更好”，后一部分回答“下次我能负责更多什么”。
 
-![AI Coding 工作流的两个层次](assets/ai-coding-workflow/efficiency-layers.png)
+![AI Coding 提效实践的两个层次](assets/ai-coding-workflow/efficiency-layers.png)
 
 ## 一、任务内的效率提升：把一次任务做得更快、更稳
 
