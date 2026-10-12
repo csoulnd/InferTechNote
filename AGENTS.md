@@ -45,7 +45,7 @@ status: active
 
 ## 研究与知识沉淀
 
-- 按产品开展 Agent 平台、Harness 或框架调研时，使用 [product-research 技能](.agents/skills/product-research/SKILL.md)，从 [产品调研索引](agent/investigations/products/README.md) 检查已有研究。基础文档与展示实现分开；实际完成一个产品后再沉淀或改进调研流程。
+- 按产品开展 Agent 平台、Harness 或框架调研时，使用 [product-research 技能](.agents/skills/product-research/SKILL.md)，从 [产品调研索引](agent/investigations/products/README.md) 检查已有研究。主线为产品定位与软件架构，采用 summary + detail 双文档或单篇完整报告，不按章节强制原子化。基础文档与展示实现分开；实际完成一个产品后再沉淀或改进调研流程。
 - 新增或更新名词解释、API 格式、机制及适用边界时，阅读并执行 [atomic-knowledge 技能](.agents/skills/atomic-knowledge/SKILL.md)。简单术语请求保持简洁，不扩展成无关的研究报告。
 - 从已完成的调查、设计、修复、PoC 或源码走读提炼知识时，阅读并执行 [knowledge-distillation 技能](.agents/skills/knowledge-distillation/SKILL.md)。探索阶段先记录问题和证据，不提前制造结论。
 - 按文件名、标题、中英文名称和常见别名查找已有笔记，优先更新回答同一问题的文档。

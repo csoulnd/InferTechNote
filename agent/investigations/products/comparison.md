@@ -1,26 +1,40 @@
 ---
-title: "Agent 产品职责与企业托管对照"
+title: "Agent 产品定位与软件架构对照"
 type: investigation
 domain: agent
 status: active
 ---
 
-# Agent 产品职责与企业托管对照
+# Agent 产品定位与软件架构对照
 
 ## 比较范围
 
-2026-10-10 文档调研结果汇总。各结论的官方来源、源码基线和待验证项保留在对应产品文档。此表比较职责与定制方式，没有统一工作负载测试，不构成性能或价格排名。
+依据 2026-10-10 调研基线，2026-10-12 调整比较主线。核心侧重点与设计取舍为研究判断，事实依据、版本基线及待验证项见各产品 detail 文档。未进行统一工作负载实验。
+
+## 产品定位怎样影响软件架构
+
+| 产品 | 核心问题与主要使用者 | 架构组织重点 | 取舍（研究判断） |
+|---|---|---|---|
+| 阿里云 AgentCore | 企业平台团队怎样统一接入、组织和管理多来源 Agent | Workspace 资产、Agent 定义、Team 协作与实例／Session 运行分开 | 管理模型统一，但不同接入模式仍有不同执行边界 |
+| Amazon AgentCore | 开发者怎样把已有或配置式 Agent 接入运行与治理服务 | Harness／用户代码运行在 Runtime，工具、记忆、身份等按需组合 | 复用框架和服务的空间较大，应用仍需协调服务契约 |
+| Dify | 应用作者怎样把模型、知识和工具做成业务流程 | 应用定义、流程执行、插件及独立 Agent 工作环境 | 应用组合入口直接，多种执行路径带来状态与运维协调 |
+| Pi Agent | 开发者怎样改造或嵌入 Agent 执行循环 | 模型 API、循环、事件、交互与宿主工具分开 | 容易嵌入和扩展，企业运行边界更多由宿主建设 |
+| LangChain／LangGraph | 开发者怎样用代码表达 Agent 行为与状态流程 | Harness、图状态编排、检查点和跨 thread 数据分开 | 流程控制更明确，开发者须理解持久化和重执行语义 |
+
+这些定位有重叠，也可以组合。比如 LangGraph 表达的执行逻辑可以放入 AgentCore Runtime；这不改变前者是程序编排机制、后者提供运行服务的角色。不能以同一“功能数”比较不同职责的产品。
+
+## 辅助比较：定制与托管边界
 
 | 产品／组件 | 主要定位 | 定制入口 | 运行托管边界 | 研究入口 |
 |---|---|---|---|---|
-| 阿里云 AgentCore | 构建、运行与治理平台 | Harness 配置、高代码、资产与 Team | 托管实例／Session；本地纳管另算 | [调研](alibaba-agentcore/README.md) |
-| Amazon AgentCore | 可组合的 Agent 服务平台 | 托管 Harness、自带应用与服务原语 | Runtime；按计算模式确认隔离 | [调研](amazon-agentcore/README.md) |
-| Dify | 应用与工作流开发平台 | 可视化流程、Agent／Build Mode、插件 | Cloud、Community、Enterprise 责任不同 | [调研](dify/README.md) |
-| Pi | 可扩展 Harness 与工具库 | 技能、模板、扩展、SDK／RPC | 主要由宿主管理；durable 是独立实验性库 | [调研](pi-agent/README.md) |
-| LangChain／LangGraph | Harness 与状态编排库 | 代码、middleware、图 | 库模式由宿主运营 | [调研](langchain/README.md) |
-| LangSmith Deployment／Fleet | 相关托管与无代码产品 | 部署配置／无代码 Agent | 随 Cloud、Hybrid、自部署等模式变化 | [边界](langchain/customization-and-hosting.md) |
+| 阿里云 AgentCore | 构建、运行与治理平台 | Harness 配置、高代码、资产与 Team | 托管实例／Session；本地纳管另算 | [调研](alibaba-agentcore/summary.md) |
+| Amazon AgentCore | 可组合的 Agent 服务平台 | 托管 Harness、自带应用与服务原语 | Runtime；按计算模式确认隔离 | [调研](amazon-agentcore/summary.md) |
+| Dify | 应用与工作流开发平台 | 可视化流程、Agent／Build Mode、插件 | Cloud、Community、Enterprise 责任不同 | [调研](dify/summary.md) |
+| Pi | 可扩展 Harness 与工具库 | 技能、模板、扩展、SDK／RPC | 主要由宿主管理；durable 是独立实验性库 | [调研](pi-agent/summary.md) |
+| LangChain／LangGraph | Harness 与状态编排库 | 代码、middleware、图 | 库模式由宿主运营 | [调研](langchain/summary.md) |
+| LangSmith Deployment／Fleet | 相关托管与无代码产品 | 部署配置／无代码 Agent | 随 Cloud、Hybrid、自部署等模式变化 | [边界](langchain/detail.md#定制与运行边界) |
 
-## 可以提炼的企业平台职责
+## 从产品中提炼的软件职责
 
 以下为本批调研的分析框架，不能当作任一厂商官方“七层”。
 

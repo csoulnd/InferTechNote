@@ -7,19 +7,21 @@ status: active
 
 # Agent 产品调研索引
 
-基础文档与展示网站分离。此处保留可溯源的产品调研，网站可按产品读取并组织展示。当前批次关注定义、架构、定制和企业托管，未开展部署实测。
+基础文档与展示网站分离。此处保留可溯源的产品调研，网站可按产品读取并组织展示。调研主线是产品定位与软件架构：先了解产品面向谁、解决什么核心问题，再理解组件关系、执行路径、实现基础及设计取舍。定制、托管和费用作为辅助内容，未开展部署实测。
 
-横向阅读：[产品职责与企业托管对照](comparison.md)。各产品均包含概览、架构、定制与托管、来源四份文档。
+每个产品采用 **summary + detail 双文档**：摘要可独立阅读，详细文档集中展开架构、机制、边界与来源。较短的后续研究可用单篇完整报告，不按章节继续拆文件。横向阅读：[产品定位与软件架构对照](comparison.md)。
 
 ## 调研顺序
 
-| 顺序 | 产品 | 状态 |
-|---|---|---|
-| 1 | [阿里云 AgentCore](alibaba-agentcore/README.md) | 文档调研完成 |
-| 2 | [Amazon Bedrock AgentCore](amazon-agentcore/README.md) | 文档调研完成 |
-| 3 | [Dify](dify/README.md) | 文档与部署结构调研完成 |
-| 4 | [Pi Agent](pi-agent/README.md) | 文档与包结构调研完成 |
-| 5 | [LangChain](langchain/README.md) | 官方生态与托管调研完成 |
+| 顺序 | 产品与核心侧重点（研究判断） | 摘要 | 详细调研 |
+|---|---|---|---|
+| 1 | 阿里云 AgentCore：统一组织与治理多来源 Agent | [summary](alibaba-agentcore/summary.md) | [detail](alibaba-agentcore/detail.md) |
+| 2 | Amazon AgentCore：组合运行基础服务与 Agent 软件 | [summary](amazon-agentcore/summary.md) | [detail](amazon-agentcore/detail.md) |
+| 3 | Dify：组合模型、知识与工具，交付业务应用 | [summary](dify/summary.md) | [detail](dify/detail.md) |
+| 4 | Pi Agent：可改造、可嵌入的执行 Harness | [summary](pi-agent/summary.md) | [detail](pi-agent/detail.md) |
+| 5 | LangChain：用代码组合 Agent 行为与状态编排 | [summary](langchain/summary.md) | [detail](langchain/detail.md) |
+
+初轮证据日期为 2026-10-10；2026-10-12 按新重点调整报告并选择性复核，具体版本与来源日期见各详细文档。
 
 ## 流程迭代记录
 
@@ -30,6 +32,7 @@ status: active
 | Dify | 增补 Community／Cloud／Enterprise 责任与许可检查；历史 Agent Node 与当前新 Agent 子系统交叉核验 |
 | Pi Agent | 增补仓库迁移核验、独立 durable 库的实验性边界、扩展钩子与宿主权限区分 |
 | LangChain | 增补框架／Harness／无代码／部署产品区分，内存后端与持久化、节点重执行和遥测位置检查 |
+| 2026-10-12 阅读与研究主线调整 | 将五份报告统一为 summary + detail；突出定位、执行路径、实现依据和设计取舍，来源并入详细文档；技能允许较短研究使用单篇完整报告 |
 
 ## Knowledge Extraction
 
