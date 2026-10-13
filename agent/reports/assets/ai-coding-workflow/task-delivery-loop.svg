@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+<rect width="1600" height="1000" fill="#F5F3EC"/>
+<rect x="72" y="68" width="60" height="12" rx="6" fill="#087F78"/>
+<text x="72.00" y="121.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="50" font-weight="700" fill="#20343D">一次任务的交付闭环</text>
+<text x="75.00" y="195.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="25" font-weight="400" fill="#5E7077">人明确目标、判断边界并验收；AI 承担查阅、实现和执行检查。</text>
+<rect x="75" y="250" width="20" height="20" rx="5" fill="#087F78"/>
+<text x="108.00" y="248.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="24" font-weight="400" fill="#087F78">人：关键判断与责任</text>
+<rect x="470" y="250" width="20" height="20" rx="5" fill="#4E7396"/>
+<text x="503.00" y="248.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="24" font-weight="400" fill="#4E7396">AI：执行与辅助检视</text>
+<rect x="80" y="310" width="240" height="280" rx="18" fill="#E4EFED" stroke="#C8DBD6" stroke-width="2"/>
+<text x="100.00" y="340.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="700" fill="#087F78">01</text>
+<text x="125.00" y="386.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#20343D">目标与边界</text>
+<text x="116.00" y="443.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="21" font-weight="400" fill="#5E7077">先定义什么算完成</text>
+<text x="100.00" y="498.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#4E7396">AI：澄清与核查</text>
+<text x="100.00" y="546.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#087F78">人：目标与约束</text>
+<polyline points="328,404 369,404" fill="none" stroke="#087F78" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="369.00,404.00 354.00,397.00 354.00,411.00" fill="#087F78"/>
+<rect x="380" y="310" width="240" height="280" rx="18" fill="#E4EFED" stroke="#C8DBD6" stroke-width="2"/>
+<text x="400.00" y="340.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="700" fill="#087F78">02</text>
+<text x="440.00" y="386.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#20343D">制定计划</text>
+<text x="416.00" y="442.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="21" font-weight="400" fill="#5E7077">方案、范围与影响</text>
+<text x="400.00" y="498.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#4E7396">AI：查代码、出方案</text>
+<text x="400.00" y="546.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#087F78">人：取舍与确认</text>
+<polyline points="628,404 669,404" fill="none" stroke="#087F78" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="669.00,404.00 654.00,397.00 654.00,411.00" fill="#087F78"/>
+<rect x="680" y="310" width="240" height="280" rx="18" fill="#E4EFED" stroke="#C8DBD6" stroke-width="2"/>
+<text x="700.00" y="340.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="700" fill="#087F78">03</text>
+<text x="740.00" y="386.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#20343D">小步执行</text>
+<text x="726.50" y="443.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="21" font-weight="400" fill="#5E7077">实施受控的变更</text>
+<text x="700.00" y="498.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#4E7396">AI：实现与运行检查</text>
+<text x="700.00" y="547.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#087F78">人：观察与纠偏</text>
+<polyline points="928,404 969,404" fill="none" stroke="#087F78" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="969.00,404.00 954.00,397.00 954.00,411.00" fill="#087F78"/>
+<rect x="980" y="310" width="240" height="280" rx="18" fill="#E4EFED" stroke="#C8DBD6" stroke-width="2"/>
+<text x="1000.00" y="340.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="700" fill="#087F78">04</text>
+<text x="1040.00" y="386.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#20343D">验证结果</text>
+<text x="1005.50" y="443.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="21" font-weight="400" fill="#5E7077">用证据检查实际行为</text>
+<text x="1000.00" y="498.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#4E7396">AI：检查与辅助检视</text>
+<text x="1000.00" y="546.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#087F78">人：验收与风险判断</text>
+<polyline points="1228,404 1269,404" fill="none" stroke="#087F78" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="1269.00,404.00 1254.00,397.00 1254.00,411.00" fill="#087F78"/>
+<rect x="1280" y="310" width="240" height="280" rx="18" fill="#E4EFED" stroke="#C8DBD6" stroke-width="2"/>
+<text x="1300.00" y="340.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="700" fill="#087F78">05</text>
+<text x="1325.00" y="386.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#20343D">交付与复用</text>
+<text x="1316.00" y="443.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="21" font-weight="400" fill="#5E7077">让下一次少走弯路</text>
+<text x="1300.00" y="499.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#4E7396">AI：整理变更与记录</text>
+<text x="1300.00" y="546.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="20" font-weight="400" fill="#087F78">人：交付与发布确认</text>
+<rect x="380" y="675" width="840" height="79" rx="16" fill="#E3EAF0"/>
+<text x="557.00" y="703.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="700" fill="#20343D">验证未通过：定位问题，回到计划或实现</text>
+<polyline points="1100,590 1100,675" fill="none" stroke="#4E7396" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="1100.00,675.00 1107.00,660.00 1093.00,660.00" fill="#4E7396"/>
+<polyline points="500,675 500,601" fill="none" stroke="#4E7396" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="500.00,601.00 493.00,616.00 507.00,616.00" fill="#4E7396"/>
+<polyline points="800,675 800,601" fill="none" stroke="#4E7396" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="800.00,601.00 793.00,616.00 807.00,616.00" fill="#4E7396"/>
+<polyline points="1400,590 1400,819 200,819 200,601" fill="none" stroke="#087F78" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="200.00,601.00 193.00,616.00 207.00,616.00" fill="#087F78"/>
+<rect x="260" y="796" width="1060" height="54" rx="0" fill="#F5F3EC"/>
+<text x="473.50" y="810.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="26" font-weight="700" fill="#087F78">交付后沉淀约定、验证步骤与 skill，供下一次任务复用</text>
+<text x="75.00" y="930.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="25" font-weight="400" fill="#5E7077">计划、执行、验证、交付都要完成；展开深度随任务的不确定性与影响调整。</text>
+</svg>

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+<rect width="1600" height="1000" fill="#F5F3EC"/>
+<rect x="72" y="68" width="60" height="12" rx="6" fill="#087F78"/>
+<text x="72.00" y="121.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="50" font-weight="700" fill="#20343D">生成快，不等于有效产出多</text>
+<text x="75.00" y="196.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="25" font-weight="400" fill="#5E7077">候选内容必须经过理解与验证，才能成为可以负责的结果。</text>
+<text x="140.50" y="280.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="29" font-weight="700" fill="#4E7396">AI 生成</text>
+<rect x="85" y="340" width="215" height="64" rx="12" fill="#E3EAF0"/>
+<text x="129.50" y="359.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="25" font-weight="400" fill="#20343D">代码与改动</text>
+<rect x="85" y="425" width="215" height="64" rx="12" fill="#E3EAF0"/>
+<text x="129.50" y="444.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="25" font-weight="400" fill="#20343D">测试与报告</text>
+<rect x="85" y="510" width="215" height="64" rx="12" fill="#E3EAF0"/>
+<text x="129.50" y="528.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="25" font-weight="400" fill="#20343D">方案与解释</text>
+<polygon points="365.00,320.00 620.00,421.00 620.00,539.00 365.00,650.00" fill="#D6E6E2"/>
+<polyline points="315,450 397,450" fill="none" stroke="#4E7396" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="397.00,450.00 382.00,443.00 382.00,457.00" fill="#4E7396"/>
+<rect x="620" y="421" width="355" height="118" rx="0" fill="#087F78"/>
+<text x="712.00" y="437.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="34" font-weight="700" fill="white">理解与验证</text>
+<text x="699.50" y="491.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="400" fill="white">关键边界 · 独立证据</text>
+<text x="745.00" y="344.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="26" font-weight="700" fill="#087F78">判别通道</text>
+<polygon points="975.00,421.00 1150.00,380.00 1150.00,580.00 975.00,539.00" fill="#D6E6E2"/>
+<polyline points="1157,480 1204,480" fill="none" stroke="#087F78" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="1204.00,480.00 1189.00,473.00 1189.00,487.00" fill="#087F78"/>
+<rect x="1210" y="370" width="310" height="220" rx="18" fill="#D0E5E1"/>
+<text x="1293.00" y="421.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="36" font-weight="700" fill="#20343D">有效产出</text>
+<text x="1247.00" y="486.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="400" fill="#087F78">可理解 · 有证据 · 能负责</text>
+<text x="85.00" y="636.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="25" font-weight="400" fill="#5E7077">超出判别能力的候选内容</text>
+<polyline points="470,608 470,692 340,692 340,729" fill="none" stroke="#AD633F" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="340.00,729.00 347.00,714.00 333.00,714.00" fill="#AD633F"/>
+<polyline points="850,550 850,692 1210,692 1210,729" fill="none" stroke="#AD633F" stroke-width="4" stroke-linejoin="round"/>
+<polygon points="1210.00,729.00 1217.00,714.00 1203.00,714.00" fill="#AD633F"/>
+<rect x="80" y="740" width="560" height="100" rx="18" fill="#EFE5D8"/>
+<text x="110.00" y="761.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="28" font-weight="700" fill="#AD633F">堆积：形成待检视队列</text>
+<text x="110.00" y="807.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="400" fill="#5E7077">交付等待，后续检视成本累积</text>
+<rect x="900" y="740" width="620" height="100" rx="18" fill="#EFE5D8"/>
+<text x="930.00" y="761.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="28" font-weight="700" fill="#AD633F">放水：把风险带进交付</text>
+<text x="930.00" y="807.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="22" font-weight="400" fill="#5E7077">以“看起来正确”代替可靠证据</text>
+<rect x="80" y="870" width="1440" height="78" rx="18" fill="#E4EFED"/>
+<text x="470.50" y="895.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#087F78">学习与练习 + 可靠的自动化验证 → 扩大判别通道</text>
+<text x="75.00" y="971.00" dominant-baseline="hanging" font-family="Microsoft YaHei, sans-serif" font-size="18" font-weight="400" fill="#5E7077">概念示意：图形宽度不表示实际数量或比例。</text>
+</svg>
