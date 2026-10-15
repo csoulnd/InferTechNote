@@ -25,7 +25,7 @@ status: active
 
 ## DSH 专项交流准备
 
-- [与 DSH 团队交流：调研与议题初稿](deepseek-harness/discussion-agenda.md)：保留原生体验的企业托管、行业生态、端到端加速与运行 API。源码基线为 2026-10-09 的固定提交，议题整理于 2026-10-14；仍在讨论收敛中。
+- [与 DSH 团队交流：调研与议题初稿](deepseek-harness/discussion-agenda.md)：保留原生体验的容器托管与行业生态、端到端加速及运行 API。源码基线为 2026-10-09 的固定提交，议题整理于 2026-10-14；仍在讨论收敛中。
 - [DSH 穿刺问题清单及进展](../../reports/dsh-integration-issue-log.md)：截至 2026-10-09 的集成验证记录。
 
 ## 流程迭代记录
