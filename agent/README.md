@@ -30,6 +30,7 @@ agent/
 | Goal | Entry |
 |---|---|
 | Understand the reusable architecture | [Agent knowledge](../knowledge/agent/README.md) |
+| Migrate third-party Agent listing services | [Platform migration requirements](designs/requirements/third-party-agent-listing-platform-migration.md) |
 | Implement third-party Agent requirements | [Agent OS requirements](designs/requirements/third-party-agent-agentos-requirements.md) |
 | Design third-party Agent access | [Current and ideal access architecture](designs/integration/third-party-agent-access-architecture.md) |
 | Inspect the third-party Agent listing data model | [Management-plane database schema](designs/integration/third-party-agent-management-plane-database-schema.md) |
