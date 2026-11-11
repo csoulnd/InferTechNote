@@ -23,3 +23,7 @@ Agent containers that consume inference services are documented under [Agent](..
 ## System software product research
 
 - [FlagOS: multi-chip AI system software stack](flagos/summary.md) · [Detailed research](flagos/detail.md): operator libraries, compiler backends, communication, framework plugins, and boundaries relevant to Ascend 310P. Official sources and selected integration code reviewed on 2026-10-15; no hardware tests performed.
+
+## GLM-5.3 pooling deployment and benchmark
+
+- [GLM-5.3 双机UB池化部署与测试](glm-5-3-pooling/README.md)：部署脚本、L2/L3配置及128K/1K基线与80/20测试计划。
