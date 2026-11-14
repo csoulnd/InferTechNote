@@ -314,6 +314,10 @@ bubblewrap 官方明确指出：它负责提供构造 sandbox 的原语，不提
 - 对不可信代码执行，显式决定是否接受共享宿主内核；若不能接受，应选择 VM 型边界。
 - 版本管理需要同时覆盖 kernel、container manager、shim 和 OCI runtime，避免只升级上层 CLI。
 
+## 应用记录
+
+- [每日知识复盘：2026-10-12](../../../../agent/reports/daily-reviews/2026-10-12.md)
+
 ## 相关知识
 
 - [Docker 基础与常用语法](../../../foundations/tools/docker-basics.md)

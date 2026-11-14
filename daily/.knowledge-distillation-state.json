@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "sources": {
+    "2026-10-12": {
+      "blob_sha": "d8da8fe977f326da2a5640e9cd81a5e02f04085b",
+      "status": "distilled",
+      "last_accessed_at": "2026-10-16T10:13:52+08:00",
+      "outputs": [
+        "daily/knowledge-increment.md",
+        "agent/reports/daily-reviews/2026-10-12.md"
+      ]
+    },
+    "2026-10-13": {
+      "blob_sha": "2af05eee427f6ab42a43dca10f921d9e79f02794",
+      "status": "no_reusable_knowledge",
+      "last_accessed_at": "2026-10-16T10:13:52+08:00",
+      "outputs": [
+        "daily/knowledge-increment.md"
+      ]
+    },
+    "2026-10-14": {
+      "blob_sha": "87ba6baa00199eeb040f5636c40178c4945eac80",
+      "status": "no_verified_conclusion",
+      "last_accessed_at": "2026-10-16T10:13:52+08:00",
+      "outputs": [
+        "daily/knowledge-increment.md"
+      ]
+    },
+    "2026-10-15": {
+      "blob_sha": "6d300f14652db479e787da2bdcad4e7f097d1315",
+      "status": "distilled",
+      "last_accessed_at": "2026-10-16T10:13:52+08:00",
+      "outputs": [
+        "daily/knowledge-increment.md",
+        "agent/reports/daily-reviews/2026-10-15.md",
+        "knowledge/infra/concepts/continuous-batching.md",
+        "knowledge/infra/concepts/triton-kernel-programming.md"
+      ]
+    },
+    "2026-10-16": {
+      "blob_sha": "d0e15e650a0c3a5e225a2b12fbc140fb4a39b8d2",
+      "status": "reviewed_existing_knowledge",
+      "last_accessed_at": "2026-10-17T02:32:42+08:00",
+      "outputs": [
+        "daily/knowledge-increment.md"
+      ]
+    }
+  }
+}

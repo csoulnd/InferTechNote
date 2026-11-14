@@ -69,7 +69,13 @@ def main() -> int:
     markdown = [
         p
         for p in root.rglob("*.md")
-        if ".git" not in p.parts and ".agents" not in p.parts and not is_external_checkout(p)
+        if ".git" not in p.parts
+        and ".agents" not in p.parts
+        and not is_external_checkout(p)
+        and not (
+            p.parent == root / "daily"
+            and p.name != "knowledge-increment.md"
+        )
     ]
 
     for path in sorted(markdown):
