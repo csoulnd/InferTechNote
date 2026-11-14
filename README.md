@@ -62,3 +62,7 @@ Use [business-study.md](templates/business-study.md) for business-driven learnin
 - **Status:** `draft`, `active`, `evergreen`, or `archived`.
 - **Links:** Relative Markdown links; no Obsidian-only dependency for core navigation.
 - **History:** Use `git mv` for structural changes and avoid rewriting technical content during moves.
+
+## Deployment and test workspace
+
+Use [`$service-test-workspace`](.agents/skills/service-test-workspace/SKILL.md) to organize deployment scripts, native test configurations, service logs, and per-round benchmark outputs across servers, with verified archival before cleanup.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "服务部署与测试工作区"
+  short_description: "统一跨服务器部署测试目录、原生日志归档与清理约定，保持手动复现简洁"
+  default_prompt: "使用 $service-test-workspace 整理指定服务器的部署测试工程，先核验引用和文件来源，再按约定归档及清理。"
